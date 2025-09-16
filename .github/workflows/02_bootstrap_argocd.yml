@@ -67,7 +67,24 @@ jobs:
           # wait a bit for Argo to reconcile
           sleep 60
           kubectl -n argocd wait --for=condition=Synced applications/addons --timeout=300s || true
-          kubectl -n cnpg-system rollout status deploy --timeout=300s || true
+
+      - name: Wait for CNPG operator CRDs
+        run: |
+          echo "Waiting for CloudNativePG CRDs to become available..."
+          for attempt in $(seq 1 30); do
+            if kubectl get crd clusters.postgresql.cnpg.io >/dev/null 2>&1; then
+              kubectl wait --for=condition=Established crd/clusters.postgresql.cnpg.io --timeout=60s
+              if kubectl -n cnpg-system get deployment cnpg-cloudnative-pg >/dev/null 2>&1; then
+                kubectl -n cnpg-system wait --for=condition=Available deployment/cnpg-cloudnative-pg --timeout=300s
+                exit 0
+              fi
+              echo "Deployment cnpg-cloudnative-pg not ready yet; retrying"
+            fi
+            echo "CRD clusters.postgresql.cnpg.io not found yet (attempt ${attempt}/30); sleeping 10s"
+            sleep 10
+          done
+          echo "Timed out waiting for CloudNativePG CRDs"
+          exit 1
 
       - name: Create CNPG secrets (DB users + superuser)
         run: |
