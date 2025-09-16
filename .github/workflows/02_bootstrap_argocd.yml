@@ -150,6 +150,8 @@ jobs:
               ready_endpoints=$(kubectl -n cnpg-system get endpoints cnpg-webhook-service -o jsonpath='{range .subsets[*].addresses[*]}{.ip} {end}' 2>/dev/null)
               if [ -n "${ready_endpoints}" ]; then
                 echo "cnpg-webhook-service has ready endpoints: ${ready_endpoints}"
+                echo "Waiting a few seconds to let the Kubernetes API server register the webhook endpoints"
+                sleep 10
                 exit 0
               fi
               not_ready_endpoints=$(kubectl -n cnpg-system get endpoints cnpg-webhook-service -o jsonpath='{range .subsets[*].notReadyAddresses[*]}{.ip} {end}' 2>/dev/null)
@@ -273,7 +275,8 @@ jobs:
           trap 'rm -f "${manifest}"' EXIT
           sed "s/{{STORAGE_ACCOUNT}}/${STORAGE_ACCOUNT}/g" k8s/apps/cnpg/cluster.yaml > "${manifest}"
 
-          max_attempts=5
+          max_attempts=8
+          success=0
           for attempt in $(seq 1 "${max_attempts}"); do
             echo "Applying CNPG cluster manifest (attempt ${attempt}/${max_attempts})"
 
@@ -299,6 +302,15 @@ jobs:
 
             if [ "${prereqs_ready}" -ne 1 ]; then
               echo "CNPG operator prerequisites are not ready, waiting before retrying"
+              sleep 20
+              continue
+            fi
+
+            echo "Running server-side dry run to verify CNPG webhooks are reachable"
+            if ! kubectl apply --dry-run=server -f "${manifest}"; then
+              echo "Server-side dry run failed on attempt ${attempt}; CNPG webhooks may still be unavailable"
+              kubectl -n cnpg-system get endpoints cnpg-webhook-service -o wide || true
+              kubectl -n cnpg-system get pods -l app.kubernetes.io/name=cloudnative-pg -o wide || true
               sleep 20
               continue
             fi
