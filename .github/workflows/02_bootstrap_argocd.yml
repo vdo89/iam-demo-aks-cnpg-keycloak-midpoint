@@ -57,51 +57,86 @@ jobs:
       - name: Install Argo CD (stable manifest)
         run: |
           kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
-          kubectl -n argocd rollout status deploy/argocd-server --timeout=180s || true
+          echo "Waiting for Argo CD core components to become ready..."
+          for workload in deploy/argocd-server deploy/argocd-repo-server deploy/argocd-redis deploy/argocd-dex-server; do
+            echo "Waiting for rollout of ${workload}"
+            kubectl -n argocd rollout status "$workload" --timeout=300s
+          done
+          echo "Waiting for Argo CD application controller statefulset"
+          kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=300s
 
       - name: Sync addons via Argo (Ingress-NGINX, cert-manager, CNPG operator)
         run: |
           export REPO_OWNER="${GITHUB_REPOSITORY%%/*}"
           export REPO_NAME="${GITHUB_REPOSITORY##*/}"
           envsubst < k8s/argocd/root-apps.yaml | kubectl apply -f -
-          # wait a bit for Argo to reconcile
-          sleep 60
-          kubectl -n argocd wait --for=condition=Synced applications/addons --timeout=300s || true
+          echo "Waiting for Argo CD application 'addons' to be created and synced"
+          addons_ready=0
+          for attempt in $(seq 1 60); do
+            if kubectl -n argocd get application addons >/dev/null 2>&1; then
+              sync_status=$(kubectl -n argocd get application addons -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")
+              health_status=$(kubectl -n argocd get application addons -o jsonpath='{.status.health.status}' 2>/dev/null || echo "")
+              if [ "$sync_status" = "Synced" ] && [ "$health_status" = "Healthy" ]; then
+                echo "addons application is synced and healthy"
+                addons_ready=1
+                break
+              fi
+              echo "addons application status: sync=${sync_status:-<unknown>} health=${health_status:-<unknown>} (attempt ${attempt}/60)"
+            else
+              echo "addons application not found yet (attempt ${attempt}/60)"
+            fi
+            sleep 10
+          done
+          if [ "$addons_ready" -ne 1 ]; then
+            echo "Timed out waiting for addons application to become healthy"
+            kubectl -n argocd get application addons -o yaml || true
+            exit 1
+          fi
+          kubectl -n argocd get application addons
 
       - name: Wait for cnpg-operator Argo CD application
         run: |
           echo "Waiting for Argo CD application cnpg-operator to be created..."
-          found_app=0
-          for attempt in $(seq 1 30); do
+          for attempt in $(seq 1 60); do
             if kubectl -n argocd get application cnpg-operator >/dev/null 2>&1; then
-              found_app=1
-              break
+              sync_status=$(kubectl -n argocd get application cnpg-operator -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")
+              health_status=$(kubectl -n argocd get application cnpg-operator -o jsonpath='{.status.health.status}' 2>/dev/null || echo "")
+              if [ "$sync_status" = "Synced" ] && [ "$health_status" = "Healthy" ]; then
+                echo "cnpg-operator application is synced and healthy"
+                exit 0
+              fi
+              echo "cnpg-operator status: sync=${sync_status:-<unknown>} health=${health_status:-<unknown>} (attempt ${attempt}/60)"
+            else
+              echo "Application cnpg-operator not found yet (attempt ${attempt}/60)"
             fi
-            echo "Application cnpg-operator not found yet (attempt ${attempt}/30); sleeping 10s"
             sleep 10
           done
-
-          if [ "$found_app" -ne 1 ]; then
-            echo "Timed out waiting for cnpg-operator Application to be created by Argo CD"
-            exit 1
-          fi
-
-          kubectl -n argocd wait --for=condition=Synced applications/cnpg-operator --timeout=300s
-          kubectl -n argocd wait --for=condition=Healthy applications/cnpg-operator --timeout=300s || true
+          echo "Timed out waiting for cnpg-operator Argo CD application to become healthy"
+          kubectl -n argocd get application cnpg-operator -o yaml || true
+          exit 1
 
       - name: Wait for CNPG operator CRDs
         run: |
           echo "Waiting for CloudNativePG CRDs to become available..."
           for attempt in $(seq 1 30); do
             if kubectl get crd clusters.postgresql.cnpg.io >/dev/null 2>&1; then
-              kubectl wait --for=condition=Established crd/clusters.postgresql.cnpg.io --timeout=60s
-              if kubectl -n cnpg-system get deployment cnpg-cloudnative-pg >/dev/null 2>&1; then
-                kubectl -n cnpg-system wait --for=condition=Available deployment/cnpg-cloudnative-pg --timeout=300s
-                exit 0
+              if kubectl wait --for=condition=Established crd/clusters.postgresql.cnpg.io --timeout=60s; then
+                if kubectl -n cnpg-system get deployment cnpg-cloudnative-pg >/dev/null 2>&1; then
+                  if kubectl -n cnpg-system wait --for=condition=Available deployment/cnpg-cloudnative-pg --timeout=300s; then
+                    echo "CloudNativePG operator deployment is available"
+                    exit 0
+                  else
+                    echo "Deployment cnpg-cloudnative-pg exists but is not yet available (attempt ${attempt}/30)"
+                  fi
+                else
+                  echo "Deployment cnpg-cloudnative-pg not found yet (attempt ${attempt}/30)"
+                fi
+              else
+                echo "CRD clusters.postgresql.cnpg.io exists but is not yet established (attempt ${attempt}/30)"
               fi
-              echo "Deployment cnpg-cloudnative-pg not ready yet; retrying"
+            else
+              echo "CRD clusters.postgresql.cnpg.io not found yet (attempt ${attempt}/30)"
             fi
-            echo "CRD clusters.postgresql.cnpg.io not found yet (attempt ${attempt}/30); sleeping 10s"
             sleep 10
           done
           echo "Timed out waiting for CloudNativePG CRDs"
