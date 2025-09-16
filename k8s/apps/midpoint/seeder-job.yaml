@@ -1,0 +1,59 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: midpoint-seeder
+  namespace: iam
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: seed
+          image: curlimages/curl:8.9.1
+          env:
+            - name: MIDPOINT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: midpoint-admin
+                  key: password
+            - name: MIDPOINT_URL
+              value: "{{MIDPOINT_URL}}"
+          volumeMounts:
+            - name: objs
+              mountPath: /objects
+          command:
+            - sh
+            - -lc
+            - |
+              set -euo pipefail
+              MP_URL="${MIDPOINT_URL:-http://midpoint:8080/midpoint}"
+              echo "Using midPoint at: $MP_URL"
+
+              auth="administrator:${MIDPOINT_PASSWORD}"
+
+              for f in /objects/*.xml; do
+                echo "Posting $f"
+                curl -fsS -u "$auth" -H "Content-Type: application/xml" \
+                  -X POST "$MP_URL/ws/rest/objects" --data-binary "@$f"
+              done
+
+              echo "Done."
+      volumes:
+        - name: objs
+          configMap:
+            name: midpoint-objects
+            items:
+              - key: 01_org_rws.xml
+                path: 01_org_rws.xml
+              - key: 02_role_project_admin.xml
+                path: 02_role_project_admin.xml
+              - key: 03_org_architects.xml
+                path: 03_org_architects.xml
+              - key: 04_user_director.xml
+                path: 04_user_director.xml
+              - key: 05_user_architect1.xml
+                path: 05_user_architect1.xml
+              - key: 06_user_po1.xml
+                path: 06_user_po1.xml
+              - key: 07_user_dev1.xml
+                path: 07_user_dev1.xml

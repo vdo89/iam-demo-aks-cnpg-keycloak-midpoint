@@ -1,0 +1,7 @@
+<object xmlns="http://midpoint.evolveum.com/xml/ns/public/common/common-3">
+  <org>
+    <name>Architects</name>
+    <displayName>Architecten</displayName>
+    <identifier>ORG-ARCH</identifier>
+  </org>
+</object>

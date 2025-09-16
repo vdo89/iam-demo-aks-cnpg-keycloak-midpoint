@@ -1,0 +1,144 @@
+name: 02 - Bootstrap ArgoCD, Addons, DB, Keycloak, midPoint
+
+on:
+  workflow_dispatch:
+    inputs:
+      LOCATION:
+        description: 'Azure region'
+        required: false
+        default: 'westeurope'
+      RESOURCE_GROUP:
+        description: 'Resource Group name (output of TF)'
+        required: true
+        default: 'rwsdemo-rg'
+      AKS_NAME:
+        description: 'AKS cluster name (output of TF)'
+        required: true
+        default: 'rwsdemo-aks'
+      STORAGE_ACCOUNT:
+        description: 'Azure Storage Account name for CNPG backups (output of TF)'
+        required: true
+      NAMESPACE_IAM:
+        description: 'Namespace for IAM stack (Keycloak + midPoint + DB)'
+        required: false
+        default: 'iam'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get AKS credentials
+        uses: azure/aks-set-context@v4
+        with:
+          resource-group: ${{ inputs.RESOURCE_GROUP }}
+          cluster-name: ${{ inputs.AKS_NAME }}
+
+      - name: Create namespaces
+        run: |
+          kubectl create ns argocd --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create ns ingress-nginx --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create ns cert-manager --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create ns cnpg-system --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create ns ${{ inputs.NAMESPACE_IAM }} --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Install Argo CD (stable manifest)
+        run: |
+          kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+          kubectl -n argocd rollout status deploy/argocd-server --timeout=180s || true
+
+      - name: Sync addons via Argo (Ingress-NGINX, cert-manager, CNPG operator)
+        run: |
+          export REPO_OWNER="${GITHUB_REPOSITORY%%/*}"
+          export REPO_NAME="${GITHUB_REPOSITORY##*/}"
+          envsubst < k8s/argocd/root-apps.yaml | kubectl apply -f -
+          # wait a bit for Argo to reconcile
+          sleep 60
+          kubectl -n argocd wait --for=condition=Synced applications/addons --timeout=300s || true
+          kubectl -n cnpg-system rollout status deploy --timeout=300s || true
+
+      - name: Create CNPG secrets (DB users + superuser)
+        run: |
+          kubectl -n ${{ inputs.NAMESPACE_IAM }} create secret generic cnpg-superuser \
+            --from-literal=password='${{ secrets.POSTGRES_SUPERUSER_PASSWORD }}' \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl -n ${{ inputs.NAMESPACE_IAM }} create secret generic keycloak-db-app \
+            --from-literal=username='keycloak' \
+            --from-literal=password='${{ secrets.KEYCLOAK_DB_PASSWORD }}' \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl -n ${{ inputs.NAMESPACE_IAM }} create secret generic midpoint-db-app \
+            --from-literal=username='midpoint' \
+            --from-literal=password='${{ secrets.MIDPOINT_DB_PASSWORD }}' \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Create Azure Blob secret for CNPG backups (connection string or key)
+        env:
+          AZURE_STORAGE_ACCOUNT: ${{ inputs.STORAGE_ACCOUNT }}
+          AZURE_STORAGE_KEY: ${{ secrets.AZURE_STORAGE_KEY }}
+        run: |
+          if [ -z "$AZURE_STORAGE_KEY" ]; then
+            echo "AZURE_STORAGE_KEY secret is required for demo backup. Add it in repo secrets."
+            exit 1
+          fi
+          kubectl -n ${{ inputs.NAMESPACE_IAM }} create secret generic cnpg-azure-backup \
+            --from-literal=AZURE_STORAGE_ACCOUNT="$AZURE_STORAGE_ACCOUNT" \
+            --from-literal=AZURE_STORAGE_KEY="$AZURE_STORAGE_KEY" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Apply CNPG cluster (iam-db)
+        run: |
+          sed "s/{{STORAGE_ACCOUNT}}/${{ inputs.STORAGE_ACCOUNT }}/g" k8s/apps/cnpg/cluster.yaml | kubectl apply -f -
+          kubectl -n ${{ inputs.NAMESPACE_IAM }} wait cluster/iam-db --for=condition=Ready --timeout=600s || true
+
+      - name: Install Keycloak Operator (CRDs + operator Deployment)
+        run: |
+          kubectl apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/26.3.4/kubernetes/keycloaks.k8s.keycloak.org-v1.yml
+          kubectl apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/26.3.4/kubernetes/keycloakrealmimports.k8s.keycloak.org-v1.yml
+          kubectl apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/26.3.4/kubernetes/kubernetes.yml
+
+      - name: Deploy Keycloak (binds to CNPG)
+        run: |
+          kubectl apply -f k8s/apps/keycloak/keycloak.yaml
+          kubectl -n ${{ inputs.NAMESPACE_IAM }} rollout status deploy/rws-keycloak --timeout=600s || true
+
+
+      - name: Prepare midPoint config and admin secret
+        env:
+          MIDPOINT_ADMIN_PASSWORD: ${{ secrets.MIDPOINT_ADMIN_PASSWORD }}
+        run: |
+          kubectl -n ${{ inputs.NAMESPACE_IAM }} create secret generic midpoint-admin \
+            --from-literal=password="$MIDPOINT_ADMIN_PASSWORD" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n ${{ inputs.NAMESPACE_IAM }} create configmap midpoint-config \
+            --from-file=config.xml=k8s/apps/midpoint/config.xml \
+            --dry-run=client -o yaml | kubectl apply -f -
+      - name: Deploy midPoint (binds to CNPG)
+        env:
+          MIDPOINT_ADMIN_PASSWORD: ${{ secrets.MIDPOINT_ADMIN_PASSWORD }}
+        run: |
+          kubectl apply -f k8s/apps/midpoint/deployment.yaml
+          kubectl -n ${{ inputs.NAMESPACE_IAM }} set env deploy/midpoint MIDPOINT_ADMIN_PASSWORD="$MIDPOINT_ADMIN_PASSWORD" --containers=midpoint || true
+          kubectl -n ${{ inputs.NAMESPACE_IAM }} rollout status deploy/midpoint --timeout=600s || true
+
+      - name: Show ingress endpoints (if available)
+        run: |
+          echo "Ingress-NGINX service:"
+          kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide || true
+          echo "Keycloak service:"
+          kubectl -n ${{ inputs.NAMESPACE_IAM }} get svc rws-keycloak -o wide || true
+          echo "midPoint service:"
+          kubectl -n ${{ inputs.NAMESPACE_IAM }} get svc midpoint -o wide || true

@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: midpoint-admin
+  namespace: iam
+type: Opaque
+stringData:
+  password: CHANGEME
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: midpoint-config
+  namespace: iam
+data:
+  config.xml: |
+    (placeholder) – replaced by deployment.yaml volume from ConfigMap

@@ -1,0 +1,87 @@
+name: 01 - Provision AKS with Terraform
+
+on:
+  workflow_dispatch:
+    inputs:
+      TF_ACTION:
+        description: 'apply or destroy'
+        required: true
+        default: 'apply'
+        type: choice
+        options: [apply, destroy]
+      LOCATION:
+        description: 'Azure region'
+        required: false
+        default: 'westeurope'
+      RESOURCE_PREFIX:
+        description: 'Prefix for resource names'
+        required: false
+        default: 'rwsdemo'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_IN_AUTOMATION: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        working-directory: infra/azure/terraform
+        run: terraform init -input=false
+
+      - name: Terraform Plan
+        if: inputs.TF_ACTION == 'apply'
+        working-directory: infra/azure/terraform
+        run: |
+          terraform plan -input=false \
+            -var="location=${{ inputs.LOCATION }}" \
+            -var="prefix=${{ inputs.RESOURCE_PREFIX }}"
+
+      - name: Terraform Apply
+        if: inputs.TF_ACTION == 'apply'
+        working-directory: infra/azure/terraform
+        run: |
+          terraform apply -auto-approve -input=false \
+            -var="location=${{ inputs.LOCATION }}" \
+            -var="prefix=${{ inputs.RESOURCE_PREFIX }}"
+
+      - name: Terraform Destroy
+        if: inputs.TF_ACTION == 'destroy'
+        working-directory: infra/azure/terraform
+        run: terraform destroy -auto-approve -input=false
+
+      - name: Terraform Outputs
+        if: inputs.TF_ACTION == 'apply'
+        id: tfout
+        working-directory: infra/azure/terraform
+        run: |
+          echo "RG=$(terraform output -raw resource_group)" >> $GITHUB_OUTPUT
+          echo "AKS=$(terraform output -raw aks_name)" >> $GITHUB_OUTPUT
+          echo "SA=$(terraform output -raw storage_account_name)" >> $GITHUB_OUTPUT
+          echo "BLOB_ENDPOINT=$(terraform output -raw storage_blob_endpoint)" >> $GITHUB_OUTPUT
+
+      - name: Show outputs
+        if: inputs.TF_ACTION == 'apply'
+        run: |
+          echo "Resource Group: ${{ steps.tfout.outputs.RG }}"
+          echo "AKS: ${{ steps.tfout.outputs.AKS }}"
+          echo "Storage Account: ${{ steps.tfout.outputs.SA }}"
+          echo "Blob Endpoint: ${{ steps.tfout.outputs.BLOB_ENDPOINT }}"

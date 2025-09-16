@@ -1,0 +1,48 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: iam-db
+  namespace: iam
+spec:
+  instances: 2
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.4
+  primaryUpdateStrategy: unsupervised
+  enableSuperuserAccess: true
+
+  superuserSecret:
+    name: cnpg-superuser
+
+  bootstrap:
+    initdb:
+      database: keycloak
+      owner: keycloak
+      secret:
+        name: keycloak-db-app
+      postInitApplicationSQL:
+        - CREATE DATABASE midpoint OWNER midpoint;
+        - ALTER USER keycloak WITH LOGIN;
+        - ALTER USER midpoint WITH LOGIN;
+
+  storage:
+    size: 20Gi
+
+  monitoring:
+    enablePodMonitor: false
+
+  backup:
+    retentionPolicy: "7d"
+    barmanObjectStore:
+      destinationPath: "https://{{STORAGE_ACCOUNT}}.blob.core.windows.net/cnpg-backups/iam-db"
+      azureCredentials:
+        storageAccount:
+          name: cnpg-azure-backup
+          key: AZURE_STORAGE_ACCOUNT
+        storageKey:
+          name: cnpg-azure-backup
+          key: AZURE_STORAGE_KEY
+      wal:
+        compression: gzip
+        maxParallel: 4
+      data:
+        compression: gzip
+        jobs: 2

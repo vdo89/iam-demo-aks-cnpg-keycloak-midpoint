@@ -1,0 +1,11 @@
+<object xmlns="http://midpoint.evolveum.com/xml/ns/public/common/common-3">
+  <user>
+    <name>director1</name>
+    <fullName>Directeur Demo</fullName>
+    <givenName>Directeur</givenName>
+    <familyName>Demo</familyName>
+    <activation>
+      <administrativeStatus>enabled</administrativeStatus>
+    </activation>
+  </user>
+</object>

@@ -1,0 +1,30 @@
+<object xmlns="http://midpoint.evolveum.com/xml/ns/public/common/common-3">
+  <role>
+    <name>Project Admin</name>
+    <description>Role that grants project-admin permissions in the demo.</description>
+    <policyRule>
+      <name>Require architect approval</name>
+      <policyConstraints>
+        <assignment />
+      </policyConstraints>
+      <policySituation>approval</policySituation>
+      <policyActions>
+        <approval>
+          <approvalSchema>
+            <stage>
+              <approverExpression>
+                <script>
+                  <code>
+                    // Approver is any user having role "Architect"
+                    midpoint.searchOrg("Architects", "org").members
+                  </code>
+                </script>
+              </approverExpression>
+              <outcomeIfNoApprover>REJECT</outcomeIfNoApprover>
+            </stage>
+          </approvalSchema>
+        </approval>
+      </policyActions>
+    </policyRule>
+  </role>
+</object>

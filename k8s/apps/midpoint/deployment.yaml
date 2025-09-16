@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: midpoint
+  namespace: iam
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: midpoint }
+  template:
+    metadata:
+      labels: { app: midpoint }
+    spec:
+      containers:
+        - name: midpoint
+          image: evolveum/midpoint:4.9
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: MP_SET_midpoint_administrator_initialPassword
+              valueFrom:
+                secretKeyRef:
+                  name: midpoint-admin
+                  key: password
+            - name: MIDPOINT_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: midpoint-db-app
+                  key: password
+          volumeMounts:
+            - name: midpoint-home
+              mountPath: /opt/midpoint/var
+            - name: config-xml
+              mountPath: /opt/midpoint/var/config.xml
+              subPath: config.xml
+      volumes:
+        - name: midpoint-home
+          emptyDir: {}
+        - name: config-xml
+          configMap:
+            name: midpoint-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: midpoint
+  namespace: iam
+spec:
+  selector: { app: midpoint }
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: midpoint
+  namespace: iam
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "16m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: mp.127.0.0.1.nip.io  # patched by you later (optional)
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: midpoint
+                port:
+                  number: 8080
