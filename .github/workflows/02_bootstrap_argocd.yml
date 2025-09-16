@@ -92,20 +92,15 @@ jobs:
           fi
           SECRET_NAME="repo-${sanitized}"
 
-          kubectl apply -f - <<EOF
-          apiVersion: v1
-          kind: Secret
-          metadata:
-            name: ${SECRET_NAME}
-            namespace: argocd
-            labels:
-              argocd.argoproj.io/secret-type: repository
-          type: Opaque
-          stringData:
-            url: https://github.com/${REPO_OWNER}/${REPO_NAME}
-            username: ${ARGOCD_REPO_USERNAME}
-            password: ${ARGOCD_REPO_TOKEN}
-EOF
+          kubectl -n argocd create secret generic "${SECRET_NAME}" \
+            --type=Opaque \
+            --from-literal=url="https://github.com/${REPO_OWNER}/${REPO_NAME}" \
+            --from-literal=username="${ARGOCD_REPO_USERNAME}" \
+            --from-literal=password="${ARGOCD_REPO_TOKEN}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl -n argocd label secret "${SECRET_NAME}" \
+            argocd.argoproj.io/secret-type=repository --overwrite
 
           echo "Configured Argo CD repository credentials in secret ${SECRET_NAME}"
 
