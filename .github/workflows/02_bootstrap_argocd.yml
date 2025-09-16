@@ -68,6 +68,27 @@ jobs:
           sleep 60
           kubectl -n argocd wait --for=condition=Synced applications/addons --timeout=300s || true
 
+      - name: Wait for cnpg-operator Argo CD application
+        run: |
+          echo "Waiting for Argo CD application cnpg-operator to be created..."
+          found_app=0
+          for attempt in $(seq 1 30); do
+            if kubectl -n argocd get application cnpg-operator >/dev/null 2>&1; then
+              found_app=1
+              break
+            fi
+            echo "Application cnpg-operator not found yet (attempt ${attempt}/30); sleeping 10s"
+            sleep 10
+          done
+
+          if [ "$found_app" -ne 1 ]; then
+            echo "Timed out waiting for cnpg-operator Application to be created by Argo CD"
+            exit 1
+          fi
+
+          kubectl -n argocd wait --for=condition=Synced applications/cnpg-operator --timeout=300s
+          kubectl -n argocd wait --for=condition=Healthy applications/cnpg-operator --timeout=300s || true
+
       - name: Wait for CNPG operator CRDs
         run: |
           echo "Waiting for CloudNativePG CRDs to become available..."
