@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: addons
+  name: apps
   namespace: argocd
 spec:
   project: default
@@ -11,7 +11,7 @@ spec:
   source:
     repoURL: https://github.com/${REPO_OWNER}/${REPO_NAME}
     targetRevision: HEAD
-    path: k8s/addons
+    path: k8s/apps
   syncPolicy:
     automated:
       prune: true

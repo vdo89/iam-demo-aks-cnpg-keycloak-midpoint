@@ -148,12 +148,6 @@ jobs:
           kubectl apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/26.3.4/kubernetes/keycloakrealmimports.k8s.keycloak.org-v1.yml
           kubectl apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/26.3.4/kubernetes/kubernetes.yml
 
-      - name: Deploy Keycloak (binds to CNPG)
-        run: |
-          kubectl apply -f k8s/apps/keycloak/keycloak.yaml
-          kubectl -n ${{ inputs.NAMESPACE_IAM }} rollout status deploy/rws-keycloak --timeout=600s || true
-
-
       - name: Prepare midPoint config and admin secret
         env:
           MIDPOINT_ADMIN_PASSWORD: ${{ secrets.MIDPOINT_ADMIN_PASSWORD }}
@@ -164,13 +158,30 @@ jobs:
           kubectl -n ${{ inputs.NAMESPACE_IAM }} create configmap midpoint-config \
             --from-file=config.xml=k8s/apps/midpoint/config.xml \
             --dry-run=client -o yaml | kubectl apply -f -
-      - name: Deploy midPoint (binds to CNPG)
-        env:
-          MIDPOINT_ADMIN_PASSWORD: ${{ secrets.MIDPOINT_ADMIN_PASSWORD }}
+
+      - name: Wait for Keycloak operator CRDs
         run: |
-          kubectl apply -f k8s/apps/midpoint/deployment.yaml
-          kubectl -n ${{ inputs.NAMESPACE_IAM }} set env deploy/midpoint MIDPOINT_ADMIN_PASSWORD="$MIDPOINT_ADMIN_PASSWORD" --containers=midpoint || true
-          kubectl -n ${{ inputs.NAMESPACE_IAM }} rollout status deploy/midpoint --timeout=600s || true
+          echo "Waiting for Keycloak CRDs to become available..."
+          for crd in keycloaks.k8s.keycloak.org keycloakrealmimports.k8s.keycloak.org; do
+            kubectl wait --for=condition=Established crd/${crd} --timeout=300s
+          done
+          for ns in keycloak-system keycloak default; do
+            if kubectl -n "$ns" get deployment keycloak-operator >/dev/null 2>&1; then
+              kubectl -n "$ns" wait --for=condition=Available deployment/keycloak-operator --timeout=300s || true
+              break
+            fi
+          done
+
+      - name: Create Argo CD application for iam apps (Keycloak + midPoint)
+        run: |
+          export REPO_OWNER="${GITHUB_REPOSITORY%%/*}"
+          export REPO_NAME="${GITHUB_REPOSITORY##*/}"
+          envsubst < k8s/argocd/apps.yaml | kubectl apply -f -
+
+      - name: Wait for iam apps Argo CD application
+        run: |
+          kubectl -n argocd wait --for=condition=Synced applications/apps --timeout=600s
+          kubectl -n argocd wait --for=condition=Healthy applications/apps --timeout=600s || true
 
       - name: Show ingress endpoints (if available)
         run: |
