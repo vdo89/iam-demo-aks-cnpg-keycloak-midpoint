@@ -48,6 +48,9 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
    - Fetch AKS kubeconfig (OIDC auth)
    - Install **Argo CD**
    - Sync **addons** via Argo: Ingress-NGINX, cert-manager, CNPG Operator
+     - The CNPG Argo CD application enables **Server Side Apply** so the large CRDs can be created without
+       hitting the Kubernetes annotation size limit. Ensure your Argo CD version supports the
+       `ServerSideApply` sync option (v2.5+).
    - Create **CNPG** cluster `iam-db` (+ Azure Blob backup config)
    - Install **Keycloak Operator** then create a **Keycloak** CR bound to CNPG
    - Deploy **midPoint** bound to CNPG
