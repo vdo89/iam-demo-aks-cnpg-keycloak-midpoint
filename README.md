@@ -18,6 +18,8 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
   - `AZURE_TENANT_ID` – your Entra tenant ID
   - `AZURE_SUBSCRIPTION_ID` – your subscription ID
   - `AZURE_CLIENT_ID` – the app registration **client ID** created for OIDC
+  - `ARGOCD_REPO_USERNAME` – GitHub username that owns a Personal Access Token for Argo CD
+  - `ARGOCD_REPO_TOKEN` – GitHub Personal Access Token (Classic) with **repo** scope so Argo CD can clone this repo
   - (Optional) `LOCATION` – default `westeurope`
   - (Optional) `RESOURCE_PREFIX` – short prefix, default `rwsdemo`
   - **DB secrets** (you can change later):
@@ -27,6 +29,9 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
   - **midPoint admin**: `MIDPOINT_ADMIN_PASSWORD` – initial `administrator` password
 
 > **Tip**: For the first run, keep short, simple passwords; rotate afterwards.
+
+> **Argo CD access**: Provide the repository username/token secrets above whenever the repo is private. Without them the
+> bootstrap workflow cannot register the repo with Argo CD, so it will never sync the Kubernetes applications.
 
 ---
 

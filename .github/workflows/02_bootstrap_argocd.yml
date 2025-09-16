@@ -65,6 +65,50 @@ jobs:
           echo "Waiting for Argo CD application controller statefulset"
           kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=300s
 
+      - name: Configure Argo CD repository credentials
+        shell: bash
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          ARGOCD_REPO_USERNAME: ${{ secrets.ARGOCD_REPO_USERNAME }}
+          ARGOCD_REPO_TOKEN: ${{ secrets.ARGOCD_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          REPO_OWNER="${GITHUB_REPOSITORY%%/*}"
+          REPO_NAME="${GITHUB_REPOSITORY##*/}"
+          if [ -z "${ARGOCD_REPO_USERNAME}" ] || [ -z "${ARGOCD_REPO_TOKEN}" ]; then
+            echo "Secrets ARGOCD_REPO_USERNAME and ARGOCD_REPO_TOKEN not provided; checking if repository is public..."
+            if curl -sS "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}" | jq -e '.private == false' >/dev/null; then
+              echo "Repository is public; skipping Argo CD repository secret."
+              exit 0
+            fi
+            echo "Repository appears to be private. Provide ARGOCD_REPO_USERNAME and ARGOCD_REPO_TOKEN secrets so Argo CD can sync."
+            exit 1
+          fi
+
+          sanitized=$(printf '%s' "${REPO_OWNER}-${REPO_NAME}" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed 's/^-*//;s/-*$//')
+          if [ -z "${sanitized}" ]; then
+            sanitized="repo"
+          fi
+          SECRET_NAME="repo-${sanitized}"
+
+          kubectl apply -f - <<EOF
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: ${SECRET_NAME}
+            namespace: argocd
+            labels:
+              argocd.argoproj.io/secret-type: repository
+          type: Opaque
+          stringData:
+            url: https://github.com/${REPO_OWNER}/${REPO_NAME}
+            username: ${ARGOCD_REPO_USERNAME}
+            password: ${ARGOCD_REPO_TOKEN}
+EOF
+
+          echo "Configured Argo CD repository credentials in secret ${SECRET_NAME}"
+
       - name: Sync addons via Argo (Ingress-NGINX, cert-manager, CNPG operator)
         run: |
           export REPO_OWNER="${GITHUB_REPOSITORY%%/*}"
