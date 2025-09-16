@@ -142,6 +142,28 @@ jobs:
           echo "Timed out waiting for CloudNativePG CRDs"
           exit 1
 
+      - name: Wait for CNPG webhook service endpoints
+        run: |
+          echo "Ensuring cnpg-webhook-service has ready endpoints..."
+          for attempt in $(seq 1 30); do
+            if kubectl -n cnpg-system get endpoints cnpg-webhook-service >/dev/null 2>&1; then
+              ready_endpoints=$(kubectl -n cnpg-system get endpoints cnpg-webhook-service -o jsonpath='{range .subsets[*].addresses[*]}{.ip} {end}' 2>/dev/null)
+              if [ -n "${ready_endpoints}" ]; then
+                echo "cnpg-webhook-service has ready endpoints: ${ready_endpoints}"
+                exit 0
+              fi
+              not_ready_endpoints=$(kubectl -n cnpg-system get endpoints cnpg-webhook-service -o jsonpath='{range .subsets[*].notReadyAddresses[*]}{.ip} {end}' 2>/dev/null)
+              echo "cnpg-webhook-service found but endpoints are not ready yet (attempt ${attempt}/30). NotReady: ${not_ready_endpoints:-none}"
+            else
+              echo "cnpg-webhook-service not created yet (attempt ${attempt}/30)"
+            fi
+            sleep 10
+          done
+          echo "Timed out waiting for cnpg-webhook-service endpoints"
+          kubectl -n cnpg-system get pods -l app.kubernetes.io/instance=cnpg -o wide || true
+          kubectl -n cnpg-system get endpoints cnpg-webhook-service -o yaml || true
+          exit 1
+
       - name: Create CNPG secrets (DB users + superuser)
         run: |
           kubectl -n ${{ inputs.NAMESPACE_IAM }} create secret generic cnpg-superuser \
