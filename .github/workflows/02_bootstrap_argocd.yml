@@ -194,10 +194,134 @@ jobs:
             --from-literal=AZURE_STORAGE_KEY="$AZURE_STORAGE_KEY" \
             --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Apply CNPG cluster (iam-db)
+      - name: Validate CNPG prerequisites
+        env:
+          NAMESPACE_IAM: ${{ inputs.NAMESPACE_IAM }}
+        shell: bash
         run: |
-          sed "s/{{STORAGE_ACCOUNT}}/${{ inputs.STORAGE_ACCOUNT }}/g" k8s/apps/cnpg/cluster.yaml | kubectl apply -f -
-          kubectl -n ${{ inputs.NAMESPACE_IAM }} wait cluster/iam-db --for=condition=Ready --timeout=600s || true
+          set -euo pipefail
+
+          ns="${NAMESPACE_IAM}"
+          echo "Checking required database secrets exist in namespace ${ns}"
+          missing=0
+          for secret in cnpg-superuser keycloak-db-app midpoint-db-app cnpg-azure-backup; do
+            if ! kubectl -n "${ns}" get secret "${secret}" >/dev/null 2>&1; then
+              echo "ERROR: secret ${secret} is missing from namespace ${ns}"
+              missing=1
+            fi
+          done
+
+          if [ "${missing}" -ne 0 ]; then
+            echo "One or more required secrets are missing; aborting."
+            exit 1
+          fi
+
+          check_secret_key() {
+            local secret="$1"
+            local key="$2"
+            local value
+            value=$(kubectl -n "${ns}" get secret "${secret}" -o jsonpath="{.data.${key}}" 2>/dev/null || true)
+            if [ -z "${value}" ]; then
+              echo "ERROR: secret ${secret} does not contain key ${key}"
+              missing=1
+            fi
+          }
+
+          check_secret_key cnpg-superuser password
+          check_secret_key keycloak-db-app username
+          check_secret_key keycloak-db-app password
+          check_secret_key midpoint-db-app username
+          check_secret_key midpoint-db-app password
+          check_secret_key cnpg-azure-backup AZURE_STORAGE_ACCOUNT
+          check_secret_key cnpg-azure-backup AZURE_STORAGE_KEY
+
+          if [ "${missing}" -ne 0 ]; then
+            echo "Secret validation failed; aborting."
+            exit 1
+          fi
+
+          echo "Confirming CNPG operator deployment readiness"
+          kubectl -n cnpg-system get deployment cnpg-cloudnative-pg
+          if ! kubectl -n cnpg-system rollout status deployment/cnpg-cloudnative-pg --timeout=180s; then
+            echo "WARNING: cnpg-cloudnative-pg deployment not yet available"
+          fi
+
+          echo "Inspecting CNPG webhook service endpoints"
+          if ! kubectl -n cnpg-system get service cnpg-webhook-service >/dev/null 2>&1; then
+            echo "ERROR: cnpg-webhook-service not found in cnpg-system namespace"
+            exit 1
+          fi
+
+          ready_endpoints=$(kubectl -n cnpg-system get endpoints cnpg-webhook-service -o jsonpath='{range .subsets[*].addresses[*]}{.ip} {end}' 2>/dev/null || true)
+          if [ -z "${ready_endpoints}" ]; then
+            echo "ERROR: cnpg-webhook-service currently has no ready endpoints"
+            kubectl -n cnpg-system get endpoints cnpg-webhook-service -o yaml || true
+            exit 1
+          fi
+
+          echo "cnpg-webhook-service ready endpoints: ${ready_endpoints}"
+
+      - name: Apply CNPG cluster (iam-db)
+        env:
+          STORAGE_ACCOUNT: ${{ inputs.STORAGE_ACCOUNT }}
+          NAMESPACE_IAM: ${{ inputs.NAMESPACE_IAM }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          manifest="$(mktemp)"
+          trap 'rm -f "${manifest}"' EXIT
+          sed "s/{{STORAGE_ACCOUNT}}/${STORAGE_ACCOUNT}/g" k8s/apps/cnpg/cluster.yaml > "${manifest}"
+
+          max_attempts=5
+          for attempt in $(seq 1 "${max_attempts}"); do
+            echo "Applying CNPG cluster manifest (attempt ${attempt}/${max_attempts})"
+
+            prereqs_ready=1
+            if ! kubectl -n cnpg-system rollout status deployment/cnpg-cloudnative-pg --timeout=180s; then
+              echo "cnpg-cloudnative-pg deployment not yet available"
+              prereqs_ready=0
+            fi
+
+            if ! kubectl -n cnpg-system wait --for=condition=Ready pod -l app.kubernetes.io/name=cloudnative-pg --timeout=180s; then
+              echo "CNPG operator pods are not yet in Ready state"
+              prereqs_ready=0
+            fi
+
+            ready_endpoints=$(kubectl -n cnpg-system get endpoints cnpg-webhook-service -o jsonpath='{range .subsets[*].addresses[*]}{.ip} {end}' 2>/dev/null || true)
+            if [ -z "${ready_endpoints}" ]; then
+              echo "cnpg-webhook-service has no ready endpoints before attempt ${attempt}"
+              kubectl -n cnpg-system get endpoints cnpg-webhook-service -o yaml || true
+              prereqs_ready=0
+            else
+              echo "cnpg-webhook-service endpoints: ${ready_endpoints}"
+            fi
+
+            if [ "${prereqs_ready}" -ne 1 ]; then
+              echo "CNPG operator prerequisites are not ready, waiting before retrying"
+              sleep 20
+              continue
+            fi
+
+            if kubectl apply -f "${manifest}"; then
+              echo "CNPG cluster manifest applied successfully"
+              success=1
+              break
+            fi
+
+            echo "kubectl apply failed on attempt ${attempt}; showing CNPG operator diagnostics"
+            kubectl -n cnpg-system get pods -l app.kubernetes.io/name=cloudnative-pg -o wide || true
+            kubectl -n cnpg-system describe deployment cnpg-cloudnative-pg || true
+            kubectl -n cnpg-system get endpoints cnpg-webhook-service -o yaml || true
+            sleep 20
+          done
+
+          if [ "${success:-0}" -ne 1 ]; then
+            echo "Failed to apply CNPG cluster manifest after ${max_attempts} attempts"
+            exit 1
+          fi
+
+          kubectl -n "${NAMESPACE_IAM}" wait cluster/iam-db --for=condition=Ready --timeout=600s || true
 
       - name: Install Keycloak Operator (CRDs + operator Deployment)
         run: |
