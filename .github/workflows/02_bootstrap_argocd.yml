@@ -371,23 +371,67 @@ jobs:
         run: |
           set -euo pipefail
 
-          kubectl -n ${{ inputs.NAMESPACE_IAM }} create secret generic cnpg-superuser \
-            --type=kubernetes.io/basic-auth \
-            --from-literal=username='postgres' \
-            --from-literal=password='${{ secrets.POSTGRES_SUPERUSER_PASSWORD }}' \
-            --dry-run=client -o yaml | kubectl apply -f -
+          ns="${{ inputs.NAMESPACE_IAM }}"
 
-          kubectl -n ${{ inputs.NAMESPACE_IAM }} create secret generic keycloak-db-app \
-            --type=kubernetes.io/basic-auth \
-            --from-literal=username='keycloak' \
-            --from-literal=password='${{ secrets.KEYCLOAK_DB_PASSWORD }}' \
-            --dry-run=client -o yaml | kubectl apply -f -
+          if [ -z "${ns}" ]; then
+            echo "NAMESPACE_IAM input must not be empty"
+            exit 1
+          fi
 
-          kubectl -n ${{ inputs.NAMESPACE_IAM }} create secret generic midpoint-db-app \
-            --type=kubernetes.io/basic-auth \
-            --from-literal=username='midpoint' \
-            --from-literal=password='${{ secrets.MIDPOINT_DB_PASSWORD }}' \
-            --dry-run=client -o yaml | kubectl apply -f -
+          ensure_secret_type() {
+            local secret_name="$1"
+            local expected_type="$2"
+
+            if kubectl -n "${ns}" get secret "${secret_name}" >/dev/null 2>&1; then
+              local current_type
+              current_type=$(kubectl -n "${ns}" get secret "${secret_name}" -o jsonpath='{.type}')
+
+              if [ "${current_type}" != "${expected_type}" ]; then
+                echo "Secret ${secret_name} exists with type ${current_type}; recreating with type ${expected_type}"
+                kubectl -n "${ns}" delete secret "${secret_name}" --wait=false --ignore-not-found
+                echo "Waiting for secret ${secret_name} to be fully removed before recreating"
+                for attempt in $(seq 1 12); do
+                  if ! kubectl -n "${ns}" get secret "${secret_name}" >/dev/null 2>&1; then
+                    echo "Secret ${secret_name} removed"
+                    break
+                  fi
+
+                  if [ "${attempt}" -eq 12 ]; then
+                    echo "Secret ${secret_name} still present after waiting; aborting"
+                    exit 1
+                  fi
+
+                  sleep 5
+                done
+              fi
+            fi
+          }
+
+          apply_basic_auth_secret() {
+            local secret_name="$1"
+            local username="$2"
+            local password="$3"
+            local password_source="$4"
+
+            if [ -z "${password}" ]; then
+              echo "ERROR: password value for secret ${secret_name} is empty (expected GitHub secret ${password_source})"
+              exit 1
+            fi
+
+            ensure_secret_type "${secret_name}" "kubernetes.io/basic-auth"
+
+            kubectl -n "${ns}" create secret generic "${secret_name}" \
+              --type=kubernetes.io/basic-auth \
+              --from-literal=username="${username}" \
+              --from-literal=password="${password}" \
+              --dry-run=client -o yaml | kubectl apply -f -
+
+            echo "Secret ${secret_name} ensured with type kubernetes.io/basic-auth"
+          }
+
+          apply_basic_auth_secret "cnpg-superuser" "postgres" "${{ secrets.POSTGRES_SUPERUSER_PASSWORD }}" "POSTGRES_SUPERUSER_PASSWORD"
+          apply_basic_auth_secret "keycloak-db-app" "keycloak" "${{ secrets.KEYCLOAK_DB_PASSWORD }}" "KEYCLOAK_DB_PASSWORD"
+          apply_basic_auth_secret "midpoint-db-app" "midpoint" "${{ secrets.MIDPOINT_DB_PASSWORD }}" "MIDPOINT_DB_PASSWORD"
 
       - name: Create Azure Blob secret for CNPG backups (connection string or key)
         shell: bash
