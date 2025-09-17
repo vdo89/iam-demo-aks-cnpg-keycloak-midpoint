@@ -372,15 +372,19 @@ jobs:
           set -euo pipefail
 
           kubectl -n ${{ inputs.NAMESPACE_IAM }} create secret generic cnpg-superuser \
+            --type=kubernetes.io/basic-auth \
+            --from-literal=username='postgres' \
             --from-literal=password='${{ secrets.POSTGRES_SUPERUSER_PASSWORD }}' \
             --dry-run=client -o yaml | kubectl apply -f -
 
           kubectl -n ${{ inputs.NAMESPACE_IAM }} create secret generic keycloak-db-app \
+            --type=kubernetes.io/basic-auth \
             --from-literal=username='keycloak' \
             --from-literal=password='${{ secrets.KEYCLOAK_DB_PASSWORD }}' \
             --dry-run=client -o yaml | kubectl apply -f -
 
           kubectl -n ${{ inputs.NAMESPACE_IAM }} create secret generic midpoint-db-app \
+            --type=kubernetes.io/basic-auth \
             --from-literal=username='midpoint' \
             --from-literal=password='${{ secrets.MIDPOINT_DB_PASSWORD }}' \
             --dry-run=client -o yaml | kubectl apply -f -
@@ -435,6 +439,7 @@ jobs:
             fi
           }
 
+          check_secret_key cnpg-superuser username
           check_secret_key cnpg-superuser password
           check_secret_key keycloak-db-app username
           check_secret_key keycloak-db-app password
