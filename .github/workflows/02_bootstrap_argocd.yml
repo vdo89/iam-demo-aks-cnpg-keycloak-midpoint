@@ -732,20 +732,20 @@ spec:
                   EXECUTE format('ALTER ROLE %I LOGIN', role_name);
                 END IF;
               END
-              $do$;
+                $do$;
 
-              DO $do$
-              DECLARE
-                role_name text := :'mp_user';
-              BEGIN
-                IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'midpoint') THEN
-                  EXECUTE format('CREATE DATABASE %I OWNER %I', 'midpoint', role_name);
-                ELSE
-                  EXECUTE format('ALTER DATABASE %I OWNER TO %I', 'midpoint', role_name);
-                END IF;
-              END
-              $do$;
-SQL
+                DO $do$
+                DECLARE
+                  role_name text := :'mp_user';
+                BEGIN
+                  IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'midpoint') THEN
+                    EXECUTE format('CREATE DATABASE %I OWNER %I', 'midpoint', role_name);
+                  ELSE
+                    EXECUTE format('ALTER DATABASE %I OWNER TO %I', 'midpoint', role_name);
+                  END IF;
+                END
+                $do$;
+                SQL
 YAML
 
           export NS="${ns}"
