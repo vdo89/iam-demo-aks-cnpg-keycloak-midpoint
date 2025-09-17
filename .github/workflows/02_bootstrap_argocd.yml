@@ -134,7 +134,63 @@ jobs:
           done
 
           echo "Rendering CloudNativePG CRDs for version 0.22.1"
-          helm show crds cloudnative-pg/cloudnative-pg --version 0.22.1 > /tmp/cloudnative-pg-crds.yaml
+          if ! helm show crds cloudnative-pg/cloudnative-pg --version 0.22.1 > /tmp/cloudnative-pg-crds.yaml; then
+            echo "helm show crds failed; aborting"
+            exit 1
+          fi
+
+          if [ ! -s /tmp/cloudnative-pg-crds.yaml ]; then
+            echo "No CRDs were returned by 'helm show crds'; falling back to helm template rendering"
+            helm template cloudnative-pg-crds cloudnative-pg/cloudnative-pg \
+              --version 0.22.1 \
+              --include-crds \
+              --namespace cnpg-system > /tmp/cloudnative-pg-crds-rendered.yaml
+
+            python3 <<'PY'
+import pathlib
+import sys
+
+rendered_path = pathlib.Path("/tmp/cloudnative-pg-crds-rendered.yaml")
+output_path = pathlib.Path("/tmp/cloudnative-pg-crds.yaml")
+
+if not rendered_path.exists():
+    print("Rendered CRD manifest not found", file=sys.stderr)
+    sys.exit(1)
+
+docs = []
+current = []
+for line in rendered_path.read_text().splitlines():
+    if line.strip() == '---':
+        if current:
+            docs.append('\n'.join(current).strip())
+            current = []
+        continue
+    current.append(line)
+if current:
+    docs.append('\n'.join(current).strip())
+
+crd_docs = []
+for doc in docs:
+    for line in doc.splitlines():
+        stripped = line.strip()
+        if stripped.startswith('kind:'):
+            if stripped.split(':', 1)[1].strip() == 'CustomResourceDefinition':
+                crd_docs.append(doc)
+            break
+
+if not crd_docs:
+    print("No CustomResourceDefinition documents found in rendered template", file=sys.stderr)
+    sys.exit(1)
+
+output_path.write_text('---\n'.join(crd_docs) + '\n')
+PY
+          fi
+
+          if [ ! -s /tmp/cloudnative-pg-crds.yaml ]; then
+            echo "Failed to render CloudNativePG CRDs"
+            ls -l /tmp/cloudnative-pg-crds*
+            exit 1
+          fi
 
           echo "Applying CloudNativePG CRDs with server-side apply"
           kubectl apply --server-side -f /tmp/cloudnative-pg-crds.yaml
