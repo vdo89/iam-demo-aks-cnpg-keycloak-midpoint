@@ -47,7 +47,9 @@ jobs:
           cluster-name: ${{ inputs.AKS_NAME }}
 
       - name: Create namespaces
+        shell: bash
         run: |
+          set -euo pipefail
           kubectl create ns argocd --dry-run=client -o yaml | kubectl apply -f -
           kubectl create ns ingress-nginx --dry-run=client -o yaml | kubectl apply -f -
           kubectl create ns cert-manager --dry-run=client -o yaml | kubectl apply -f -
@@ -55,7 +57,9 @@ jobs:
           kubectl create ns ${{ inputs.NAMESPACE_IAM }} --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Install Argo CD (stable manifest)
+        shell: bash
         run: |
+          set -euo pipefail
           kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
           echo "Waiting for Argo CD core components to become ready..."
           for workload in deploy/argocd-server deploy/argocd-repo-server deploy/argocd-redis deploy/argocd-dex-server; do
@@ -98,14 +102,14 @@ jobs:
             --from-literal=username="${ARGOCD_REPO_USERNAME}" \
             --from-literal=password="${ARGOCD_REPO_TOKEN}" \
             --dry-run=client -o yaml | kubectl apply -f -
-
           kubectl -n argocd label secret "${SECRET_NAME}" \
             argocd.argoproj.io/secret-type=repository --overwrite
-
           echo "Configured Argo CD repository credentials in secret ${SECRET_NAME}"
 
       - name: Sync addons via Argo (Ingress-NGINX, cert-manager, CNPG operator)
+        shell: bash
         run: |
+          set -euo pipefail
           export REPO_OWNER="${GITHUB_REPOSITORY%%/*}"
           export REPO_NAME="${GITHUB_REPOSITORY##*/}"
           envsubst < k8s/argocd/root-apps.yaml | kubectl apply -f -
@@ -134,7 +138,9 @@ jobs:
           kubectl -n argocd get application addons
 
       - name: Wait for cnpg-operator Argo CD application
+        shell: bash
         run: |
+          set -euo pipefail
           echo "Waiting for Argo CD application cnpg-operator to be created..."
           for attempt in $(seq 1 60); do
             if kubectl -n argocd get application cnpg-operator >/dev/null 2>&1; then
@@ -155,7 +161,10 @@ jobs:
           exit 1
 
       - name: Wait for CNPG operator CRDs
+        shell: bash
         run: |
+          set -euo pipefail
+
           echo "Waiting for CloudNativePG CRDs to become available..."
           for attempt in $(seq 1 30); do
             if kubectl get crd clusters.postgresql.cnpg.io >/dev/null 2>&1; then
@@ -250,7 +259,10 @@ jobs:
           exit 1
 
       - name: Create CNPG secrets (DB users + superuser)
+        shell: bash
         run: |
+          set -euo pipefail
+
           kubectl -n ${{ inputs.NAMESPACE_IAM }} create secret generic cnpg-superuser \
             --from-literal=password='${{ secrets.POSTGRES_SUPERUSER_PASSWORD }}' \
             --dry-run=client -o yaml | kubectl apply -f -
@@ -266,10 +278,13 @@ jobs:
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Create Azure Blob secret for CNPG backups (connection string or key)
+        shell: bash
         env:
           AZURE_STORAGE_ACCOUNT: ${{ inputs.STORAGE_ACCOUNT }}
           AZURE_STORAGE_KEY: ${{ secrets.AZURE_STORAGE_KEY }}
         run: |
+          set -euo pipefail
+
           if [ -z "$AZURE_STORAGE_KEY" ]; then
             echo "AZURE_STORAGE_KEY secret is required for demo backup. Add it in repo secrets."
             exit 1
@@ -519,15 +534,20 @@ jobs:
           kubectl -n "${NAMESPACE_IAM}" wait cluster/iam-db --for=condition=Ready --timeout=600s || true
 
       - name: Install Keycloak Operator (CRDs + operator Deployment)
+        shell: bash
         run: |
+          set -euo pipefail
           kubectl apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/26.3.4/kubernetes/keycloaks.k8s.keycloak.org-v1.yml
           kubectl apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/26.3.4/kubernetes/keycloakrealmimports.k8s.keycloak.org-v1.yml
           kubectl apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/26.3.4/kubernetes/kubernetes.yml
 
       - name: Prepare midPoint config and admin secret
+        shell: bash
         env:
           MIDPOINT_ADMIN_PASSWORD: ${{ secrets.MIDPOINT_ADMIN_PASSWORD }}
         run: |
+          set -euo pipefail
+
           kubectl -n ${{ inputs.NAMESPACE_IAM }} create secret generic midpoint-admin \
             --from-literal=password="$MIDPOINT_ADMIN_PASSWORD" \
             --dry-run=client -o yaml | kubectl apply -f -
@@ -536,7 +556,9 @@ jobs:
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Wait for Keycloak operator CRDs
+        shell: bash
         run: |
+          set -euo pipefail
           echo "Waiting for Keycloak CRDs to become available..."
           for crd in keycloaks.k8s.keycloak.org keycloakrealmimports.k8s.keycloak.org; do
             kubectl wait --for=condition=Established crd/${crd} --timeout=300s
@@ -549,18 +571,24 @@ jobs:
           done
 
       - name: Create Argo CD application for iam apps (Keycloak + midPoint)
+        shell: bash
         run: |
+          set -euo pipefail
           export REPO_OWNER="${GITHUB_REPOSITORY%%/*}"
           export REPO_NAME="${GITHUB_REPOSITORY##*/}"
           envsubst < k8s/argocd/apps.yaml | kubectl apply -f -
 
       - name: Wait for iam apps Argo CD application
+        shell: bash
         run: |
+          set -euo pipefail
           kubectl -n argocd wait --for=condition=Synced applications/apps --timeout=600s
           kubectl -n argocd wait --for=condition=Healthy applications/apps --timeout=600s || true
 
       - name: Show ingress endpoints (if available)
+        shell: bash
         run: |
+          set -euo pipefail
           echo "Ingress-NGINX service:"
           kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide || true
           echo "Keycloak service:"
