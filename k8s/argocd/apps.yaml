@@ -12,6 +12,13 @@ spec:
     repoURL: https://github.com/${REPO_OWNER}/${REPO_NAME}
     targetRevision: HEAD
     path: k8s/apps
+  ignoreDifferences:
+    - group: k8s.keycloak.org
+      kind: KeycloakRealmImport
+      name: rws-realm-import
+      namespace: iam
+      jsonPointers:
+        - /spec/realm
   syncPolicy:
     automated:
       prune: true

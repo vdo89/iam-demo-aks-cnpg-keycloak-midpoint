@@ -32,36 +32,13 @@ spec:
       cpu: "1"
       memory: "2Gi"
 ---
-# Minimal realm import to create realm 'rws' and a demo client
 apiVersion: k8s.keycloak.org/v2alpha1
 kind: KeycloakRealmImport
 metadata:
   name: rws-realm-import
   namespace: iam
+  annotations:
+    iam.evolveum.com/realm-checksum: $(REALM_CHECKSUM)
 spec:
   keycloakCRName: rws-keycloak
-  realm:
-    id: rws
-    realm: rws
-    displayName: RWS Demo
-    enabled: true
-    registrationAllowed: false
-    loginWithEmailAllowed: true
-    resetPasswordAllowed: true
-    sslRequired: none
-    webAuthnPolicy:
-      rpEntityName: "RWS Demo"
-      userVerificationRequirement: "required"
-      createTimeout: 120000
-      avoidSameAuthenticatorRegister: true
-    clients:
-      - clientId: rws-midpoint
-        name: rws-midpoint
-        protocol: openid-connect
-        publicClient: true
-        directAccessGrantsEnabled: true
-        standardFlowEnabled: true
-        redirectUris:
-          - "http://*/midpoint/*"
-        webOrigins:
-          - "*"
+  realm: {}

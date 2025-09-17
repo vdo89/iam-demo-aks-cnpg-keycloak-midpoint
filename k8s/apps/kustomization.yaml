@@ -3,3 +3,24 @@ kind: Kustomization
 resources:
   - keycloak/keycloak.yaml
   - midpoint/deployment.yaml
+patches:
+  - path: keycloak/rws-realm.yaml
+    target:
+      kind: KeycloakRealmImport
+      name: rws-realm-import
+configMapGenerator:
+  - name: rws-realm-import-checksum
+    files:
+      - realm.yaml=keycloak/rws-realm.yaml
+    options:
+      disableNameSuffixHash: false
+      annotations:
+        argocd.argoproj.io/sync-options: Skip=true
+vars:
+  - name: REALM_CHECKSUM
+    objref:
+      apiVersion: v1
+      kind: ConfigMap
+      name: rws-realm-import-checksum
+    fieldref:
+      fieldpath: metadata.name
