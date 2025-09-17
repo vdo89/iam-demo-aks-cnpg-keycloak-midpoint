@@ -472,25 +472,38 @@ jobs:
           fi
 
           echo "Ensuring Azure Blob container ${container} exists in account ${AZURE_STORAGE_ACCOUNT}"
+
+          use_connection_string=false
+          if [[ "${AZURE_STORAGE_KEY}" == *"DefaultEndpointsProtocol="* ]] || \
+             [[ "${AZURE_STORAGE_KEY}" == *"AccountKey="* ]] || \
+             [[ "${AZURE_STORAGE_KEY}" == *"BlobEndpoint="* ]]; then
+            use_connection_string=true
+            echo "AZURE_STORAGE_KEY appears to be an Azure Storage connection string; using it for az storage commands"
+          fi
+
+          az_auth_args=()
+          if [ "${use_connection_string}" = true ]; then
+            az_auth_args+=("--connection-string" "${AZURE_STORAGE_KEY}")
+          else
+            az_auth_args+=("--account-name" "${AZURE_STORAGE_ACCOUNT}" "--account-key" "${AZURE_STORAGE_KEY}")
+          fi
+
           container_exists=$(az storage container exists \
             --name "${container}" \
-            --account-name "${AZURE_STORAGE_ACCOUNT}" \
-            --account-key "${AZURE_STORAGE_KEY}" \
+            "${az_auth_args[@]}" \
             --query exists -o tsv 2>/dev/null || true)
 
           if [ "${container_exists}" != "true" ]; then
             echo "Azure container ${container} not found; creating it"
             az storage container create \
               --name "${container}" \
-              --account-name "${AZURE_STORAGE_ACCOUNT}" \
-              --account-key "${AZURE_STORAGE_KEY}" \
+              "${az_auth_args[@]}" \
               --public-access off 1>/dev/null
           fi
 
           echo "Checking for leftover WAL/archive objects under ${container}/${prefix}"
           existing_count=$(az storage blob list \
-            --account-name "${AZURE_STORAGE_ACCOUNT}" \
-            --account-key "${AZURE_STORAGE_KEY}" \
+            "${az_auth_args[@]}" \
             --container-name "${container}" \
             --prefix "${prefix}/" \
             --query "length(@)" -o tsv 2>/dev/null || echo 0)
@@ -506,16 +519,14 @@ jobs:
 
           echo "Deleting ${existing_count} Azure Blob object(s) under ${prefix}/ before bootstrapping CNPG"
           az storage blob delete-batch \
-            --account-name "${AZURE_STORAGE_ACCOUNT}" \
-            --account-key "${AZURE_STORAGE_KEY}" \
+            "${az_auth_args[@]}" \
             --source "${container}" \
             --pattern "${prefix}/*" \
             --no-progress
 
           echo "Verifying Azure backup prefix ${prefix}/ is now empty"
           remaining_count=$(az storage blob list \
-            --account-name "${AZURE_STORAGE_ACCOUNT}" \
-            --account-key "${AZURE_STORAGE_KEY}" \
+            "${az_auth_args[@]}" \
             --container-name "${container}" \
             --prefix "${prefix}/" \
             --query "length(@)" -o tsv 2>/dev/null || echo 0)
