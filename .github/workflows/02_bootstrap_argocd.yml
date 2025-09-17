@@ -441,13 +441,33 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -z "$AZURE_STORAGE_KEY" ]; then
+          AZURE_STORAGE_ACCOUNT_RAW="${AZURE_STORAGE_ACCOUNT:-}"
+          AZURE_STORAGE_ACCOUNT="$(python3 -c "import os; print(os.environ.get('AZURE_STORAGE_ACCOUNT', '').strip())")"
+
+          AZURE_STORAGE_KEY_RAW="${AZURE_STORAGE_KEY:-}"
+          AZURE_STORAGE_KEY="$(python3 -c "import os; print(os.environ.get('AZURE_STORAGE_KEY', '').strip())")"
+
+          if [ -z "${AZURE_STORAGE_ACCOUNT}" ]; then
+            echo "AZURE_STORAGE_ACCOUNT input must not be empty"
+            exit 1
+          fi
+
+          if [ -z "${AZURE_STORAGE_KEY}" ]; then
             echo "AZURE_STORAGE_KEY secret is required for demo backup. Add it in repo secrets."
             exit 1
           fi
+
+          if [ "${AZURE_STORAGE_ACCOUNT_RAW}" != "${AZURE_STORAGE_ACCOUNT}" ]; then
+            echo "Trimmed leading/trailing whitespace from AZURE_STORAGE_ACCOUNT input"
+          fi
+
+          if [ "${AZURE_STORAGE_KEY_RAW}" != "${AZURE_STORAGE_KEY}" ]; then
+            echo "Trimmed leading/trailing whitespace from AZURE_STORAGE_KEY secret value"
+          fi
+
           kubectl -n ${{ inputs.NAMESPACE_IAM }} create secret generic cnpg-azure-backup \
-            --from-literal=AZURE_STORAGE_ACCOUNT="$AZURE_STORAGE_ACCOUNT" \
-            --from-literal=AZURE_STORAGE_KEY="$AZURE_STORAGE_KEY" \
+            --from-literal=AZURE_STORAGE_ACCOUNT="${AZURE_STORAGE_ACCOUNT}" \
+            --from-literal=AZURE_STORAGE_KEY="${AZURE_STORAGE_KEY}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Purge existing CNPG Azure backup prefix
@@ -461,9 +481,32 @@ jobs:
           container="cnpg-backups"
           prefix="iam-db"
 
+          AZURE_STORAGE_ACCOUNT_RAW="${AZURE_STORAGE_ACCOUNT:-}"
+          AZURE_STORAGE_ACCOUNT="$(python3 -c "import os; print(os.environ.get('AZURE_STORAGE_ACCOUNT', '').strip())")"
+
+          AZURE_STORAGE_KEY_RAW="${AZURE_STORAGE_KEY:-}"
+          _AZ_PARSE_CODE=$'import os\nimport urllib.parse\n\nvalue = os.environ.get("AZURE_STORAGE_KEY", "")\ntrimmed = value.strip()\nif not trimmed:\n    key_type = "empty"\n    account_key = ""\n    account_name = ""\n    sas_token = ""\nelse:\n    lowered = trimmed.lower()\n    account_key = ""\n    account_name = ""\n    sas_token = ""\n    key_type = ""\n    if (("accountkey=" in lowered) or ("sharedaccesssignature=" in lowered)) and (\n        ("accountname=" in lowered) or ("blobendpoint=" in lowered) or ("defaultendpointsprotocol=" in lowered)\n    ):\n        parts = {}\n        for part in trimmed.split(";"):\n            if not part or "=" not in part:\n                continue\n            key, val = part.split("=", 1)\n            parts[key.strip().lower()] = val.strip()\n        account_key = parts.get("accountkey", "")\n        account_name = parts.get("accountname", "")\n        shared_sig = parts.get("sharedaccesssignature", "")\n        if shared_sig:\n            sas_token = shared_sig.lstrip(" ?")\n        if account_key:\n            key_type = "connection_string"\n        elif shared_sig:\n            key_type = "connection_string_sas"\n        else:\n            key_type = "connection_string"\n    if not key_type or key_type == "empty":\n        candidate = trimmed\n        if candidate.lower().startswith("https://"):\n            try:\n                parsed = urllib.parse.urlparse(candidate)\n            except Exception:\n                parsed = None\n            if parsed:\n                if parsed.query:\n                    candidate = parsed.query\n                elif parsed.fragment:\n                    candidate = parsed.fragment\n                elif parsed.path:\n                    candidate = parsed.path\n        candidate = candidate.lstrip("/?")\n        lowered_candidate = candidate.lower()\n        if "sig=" in lowered_candidate and ("se=" in lowered_candidate or "expiry=" in lowered_candidate):\n            sas_token = candidate\n            key_type = "sas"\n    if not key_type:\n        key_type = "account_key"\n\nprint(trimmed)\nprint(key_type)\nprint(account_key)\nprint(account_name)\nprint(sas_token)\n'
+          mapfile -t _AZ_STORAGE_INFO < <(python3 -c "$_AZ_PARSE_CODE")
+          unset _AZ_PARSE_CODE
+          AZURE_STORAGE_KEY="${_AZ_STORAGE_INFO[0]-}"
+          storage_key_type="${_AZ_STORAGE_INFO[1]-}"
+          connection_account_key="${_AZ_STORAGE_INFO[2]-}"
+          connection_account_name="${_AZ_STORAGE_INFO[3]-}"
+          sanitized_sas_token="${_AZ_STORAGE_INFO[4]-}"
+          unset _AZ_STORAGE_INFO
+
           if [ -z "${AZURE_STORAGE_ACCOUNT}" ]; then
-            echo "STORAGE_ACCOUNT input must not be empty"
-            exit 1
+            if [ -n "${connection_account_name}" ]; then
+              AZURE_STORAGE_ACCOUNT="${connection_account_name}"
+              echo "Derived storage account name ${AZURE_STORAGE_ACCOUNT} from AZURE_STORAGE_KEY secret"
+            else
+              echo "STORAGE_ACCOUNT input must not be empty"
+              exit 1
+            fi
+          fi
+
+          if [ "${AZURE_STORAGE_ACCOUNT_RAW}" != "${AZURE_STORAGE_ACCOUNT}" ]; then
+            echo "Trimmed leading/trailing whitespace from AZURE_STORAGE_ACCOUNT input"
           fi
 
           if [ -z "${AZURE_STORAGE_KEY}" ]; then
@@ -471,65 +514,175 @@ jobs:
             exit 0
           fi
 
-          echo "Ensuring Azure Blob container ${container} exists in account ${AZURE_STORAGE_ACCOUNT}"
-
-          use_connection_string=false
-          use_sas_token=false
-          if [[ "${AZURE_STORAGE_KEY}" == *"DefaultEndpointsProtocol="* ]] || \
-             [[ "${AZURE_STORAGE_KEY}" == *"AccountKey="* ]] || \
-             [[ "${AZURE_STORAGE_KEY}" == *"BlobEndpoint="* ]]; then
-            use_connection_string=true
-            echo "AZURE_STORAGE_KEY appears to be an Azure Storage connection string; using it for az storage commands"
-          elif [[ "${AZURE_STORAGE_KEY}" == \?sv=* ]] || \
-               [[ "${AZURE_STORAGE_KEY}" == sv=* ]] || \
-               ([[ "${AZURE_STORAGE_KEY}" == *"sig="* ]] && [[ "${AZURE_STORAGE_KEY}" == *"se="* ]]); then
-            use_sas_token=true
-            echo "AZURE_STORAGE_KEY appears to be an Azure Storage SAS token; using it for az storage commands"
+          if [ "${AZURE_STORAGE_KEY_RAW}" != "${AZURE_STORAGE_KEY}" ]; then
+            echo "Trimmed leading/trailing whitespace from AZURE_STORAGE_KEY secret"
           fi
 
-          az_auth_args=()
-          if [ "${use_connection_string}" = true ]; then
-            az_auth_args+=("--connection-string" "${AZURE_STORAGE_KEY}")
-          elif [ "${use_sas_token}" = true ]; then
-            sas_token="${AZURE_STORAGE_KEY#\?}"
-            az_auth_args+=("--account-name" "${AZURE_STORAGE_ACCOUNT}" "--sas-token" "${sas_token}")
-          else
-            az_auth_args+=("--account-name" "${AZURE_STORAGE_ACCOUNT}")
-            if [ "${use_sas_token}" = true ]; then
-              sas_token="${AZURE_STORAGE_KEY}"
-              if [[ "${sas_token}" == https://* ]]; then
-                sas_token="${sas_token#*\?}"
-              fi
-              if [[ "${sas_token}" != \?* ]]; then
-                sas_token="?${sas_token}"
-              fi
-              az_auth_args+=("--sas-token" "${sas_token}")
-            else
-              az_auth_args+=("--account-key" "${AZURE_STORAGE_KEY}")
+          if [ -n "${connection_account_name}" ] && [ "${AZURE_STORAGE_ACCOUNT,,}" != "${connection_account_name,,}" ]; then
+            echo "WARNING: STORAGE_ACCOUNT (${AZURE_STORAGE_ACCOUNT}) does not match AccountName (${connection_account_name}) parsed from AZURE_STORAGE_KEY"
+          fi
+
+          account_key_for_cli=""
+          if [ -n "${connection_account_key}" ]; then
+            account_key_for_cli="${connection_account_key}"
+          elif [ "${storage_key_type}" = "account_key" ]; then
+            account_key_for_cli="${AZURE_STORAGE_KEY}"
+          fi
+
+          declare -a candidate_methods=()
+          declare -A _seen_candidate=()
+          add_candidate() {
+            local method="$1"
+            if [ -z "${method}" ]; then
+              return
             fi
+            if [ -z "${_seen_candidate[$method]+x}" ]; then
+              candidate_methods+=("${method}")
+              _seen_candidate[$method]=1
+            fi
+          }
+
+          if [ "${storage_key_type}" = "connection_string" ] || [ "${storage_key_type}" = "connection_string_sas" ]; then
+            add_candidate "connection-string"
           fi
 
-          container_exists=$(az storage container exists \
-            --name "${container}" \
-            "${az_auth_args[@]}" \
-            --query exists -o tsv 2>/dev/null || true)
+          if [ -n "${sanitized_sas_token}" ] && [ -n "${AZURE_STORAGE_ACCOUNT}" ]; then
+            add_candidate "sas-token"
+          fi
 
-          if [ "${container_exists}" != "true" ]; then
+          if [ -n "${account_key_for_cli}" ] && [ -n "${AZURE_STORAGE_ACCOUNT}" ]; then
+            add_candidate "account-key"
+          fi
+
+          add_candidate "login"
+
+          declare -a az_auth_args=()
+          selected_method=""
+          container_exists="false"
+
+          for method in "${candidate_methods[@]}"; do
+            case "${method}" in
+              connection-string)
+                current_args=("--connection-string" "${AZURE_STORAGE_KEY}")
+                method_description="connection string"
+                ;;
+              sas-token)
+                current_args=("--account-name" "${AZURE_STORAGE_ACCOUNT}" "--sas-token" "${sanitized_sas_token}")
+                method_description="SAS token"
+                ;;
+              account-key)
+                current_args=("--account-name" "${AZURE_STORAGE_ACCOUNT}" "--account-key" "${account_key_for_cli}")
+                method_description="account key"
+                ;;
+              login)
+                current_args=("--account-name" "${AZURE_STORAGE_ACCOUNT}" "--auth-mode" "login")
+                method_description="Azure AD login"
+                ;;
+              *)
+                continue
+                ;;
+            esac
+
+            err_file=$(mktemp)
+            set +e
+            exists_output=$(az storage container exists --name "${container}" "${current_args[@]}" --query exists -o tsv 2>"${err_file}")
+            status=$?
+            set -e
+
+            if [ "${status}" -eq 0 ]; then
+              rm -f "${err_file}"
+              az_auth_args=("${current_args[@]}")
+              selected_method="${method}"
+              container_exists="${exists_output:-false}"
+              break
+            fi
+
+            err_output=""
+            if [ -s "${err_file}" ]; then
+              err_output="$(cat "${err_file}")"
+            fi
+            rm -f "${err_file}"
+
+            echo "Azure Storage authentication attempt using ${method_description} credentials failed (exit code ${status})."
+            if [ -n "${err_output}" ]; then
+              echo "${err_output}"
+            fi
+          done
+
+          if [ -z "${selected_method}" ]; then
+            echo "Unable to authenticate to Azure Storage with the provided credentials."
+            exit 1
+          fi
+
+          case "${selected_method}" in
+            connection-string)
+              echo "Authenticated to Azure Storage using connection string credentials."
+              ;;
+            sas-token)
+              echo "Authenticated to Azure Storage using SAS token credentials."
+              ;;
+            account-key)
+              echo "Authenticated to Azure Storage using storage account key credentials."
+              ;;
+            login)
+              echo "Authenticated to Azure Storage using Azure AD login credentials."
+              ;;
+          esac
+
+          handle_az_storage_failure() {
+            local status="$1"
+            local err_file="$2"
+            local context="$3"
+            local err_output=""
+            if [ -s "${err_file}" ]; then
+              err_output="$(cat "${err_file}")"
+              echo "${err_output}"
+            fi
+            rm -f "${err_file}"
+            if grep -qi 'account key may be not valid' <<<"${err_output}"; then
+              echo "Azure CLI reported invalid storage credentials while ${context}. Ensure AZURE_STORAGE_KEY secret contains a valid storage account key, SAS token, or connection string."
+            fi
+            exit "${status}"
+          }
+
+          run_az_storage_command() {
+            local capture="$1"
+            local context="$2"
+            shift 2
+            local err_file output status
+            err_file=$(mktemp)
+            if [ "${capture}" = "capture" ]; then
+              set +e
+              output=$(az storage "$@" "${az_auth_args[@]}" 2>"${err_file}")
+              status=$?
+              set -e
+              if [ "${status}" -ne 0 ]; then
+                handle_az_storage_failure "${status}" "${err_file}" "${context}"
+              fi
+              rm -f "${err_file}"
+              printf '%s' "${output}"
+            else
+              set +e
+              az storage "$@" "${az_auth_args[@]}" 2>"${err_file}"
+              status=$?
+              set -e
+              if [ "${status}" -ne 0 ]; then
+                handle_az_storage_failure "${status}" "${err_file}" "${context}"
+              fi
+              rm -f "${err_file}"
+            fi
+          }
+
+          container_exists_normalized="$(printf '%s' "${container_exists}" | tr '[:upper:]' '[:lower:]')"
+          if [ "${container_exists_normalized}" != "true" ]; then
             echo "Azure container ${container} not found; creating it"
-            az storage container create \
-              --name "${container}" \
-              "${az_auth_args[@]}" \
-              --public-access off 1>/dev/null
+            run_az_storage_command no-capture "creating container ${container}" container create --name "${container}" --public-access off
           fi
 
           echo "Checking for leftover WAL/archive objects under ${container}/${prefix}"
-          existing_count=$(az storage blob list \
-            "${az_auth_args[@]}" \
-            --container-name "${container}" \
-            --prefix "${prefix}/" \
-            --query "length(@)" -o tsv 2>/dev/null || echo 0)
-
-          if [ "${existing_count}" = "" ]; then
+          existing_count="$(run_az_storage_command capture "listing blobs under ${prefix}/" blob list --container-name "${container}" --prefix "${prefix}/" --query 'length(@)' -o tsv)"
+          existing_count="$(printf '%s' "${existing_count}" | tr -d '\r\n')"
+          if [ -z "${existing_count}" ]; then
             existing_count=0
           fi
 
@@ -539,20 +692,12 @@ jobs:
           fi
 
           echo "Deleting ${existing_count} Azure Blob object(s) under ${prefix}/ before bootstrapping CNPG"
-          az storage blob delete-batch \
-            "${az_auth_args[@]}" \
-            --source "${container}" \
-            --pattern "${prefix}/*" \
-            --no-progress
+          run_az_storage_command no-capture "deleting blobs under ${prefix}/" blob delete-batch --source "${container}" --pattern "${prefix}/*" --no-progress
 
           echo "Verifying Azure backup prefix ${prefix}/ is now empty"
-          remaining_count=$(az storage blob list \
-            "${az_auth_args[@]}" \
-            --container-name "${container}" \
-            --prefix "${prefix}/" \
-            --query "length(@)" -o tsv 2>/dev/null || echo 0)
-
-          if [ "${remaining_count}" = "" ]; then
+          remaining_count="$(run_az_storage_command capture "verifying blob cleanup" blob list --container-name "${container}" --prefix "${prefix}/" --query 'length(@)' -o tsv)"
+          remaining_count="$(printf '%s' "${remaining_count}" | tr -d '\r\n')"
+          if [ -z "${remaining_count}" ]; then
             remaining_count=0
           fi
 
