@@ -490,6 +490,9 @@ jobs:
           az_auth_args=()
           if [ "${use_connection_string}" = true ]; then
             az_auth_args+=("--connection-string" "${AZURE_STORAGE_KEY}")
+          elif [ "${use_sas_token}" = true ]; then
+            sas_token="${AZURE_STORAGE_KEY#\?}"
+            az_auth_args+=("--account-name" "${AZURE_STORAGE_ACCOUNT}" "--sas-token" "${sas_token}")
           else
             az_auth_args+=("--account-name" "${AZURE_STORAGE_ACCOUNT}")
             if [ "${use_sas_token}" = true ]; then
