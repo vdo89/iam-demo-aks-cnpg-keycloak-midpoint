@@ -652,15 +652,82 @@ jobs:
             exit 1
           fi
 
-          echo "Waiting for iam-db read/write service endpoints in namespace ${ns}"
-          endpoints=""
+          echo "Waiting for CloudNativePG cluster iam-db resource to be created"
+          cluster_found=0
           for attempt in $(seq 1 30); do
-            endpoints=$(kubectl -n "${ns}" get endpoints iam-db-rw -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null || true)
-            if [ -n "${endpoints}" ]; then
-              echo "iam-db-rw endpoints: ${endpoints}"
+            if kubectl -n "${ns}" get cluster iam-db >/dev/null 2>&1; then
+              cluster_found=1
               break
             fi
-            echo "iam-db-rw service has no ready endpoints yet (attempt ${attempt}/30)"
+            echo "Cluster iam-db not found yet in namespace ${ns} (attempt ${attempt}/30)"
+            sleep 10
+          done
+
+          if [ "${cluster_found}" -ne 1 ]; then
+            echo "Timed out waiting for Cluster iam-db resource to be created"
+            kubectl -n "${ns}" get cluster iam-db -o yaml || true
+            exit 1
+          fi
+
+          echo "Waiting for CloudNativePG cluster iam-db Ready condition"
+          if ! kubectl -n "${ns}" wait --for=condition=Ready cluster/iam-db --timeout=600s; then
+            echo "Cluster iam-db did not reach Ready condition within timeout"
+            kubectl -n "${ns}" get cluster iam-db -o yaml || true
+            kubectl -n "${ns}" get pods -l cnpg.io/cluster=iam-db -o wide || true
+            kubectl -n "${ns}" describe cluster iam-db || true
+            exit 1
+          fi
+
+          DB_READY_FROM_ENDPOINTS=""
+          DB_NOT_READY_FROM_ENDPOINTS=""
+          DB_READY_FROM_SLICES=""
+          DB_NOT_READY_FROM_SLICES=""
+
+          collect_db_endpoint_status() {
+            DB_READY_FROM_ENDPOINTS=""
+            DB_NOT_READY_FROM_ENDPOINTS=""
+            DB_READY_FROM_SLICES=""
+            DB_NOT_READY_FROM_SLICES=""
+
+            if endpoints_json=$(kubectl -n "${ns}" get endpoints iam-db-rw -o json 2>/dev/null); then
+              DB_READY_FROM_ENDPOINTS=$(jq -r '[.subsets[]? | .addresses[]? | .ip] | join(" ")' <<<"${endpoints_json}" 2>/dev/null || true)
+              DB_NOT_READY_FROM_ENDPOINTS=$(jq -r '[.subsets[]? | .notReadyAddresses[]? | .ip] | join(" ")' <<<"${endpoints_json}" 2>/dev/null || true)
+            fi
+
+            if endpointslices_json=$(kubectl -n "${ns}" get endpointslices.discovery.k8s.io -l kubernetes.io/service-name=iam-db-rw -o json 2>/dev/null); then
+              DB_READY_FROM_SLICES=$(jq -r '[.items[]? | .endpoints[]? | select(.conditions.ready == true) | .addresses[]?] | join(" ")' <<<"${endpointslices_json}" 2>/dev/null || true)
+              DB_NOT_READY_FROM_SLICES=$(jq -r '[.items[]? | .endpoints[]? | select(.conditions.ready != true) | .addresses[]?] | join(" ")' <<<"${endpointslices_json}" 2>/dev/null || true)
+            fi
+          }
+
+          log_db_endpoint_status() {
+            echo "iam-db-rw ready IPs (Endpoints): ${DB_READY_FROM_ENDPOINTS:-<none>}"
+            echo "iam-db-rw notReady IPs (Endpoints): ${DB_NOT_READY_FROM_ENDPOINTS:-<none>}"
+            echo "iam-db-rw ready IPs (EndpointSlices): ${DB_READY_FROM_SLICES:-<none>}"
+            echo "iam-db-rw notReady IPs (EndpointSlices): ${DB_NOT_READY_FROM_SLICES:-<none>}"
+          }
+
+          echo "Waiting for iam-db read/write service endpoints in namespace ${ns}"
+          endpoints=""
+          consecutive_ready=0
+          max_attempts=45
+          for attempt in $(seq 1 "${max_attempts}"); do
+            collect_db_endpoint_status
+            log_db_endpoint_status
+
+            if [ -n "${DB_READY_FROM_ENDPOINTS}" ] || [ -n "${DB_READY_FROM_SLICES}" ]; then
+              endpoints="${DB_READY_FROM_ENDPOINTS:-${DB_READY_FROM_SLICES}}"
+              consecutive_ready=$((consecutive_ready + 1))
+              echo "iam-db-rw has ready endpoints (${consecutive_ready}/3 consecutive confirmations)"
+              if [ "${consecutive_ready}" -ge 3 ]; then
+                break
+              fi
+              sleep 5
+              continue
+            fi
+
+            echo "iam-db-rw service has no ready endpoints yet (attempt ${attempt}/${max_attempts})"
+            consecutive_ready=0
             sleep 10
           done
 
@@ -668,8 +735,13 @@ jobs:
             echo "Timed out waiting for iam-db-rw service endpoints"
             kubectl -n "${ns}" get svc iam-db-rw -o yaml || true
             kubectl -n "${ns}" get endpoints iam-db-rw -o yaml || true
+            kubectl -n "${ns}" get endpointslices.discovery.k8s.io -l kubernetes.io/service-name=iam-db-rw -o yaml || true
+            kubectl -n "${ns}" get pods -l cnpg.io/cluster=iam-db -o wide || true
+            kubectl -n "${ns}" describe cluster iam-db || true
             exit 1
           fi
+
+          echo "iam-db-rw endpoints: ${endpoints}"
 
           job_name="midpoint-db-bootstrap"
           kubectl -n "${ns}" delete job "${job_name}" --ignore-not-found
