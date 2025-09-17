@@ -182,7 +182,12 @@ jobs:
               print("No CustomResourceDefinition documents found in rendered template", file=sys.stderr)
               sys.exit(1)
 
-          output_path.write_text('---\n'.join(crd_docs) + '\n')
+          # Ensure each CRD document is separated by a YAML document marker on its
+          # own line. Joining with "\n---\n" avoids concatenating the marker onto
+          # the last line of the previous document when that document does not end
+          # with a trailing newline (which would create invalid YAML like
+          # "metadata:...---" and trigger kubectl parsing errors).
+          output_path.write_text('\n---\n'.join(crd_docs) + '\n')
 
           PY
           fi
