@@ -23,7 +23,7 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
   - (Optional) `LOCATION` – default `westeurope`
   - (Optional) `RESOURCE_PREFIX` – short prefix, default `rwsdemo`
   - **DB secrets** (you can change later):
-    - `POSTGRES_SUPERUSER_PASSWORD` – password for CNPG `postgres`
+    - `POSTGRES_SUPERUSER_PASSWORD` – password for CNPG `postgres` (workflow stores it in a `kubernetes.io/basic-auth` secret with username `postgres`)
     - `KEYCLOAK_DB_PASSWORD` – password for DB user `keycloak`
     - `MIDPOINT_DB_PASSWORD` – password for DB user `midpoint`
   - **midPoint admin**: `MIDPOINT_ADMIN_PASSWORD` – initial `administrator` password
