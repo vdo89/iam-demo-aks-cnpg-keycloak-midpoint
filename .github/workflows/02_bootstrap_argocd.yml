@@ -402,6 +402,87 @@ jobs:
             --from-literal=AZURE_STORAGE_KEY="$AZURE_STORAGE_KEY" \
             --dry-run=client -o yaml | kubectl apply -f -
 
+      - name: Purge existing CNPG Azure backup prefix
+        shell: bash
+        env:
+          AZURE_STORAGE_ACCOUNT: ${{ inputs.STORAGE_ACCOUNT }}
+          AZURE_STORAGE_KEY: ${{ secrets.AZURE_STORAGE_KEY }}
+        run: |
+          set -euo pipefail
+
+          container="cnpg-backups"
+          prefix="iam-db"
+
+          if [ -z "${AZURE_STORAGE_ACCOUNT}" ]; then
+            echo "STORAGE_ACCOUNT input must not be empty"
+            exit 1
+          fi
+
+          if [ -z "${AZURE_STORAGE_KEY}" ]; then
+            echo "AZURE_STORAGE_KEY secret missing; skipping Azure backup purge"
+            exit 0
+          fi
+
+          echo "Ensuring Azure Blob container ${container} exists in account ${AZURE_STORAGE_ACCOUNT}"
+          container_exists=$(az storage container exists \
+            --name "${container}" \
+            --account-name "${AZURE_STORAGE_ACCOUNT}" \
+            --account-key "${AZURE_STORAGE_KEY}" \
+            --query exists -o tsv 2>/dev/null || true)
+
+          if [ "${container_exists}" != "true" ]; then
+            echo "Azure container ${container} not found; creating it"
+            az storage container create \
+              --name "${container}" \
+              --account-name "${AZURE_STORAGE_ACCOUNT}" \
+              --account-key "${AZURE_STORAGE_KEY}" \
+              --public-access off 1>/dev/null
+          fi
+
+          echo "Checking for leftover WAL/archive objects under ${container}/${prefix}"
+          existing_count=$(az storage blob list \
+            --account-name "${AZURE_STORAGE_ACCOUNT}" \
+            --account-key "${AZURE_STORAGE_KEY}" \
+            --container-name "${container}" \
+            --prefix "${prefix}/" \
+            --query "length(@)" -o tsv 2>/dev/null || echo 0)
+
+          if [ "${existing_count}" = "" ]; then
+            existing_count=0
+          fi
+
+          if [ "${existing_count}" -eq 0 ]; then
+            echo "Azure backup prefix ${prefix}/ is already empty"
+            exit 0
+          fi
+
+          echo "Deleting ${existing_count} Azure Blob object(s) under ${prefix}/ before bootstrapping CNPG"
+          az storage blob delete-batch \
+            --account-name "${AZURE_STORAGE_ACCOUNT}" \
+            --account-key "${AZURE_STORAGE_KEY}" \
+            --source "${container}" \
+            --pattern "${prefix}/*" \
+            --no-progress
+
+          echo "Verifying Azure backup prefix ${prefix}/ is now empty"
+          remaining_count=$(az storage blob list \
+            --account-name "${AZURE_STORAGE_ACCOUNT}" \
+            --account-key "${AZURE_STORAGE_KEY}" \
+            --container-name "${container}" \
+            --prefix "${prefix}/" \
+            --query "length(@)" -o tsv 2>/dev/null || echo 0)
+
+          if [ "${remaining_count}" = "" ]; then
+            remaining_count=0
+          fi
+
+          if [ "${remaining_count}" -ne 0 ]; then
+            echo "Failed to purge Azure backup prefix ${prefix}/ (still ${remaining_count} object(s) present)"
+            exit 1
+          fi
+
+          echo "Azure backup prefix ${prefix}/ successfully emptied"
+
       - name: Validate CNPG prerequisites
         env:
           NAMESPACE_IAM: ${{ inputs.NAMESPACE_IAM }}

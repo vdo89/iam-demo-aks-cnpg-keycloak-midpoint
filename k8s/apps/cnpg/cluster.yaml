@@ -30,7 +30,7 @@ spec:
   backup:
     retentionPolicy: "7d"
     barmanObjectStore:
-      destinationPath: "https://{{STORAGE_ACCOUNT}}.blob.core.windows.net/cnpg-backups/iam-db"
+      destinationPath: "https://{{STORAGE_ACCOUNT}}.blob.core.windows.net/cnpg-backups/iam-db/"
       azureCredentials:
         storageAccount:
           name: cnpg-azure-backup

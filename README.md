@@ -59,6 +59,7 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
    - Install **Keycloak Operator** then create a **Keycloak** CR bound to CNPG
    - Deploy **midPoint** bound to CNPG
    - Create a Kubernetes **Secret** with Azure Blob credentials (from repo secrets) for CNPG backups
+   - Purge any existing WAL/archive blobs in the Azure `cnpg-backups/iam-db` prefix so CloudNativePG can bootstrap cleanly on reruns
 
 > By default, services are plain HTTP for simplicity and use **`nip.io`** hostnames you can visit from your browser.
 
