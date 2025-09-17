@@ -95,12 +95,21 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
 - **Terraform vars**: `infra/azure/terraform/terraform.tfvars` (or via repo variables / workflow inputs)
 - **Helm/Argo versions**: see `k8s/addons/*/application.yaml`
 - **DB sizing**: `k8s/apps/cnpg/cluster.yaml`
+
 - **Keycloak config**: `k8s/apps/keycloak/keycloak.yaml`
   - The `KeycloakRealmImport` inside that manifest seeds the `rws` realm. After the Keycloak Operator imports the realm it
     clears `spec.realm`, so Argo CD ignores differences on that path to avoid endless resyncs. When you change the realm
     payload, bump `metadata.annotations.iam.demo/realm-config-version` so Argo CD reapplies the manifest and Keycloak
     performs a fresh import.
+
 - **midPoint config**: `k8s/apps/midpoint/deployment.yaml` + `k8s/apps/midpoint/config.xml`
+
+
+### Keycloak realm GitOps notes
+
+- The Keycloak operator clears `spec.realm` on the `KeycloakRealmImport` after a successful import. Argo CD now ignores that field to prevent endless self-heal loops.
+- `k8s/apps/keycloak/rws-realm.yaml` holds the desired realm. A kustomize `vars` entry injects a checksum annotation into the import so Argo CD still detects changes and re-syncs when you edit the realm file.
+- `kustomize build k8s/apps` emits a deprecation warning about `vars`; this is expected for now and does not affect the rendered manifests.
 
 ---
 

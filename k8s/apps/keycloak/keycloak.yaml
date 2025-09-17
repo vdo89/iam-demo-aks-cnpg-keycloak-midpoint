@@ -32,7 +32,6 @@ spec:
       cpu: "1"
       memory: "2Gi"
 ---
-# Minimal realm import to create realm 'rws' and a demo client
 apiVersion: k8s.keycloak.org/v2alpha1
 kind: KeycloakRealmImport
 metadata:
@@ -66,3 +65,4 @@ spec:
           - "http://*/midpoint/*"
         webOrigins:
           - "*"
+
