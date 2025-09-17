@@ -747,7 +747,6 @@ spec:
                 $do$;
                 SQL
 YAML
-
           export NS="${ns}"
           envsubst '$NS' < "${manifest}" | kubectl apply -f -
 
