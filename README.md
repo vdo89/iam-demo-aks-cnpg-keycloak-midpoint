@@ -54,7 +54,7 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
    - Install **Argo CD**
    - Sync **addons** via Argo: Ingress-NGINX, cert-manager, CNPG Operator
      - The workflow pre-installs CloudNativePG CRDs with `kubectl apply --server-side` (rendered via `helm show crds`) so
-       the large schemas bypass the Kubernetes annotation size limit, and the Argo CD application skips managing CRDs to avoid
+       the large schemas bypass the Kubernetes annotation size limit, and the Argo CD application disables chart-managed CRDs (Helm value `crds.create=false`) to avoid
        reintroducing the oversized annotation.
    - Create **CNPG** cluster `iam-db` (+ Azure Blob backup config)
    - Install **Keycloak Operator** then create a **Keycloak** CR bound to CNPG
