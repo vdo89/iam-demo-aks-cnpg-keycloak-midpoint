@@ -106,6 +106,52 @@ jobs:
             argocd.argoproj.io/secret-type=repository --overwrite
           echo "Configured Argo CD repository credentials in secret ${SECRET_NAME}"
 
+      - name: Pre-install CloudNativePG CRDs (server-side apply)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! command -v helm >/dev/null 2>&1; then
+            echo "Helm not found on runner; installing Helm 3"
+            curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          fi
+
+          echo "Adding CloudNativePG Helm repository"
+          helm repo add cloudnative-pg https://cloudnative-pg.github.io/charts --force-update >/dev/null 2>&1 || true
+
+          echo "Updating CloudNativePG Helm repository index"
+          for attempt in $(seq 1 5); do
+            if helm repo update cloudnative-pg >/dev/null 2>&1; then
+              echo "Helm repository index refreshed"
+              break
+            fi
+            if [ "${attempt}" -eq 5 ]; then
+              echo "Failed to update CloudNativePG Helm repository after ${attempt} attempts"
+              exit 1
+            fi
+            echo "Helm repo update failed (attempt ${attempt}/5); retrying in 5 seconds"
+            sleep 5
+          done
+
+          echo "Rendering CloudNativePG CRDs for version 0.22.1"
+          helm show crds cloudnative-pg/cloudnative-pg --version 0.22.1 > /tmp/cloudnative-pg-crds.yaml
+
+          echo "Applying CloudNativePG CRDs with server-side apply"
+          kubectl apply --server-side -f /tmp/cloudnative-pg-crds.yaml
+
+          echo "Removing potential last-applied annotations that exceed Kubernetes limits"
+          for crd in \
+            backups.postgresql.cnpg.io \
+            clusterimagecatalogs.postgresql.cnpg.io \
+            clusters.postgresql.cnpg.io \
+            imagecatalogs.postgresql.cnpg.io \
+            poolers.postgresql.cnpg.io \
+            scheduledbackups.postgresql.cnpg.io; do
+            if kubectl get crd "${crd}" >/dev/null 2>&1; then
+              kubectl annotate crd "${crd}" kubectl.kubernetes.io/last-applied-configuration- >/dev/null 2>&1 || true
+            fi
+          done
+
       - name: Sync addons via Argo (Ingress-NGINX, cert-manager, CNPG operator)
         shell: bash
         run: |
