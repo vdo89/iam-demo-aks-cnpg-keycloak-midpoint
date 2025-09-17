@@ -474,18 +474,36 @@ jobs:
           echo "Ensuring Azure Blob container ${container} exists in account ${AZURE_STORAGE_ACCOUNT}"
 
           use_connection_string=false
+          use_sas_token=false
           if [[ "${AZURE_STORAGE_KEY}" == *"DefaultEndpointsProtocol="* ]] || \
              [[ "${AZURE_STORAGE_KEY}" == *"AccountKey="* ]] || \
              [[ "${AZURE_STORAGE_KEY}" == *"BlobEndpoint="* ]]; then
             use_connection_string=true
             echo "AZURE_STORAGE_KEY appears to be an Azure Storage connection string; using it for az storage commands"
+          elif [[ "${AZURE_STORAGE_KEY}" == \?sv=* ]] || \
+               [[ "${AZURE_STORAGE_KEY}" == sv=* ]] || \
+               ([[ "${AZURE_STORAGE_KEY}" == *"sig="* ]] && [[ "${AZURE_STORAGE_KEY}" == *"se="* ]]); then
+            use_sas_token=true
+            echo "AZURE_STORAGE_KEY appears to be an Azure Storage SAS token; using it for az storage commands"
           fi
 
           az_auth_args=()
           if [ "${use_connection_string}" = true ]; then
             az_auth_args+=("--connection-string" "${AZURE_STORAGE_KEY}")
           else
-            az_auth_args+=("--account-name" "${AZURE_STORAGE_ACCOUNT}" "--account-key" "${AZURE_STORAGE_KEY}")
+            az_auth_args+=("--account-name" "${AZURE_STORAGE_ACCOUNT}")
+            if [ "${use_sas_token}" = true ]; then
+              sas_token="${AZURE_STORAGE_KEY}"
+              if [[ "${sas_token}" == https://* ]]; then
+                sas_token="${sas_token#*\?}"
+              fi
+              if [[ "${sas_token}" != \?* ]]; then
+                sas_token="?${sas_token}"
+              fi
+              az_auth_args+=("--sas-token" "${sas_token}")
+            else
+              az_auth_args+=("--account-key" "${AZURE_STORAGE_KEY}")
+            fi
           fi
 
           container_exists=$(az storage container exists \
