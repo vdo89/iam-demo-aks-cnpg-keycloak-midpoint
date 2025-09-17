@@ -101,10 +101,9 @@ jobs:
             --from-literal=url="https://github.com/${REPO_OWNER}/${REPO_NAME}" \
             --from-literal=username="${ARGOCD_REPO_USERNAME}" \
             --from-literal=password="${ARGOCD_REPO_TOKEN}" \
-            --dry-run=client -o json \
-            | jq '.metadata.labels = (.metadata.labels // {}) | .metadata.labels["argocd.argoproj.io/secret-type"] = "repository"' \
-            | kubectl apply -f -
-
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n argocd label secret "${SECRET_NAME}" \
+            argocd.argoproj.io/secret-type=repository --overwrite
           echo "Configured Argo CD repository credentials in secret ${SECRET_NAME}"
 
       - name: Sync addons via Argo (Ingress-NGINX, cert-manager, CNPG operator)
