@@ -690,8 +690,64 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          kubectl -n argocd wait --for=condition=Synced applications/apps --timeout=600s
-          kubectl -n argocd wait --for=condition=Healthy applications/apps --timeout=600s || true
+          echo "Ensuring Argo CD application 'apps' has been created before monitoring status"
+          app_found=0
+          for attempt in $(seq 1 60); do
+            if kubectl -n argocd get application apps >/dev/null 2>&1; then
+              app_found=1
+              echo "Argo CD application 'apps' detected"
+              break
+            fi
+            echo "Application 'apps' not found yet (attempt ${attempt}/60)"
+            sleep 10
+          done
+
+          if [ "${app_found}" -ne 1 ]; then
+            echo "Timed out waiting for Argo CD application 'apps' to be created"
+            kubectl -n argocd get applications || true
+            exit 1
+          fi
+
+          echo "Waiting for Argo CD application 'apps' to report Synced/Healthy status"
+          diagnostics_dumped=0
+          for attempt in $(seq 1 90); do
+            sync_status=$(kubectl -n argocd get application apps -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")
+            health_status=$(kubectl -n argocd get application apps -o jsonpath='{.status.health.status}' 2>/dev/null || echo "")
+            operation_phase=$(kubectl -n argocd get application apps -o jsonpath='{.status.operationState.phase}' 2>/dev/null || echo "")
+
+            echo "apps status: sync=${sync_status:-<unknown>} health=${health_status:-<unknown>} operation=${operation_phase:-<unknown>} (attempt ${attempt}/90)"
+
+            if [ "${sync_status}" = "Synced" ]; then
+              if [ "${health_status}" = "Healthy" ]; then
+                echo "apps application is synced and healthy"
+                kubectl -n argocd get application apps
+                exit 0
+              fi
+              if [ "${health_status}" = "Unknown" ] && [ "${operation_phase}" = "Succeeded" ]; then
+                echo "apps application is synced; health reported as Unknown but last operation succeeded. Proceeding."
+                kubectl -n argocd get application apps
+                exit 0
+              fi
+            fi
+
+            if [ "${operation_phase}" = "Failed" ] && [ "${diagnostics_dumped}" -eq 0 ]; then
+              echo "Latest Argo CD sync operation failed. Dumping application manifest for troubleshooting."
+              kubectl -n argocd get application apps -o yaml || true
+              diagnostics_dumped=1
+            fi
+
+            if [ "${health_status}" = "Degraded" ] && [ "${diagnostics_dumped}" -eq 0 ]; then
+              echo "apps application health is Degraded. Dumping application manifest for troubleshooting."
+              kubectl -n argocd get application apps -o yaml || true
+              diagnostics_dumped=1
+            fi
+
+            sleep 10
+          done
+
+          echo "Timed out waiting for Argo CD application 'apps' to become synced and healthy"
+          kubectl -n argocd get application apps -o yaml || true
+          exit 1
 
       - name: Show ingress endpoints (if available)
         shell: bash
