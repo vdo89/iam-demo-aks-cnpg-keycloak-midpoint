@@ -49,11 +49,10 @@ spec:
     loginWithEmailAllowed: true
     resetPasswordAllowed: true
     sslRequired: none
-    webAuthnPolicy:
-      rpEntityName: "RWS Demo"
-      userVerificationRequirement: "required"
-      createTimeout: 120000
-      avoidSameAuthenticatorRegister: true
+    webAuthnPolicyRpEntityName: "RWS Demo"
+    webAuthnPolicyUserVerificationRequirement: "required"
+    webAuthnPolicyCreateTimeout: 120000
+    webAuthnPolicyAvoidSameAuthenticatorRegister: true
     clients:
       - clientId: rws-midpoint
         name: rws-midpoint
