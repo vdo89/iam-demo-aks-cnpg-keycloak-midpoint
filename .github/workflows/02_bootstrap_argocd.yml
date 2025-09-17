@@ -639,7 +639,130 @@ jobs:
             exit 1
           fi
 
-          kubectl -n "${NAMESPACE_IAM}" wait cluster/iam-db --for=condition=Ready --timeout=600s || true
+      - name: Ensure midPoint database and role exist
+        env:
+          NAMESPACE_IAM: ${{ inputs.NAMESPACE_IAM }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ns="${NAMESPACE_IAM}"
+          if [ -z "${ns}" ]; then
+            echo "NAMESPACE_IAM input must not be empty"
+            exit 1
+          fi
+
+          echo "Waiting for iam-db read/write service endpoints in namespace ${ns}"
+          endpoints=""
+          for attempt in $(seq 1 30); do
+            endpoints=$(kubectl -n "${ns}" get endpoints iam-db-rw -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null || true)
+            if [ -n "${endpoints}" ]; then
+              echo "iam-db-rw endpoints: ${endpoints}"
+              break
+            fi
+            echo "iam-db-rw service has no ready endpoints yet (attempt ${attempt}/30)"
+            sleep 10
+          done
+
+          if [ -z "${endpoints}" ]; then
+            echo "Timed out waiting for iam-db-rw service endpoints"
+            kubectl -n "${ns}" get svc iam-db-rw -o yaml || true
+            kubectl -n "${ns}" get endpoints iam-db-rw -o yaml || true
+            exit 1
+          fi
+
+          job_name="midpoint-db-bootstrap"
+          kubectl -n "${ns}" delete job "${job_name}" --ignore-not-found
+
+          manifest="$(mktemp)"
+          cleanup_manifest() {
+            rm -f "${manifest}"
+          }
+          trap cleanup_manifest EXIT
+
+          cat <<'YAML' >"${manifest}"
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: midpoint-db-bootstrap
+  namespace: ${NS}
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: psql
+          image: ghcr.io/cloudnative-pg/postgresql:16.4
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cnpg-superuser
+                  key: password
+            - name: MIDPOINT_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: midpoint-db-app
+                  key: username
+            - name: MIDPOINT_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: midpoint-db-app
+                  key: password
+            - name: DB_HOST
+              value: iam-db-rw.${NS}.svc.cluster.local
+          command:
+            - bash
+            - -lc
+            - |
+              set -euo pipefail
+              psql -h "${DB_HOST}" -U postgres -v ON_ERROR_STOP=1 \
+                --set=mp_user="${MIDPOINT_DB_USER}" \
+                --set=mp_password="${MIDPOINT_DB_PASSWORD}" <<'SQL'
+              DO $do$
+              DECLARE
+                role_name text := :'mp_user';
+                role_password text := :'mp_password';
+              BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) THEN
+                  EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L', role_name, role_password);
+                ELSE
+                  EXECUTE format('ALTER ROLE %I PASSWORD %L', role_name, role_password);
+                  EXECUTE format('ALTER ROLE %I LOGIN', role_name);
+                END IF;
+              END
+              $do$;
+
+              DO $do$
+              DECLARE
+                role_name text := :'mp_user';
+              BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'midpoint') THEN
+                  EXECUTE format('CREATE DATABASE %I OWNER %I', 'midpoint', role_name);
+                ELSE
+                  EXECUTE format('ALTER DATABASE %I OWNER TO %I', 'midpoint', role_name);
+                END IF;
+              END
+              $do$;
+SQL
+YAML
+
+          export NS="${ns}"
+          envsubst '$NS' < "${manifest}" | kubectl apply -f -
+
+          if ! kubectl -n "${ns}" wait --for=condition=Complete job/"${job_name}" --timeout=240s; then
+            echo "midPoint database bootstrap job did not complete successfully"
+            kubectl -n "${ns}" logs job/"${job_name}" || true
+            kubectl -n "${ns}" describe job "${job_name}" || true
+            kubectl -n "${ns}" get pods -l job-name="${job_name}" -o wide || true
+            exit 1
+          fi
+
+          kubectl -n "${ns}" logs job/"${job_name}" || true
+          kubectl -n "${ns}" delete job "${job_name}" --ignore-not-found
+
+          kubectl -n "${ns}" wait cluster/iam-db --for=condition=Ready --timeout=600s || true
 
       - name: Install Keycloak Operator (CRDs + operator Deployment)
         shell: bash
