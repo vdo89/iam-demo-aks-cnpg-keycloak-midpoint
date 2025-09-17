@@ -38,7 +38,31 @@ metadata:
   name: rws-realm-import
   namespace: iam
   annotations:
-    iam.evolveum.com/realm-checksum: $(REALM_CHECKSUM)
+    iam.demo/realm-config-version: "1"
 spec:
   keycloakCRName: rws-keycloak
-  realm: {}
+  realm:
+    id: rws
+    realm: rws
+    displayName: RWS Demo
+    enabled: true
+    registrationAllowed: false
+    loginWithEmailAllowed: true
+    resetPasswordAllowed: true
+    sslRequired: none
+    webAuthnPolicyRpEntityName: "RWS Demo"
+    webAuthnPolicyUserVerificationRequirement: "required"
+    webAuthnPolicyCreateTimeout: 120000
+    webAuthnPolicyAvoidSameAuthenticatorRegister: true
+    clients:
+      - clientId: rws-midpoint
+        name: rws-midpoint
+        protocol: openid-connect
+        publicClient: true
+        directAccessGrantsEnabled: true
+        standardFlowEnabled: true
+        redirectUris:
+          - "http://*/midpoint/*"
+        webOrigins:
+          - "*"
+
