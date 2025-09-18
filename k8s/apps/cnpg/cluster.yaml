@@ -32,15 +32,12 @@ spec:
     barmanObjectStore:
       destinationPath: "https://{{STORAGE_ACCOUNT}}.blob.core.windows.net/cnpg-backups/iam-db/"
       azureCredentials:
+        connectionString:
+          name: cnpg-azure-backup
+          key: AZURE_CONNECTION_STRING
         storageAccount:
           name: cnpg-azure-backup
           key: AZURE_STORAGE_ACCOUNT
-        storageKey:
-          name: cnpg-azure-backup
-          key: AZURE_STORAGE_KEY
-        storageSasToken:
-          name: cnpg-azure-backup
-          key: AZURE_STORAGE_SAS_TOKEN
       wal:
         compression: gzip
         maxParallel: 4
