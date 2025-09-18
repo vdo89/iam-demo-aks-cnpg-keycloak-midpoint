@@ -109,6 +109,8 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
 - **midPoint config**: `k8s/apps/midpoint/deployment.yaml` + `k8s/apps/midpoint/config.xml`
   - The deployment constrains the JVM heap (`MP_MEM_INIT=768M`, `MP_MEM_MAX=1536M`) so the pod fits on the small demo
     nodes. Bump these values together with the container `resources` block if you size the cluster up.
+  - `config.xml` uses the **native PostgreSQL repository** (Sqale) recommended for midPoint 4.9 and later, which
+    matches the CloudNativePG PostgreSQL 16 cluster created by the automation.
 
 
 ### Keycloak realm GitOps notes
