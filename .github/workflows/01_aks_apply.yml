@@ -88,27 +88,36 @@ jobs:
             echo "Storage account ${STATE_SA} already exists."
           fi
 
+          ACCOUNT_KEY="$(az storage account keys list --resource-group "${STATE_RG}" --account-name "${STATE_SA}" --query '[0].value' -o tsv)"
+          if [[ -z "${ACCOUNT_KEY}" ]]; then
+            echo "Failed to retrieve storage account key for ${STATE_SA}." >&2
+            exit 1
+          fi
+          echo "::add-mask::${ACCOUNT_KEY}"
+
           az storage container create \
             --name tfstate \
             --account-name "${STATE_SA}" \
-            --auth-mode login \
+            --account-key "${ACCOUNT_KEY}" \
             --public-access off \
             --output none
 
           echo "resource_group=${STATE_RG}" >> "${GITHUB_OUTPUT}"
           echo "storage_account=${STATE_SA}" >> "${GITHUB_OUTPUT}"
+          echo "storage_account_key=${ACCOUNT_KEY}" >> "${GITHUB_OUTPUT}"
 
       - name: Terraform Init
         working-directory: infra/azure/terraform
         shell: bash
+        env:
+          ARM_ACCESS_KEY: ${{ steps.tfstate.outputs.storage_account_key }}
         run: |
           set -euo pipefail
           terraform init -input=false \
             -backend-config="resource_group_name=${{ steps.tfstate.outputs.resource_group }}" \
             -backend-config="storage_account_name=${{ steps.tfstate.outputs.storage_account }}" \
             -backend-config="container_name=tfstate" \
-            -backend-config="key=${{ inputs.RESOURCE_PREFIX }}.tfstate" \
-            -backend-config="use_azuread_auth=true"
+            -backend-config="key=${{ inputs.RESOURCE_PREFIX }}.tfstate"
 
       - name: Determine resource configuration
         id: rg
