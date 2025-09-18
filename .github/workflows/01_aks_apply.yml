@@ -30,6 +30,12 @@ on:
         required: false
         default: 1
         type: number
+      AKS_SKU_TIER:
+        description: 'AKS control plane tier (Free or Paid)'
+        required: false
+        default: 'Free'
+        type: choice
+        options: [Free, Paid]
 
 permissions:
   id-token: write
@@ -210,6 +216,7 @@ jobs:
             -var="prefix=${{ inputs.RESOURCE_PREFIX }}" \
             -var="aks_default_node_vm_size=${{ inputs.AKS_NODE_VM_SIZE }}" \
             -var="aks_default_node_count=${{ inputs.AKS_NODE_COUNT }}" \
+            -var="aks_sku_tier=${{ inputs.AKS_SKU_TIER }}" \
             -var="resource_group_name=${{ steps.rg.outputs.resource_group_name }}" \
             -var="create_resource_group=${{ steps.rg.outputs.create_resource_group }}"
 
@@ -224,6 +231,7 @@ jobs:
             -var="prefix=${{ inputs.RESOURCE_PREFIX }}" \
             -var="aks_default_node_vm_size=${{ inputs.AKS_NODE_VM_SIZE }}" \
             -var="aks_default_node_count=${{ inputs.AKS_NODE_COUNT }}" \
+            -var="aks_sku_tier=${{ inputs.AKS_SKU_TIER }}" \
             -var="resource_group_name=${{ steps.rg.outputs.resource_group_name }}" \
             -var="create_resource_group=${{ steps.rg.outputs.create_resource_group }}"
 
@@ -238,6 +246,7 @@ jobs:
             -var="prefix=${{ inputs.RESOURCE_PREFIX }}" \
             -var="aks_default_node_vm_size=${{ inputs.AKS_NODE_VM_SIZE }}" \
             -var="aks_default_node_count=${{ inputs.AKS_NODE_COUNT }}" \
+            -var="aks_sku_tier=${{ inputs.AKS_SKU_TIER }}" \
             -var="resource_group_name=${{ steps.rg.outputs.resource_group_name }}" \
             -var="create_resource_group=${{ steps.rg.outputs.create_resource_group }}"
 
