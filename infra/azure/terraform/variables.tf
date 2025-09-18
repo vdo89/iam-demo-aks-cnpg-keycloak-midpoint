@@ -33,3 +33,9 @@ variable "aks_default_node_count" {
   description = "Number of nodes in the default AKS node pool"
   default     = 1
 }
+
+variable "aks_default_node_max_surge" {
+  type        = string
+  description = "Maximum number or percentage of surge nodes to add during upgrades of the default node pool. Use \"0\" to disable surge nodes when regional vCPU quota is tight."
+  default     = "0"
+}
