@@ -465,7 +465,7 @@ jobs:
             echo "Trimmed leading/trailing whitespace from AZURE_STORAGE_KEY secret value"
           fi
 
-          _AZ_PARSE_CODE=$'import os\nimport urllib.parse\n\nvalue = os.environ.get("AZURE_STORAGE_KEY", "")\ntrimmed = value.strip()\nif not trimmed:\n    key_type = "empty"\n    account_key = ""\n    account_name = ""\n    sas_token = ""\nelse:\n    lowered = trimmed.lower()\n    account_key = ""\n    account_name = ""\n    sas_token = ""\n    key_type = ""\n    if (("accountkey=" in lowered) or ("sharedaccesssignature" in lowered)) and (\n        ("accountname" in lowered) or ("blobendpoint" in lowered) or ("defaultendpointsprotocol" in lowered)\n    ):\n        parts = {}\n        for part in trimmed.split(";"):\n            if not part or "=" not in part:\n                continue\n            key, val = part.split("=", 1)\n            parts[key.strip().lower()] = val.strip()\n        account_key = parts.get("accountkey", "")\n        account_name = parts.get("accountname", "")\n        shared_sig = parts.get("sharedaccesssignature", "")\n        if shared_sig:\n            sas_token = shared_sig.lstrip(" ?")\n        if account_key:\n            key_type = "connection_string"\n        elif shared_sig:\n            key_type = "connection_string_sas"\n        else:\n            key_type = "connection_string"\n    if not key_type or key_type == "empty":\n        candidate = trimmed\n        if candidate.lower().startswith("https://"):\n            try:\n                parsed = urllib.parse.urlparse(candidate)\n            except Exception:\n                parsed = None\n            if parsed:\n                if parsed.query:\n                    candidate = parsed.query\n                elif parsed.fragment:\n                    candidate = parsed.fragment\n                elif parsed.path:\n                    candidate = parsed.path\n        candidate = candidate.lstrip("/?")\n        lowered_candidate = candidate.lower()\n        if "sig=" in lowered_candidate and ("se=" in lowered_candidate or "expiry=" in lowered_candidate):\n            sas_token = candidate\n            key_type = "sas"\n    if not key_type:\n        key_type = "account_key"\n\nprint(trimmed)\nprint(key_type)\nprint(account_key)\nprint(account_name)\nprint(sas_token)\n'
+          _AZ_PARSE_CODE=$'import os\nimport urllib.parse\n\nvalue = os.environ.get("AZURE_STORAGE_KEY", "")\ntrimmed = value.strip()\nif not trimmed:\n    key_type = "empty"\n    account_key = ""\n    account_name = ""\n    sas_token = ""\n    connection_string = ""\nelse:\n    lowered = trimmed.lower()\n    account_key = ""\n    account_name = ""\n    sas_token = ""\n    key_type = ""\n    connection_string = ""\n    ordered_parts = []\n    if (("accountkey=" in lowered) or ("sharedaccesssignature" in lowered)) and (\n        ("accountname" in lowered) or ("blobendpoint" in lowered) or ("defaultendpointsprotocol" in lowered)\n    ):\n        parts = {}\n        for part in trimmed.split(";"):\n            if not part or "=" not in part:\n                continue\n            key, val = part.split("=", 1)\n            key_clean = key.strip()\n            val_clean = val.strip()\n            lower_key = key_clean.lower()\n            parts[lower_key] = val_clean\n            ordered_parts.append((key_clean, lower_key, val_clean))\n        account_key = parts.get("accountkey", "")\n        account_name = parts.get("accountname", "")\n        shared_sig = parts.get("sharedaccesssignature", "")\n        if shared_sig:\n            sas_token = shared_sig.lstrip(" ?")\n        if account_key:\n            key_type = "connection_string"\n        elif shared_sig:\n            key_type = "connection_string_sas"\n        else:\n            key_type = "connection_string"\n        sanitized_parts = []\n        used_shared_sig = False\n        for original_key, lower_key, value in ordered_parts:\n            if lower_key == "sharedaccesssignature" and sas_token:\n                sanitized_parts.append(f"{original_key}={sas_token}")\n                used_shared_sig = True\n            else:\n                sanitized_parts.append(f"{original_key}={value}")\n        if sas_token and not used_shared_sig:\n            sanitized_parts.append(f"SharedAccessSignature={sas_token}")\n        if sanitized_parts:\n            connection_string = ";".join(sanitized_parts)\n    if not key_type or key_type == "empty":\n        candidate = trimmed\n        if candidate.lower().startswith("https://"):\n            try:\n                parsed = urllib.parse.urlparse(candidate)\n            except Exception:\n                parsed = None\n            if parsed:\n                if parsed.query:\n                    candidate = parsed.query\n                elif parsed.fragment:\n                    candidate = parsed.fragment\n                elif parsed.path:\n                    candidate = parsed.path\n        candidate = candidate.lstrip("/?")\n        lowered_candidate = candidate.lower()\n        if "sig=" in lowered_candidate and ("se=" in lowered_candidate or "expiry=" in lowered_candidate):\n            sas_token = candidate\n            key_type = "sas"\n    if not key_type:\n        key_type = "account_key"\n    if key_type not in ("connection_string", "connection_string_sas"):\n        connection_string = ""\n\nprint(trimmed)\nprint(key_type)\nprint(account_key)\nprint(account_name)\nprint(sas_token)\nprint(connection_string)\n'
           mapfile -t _AZ_STORAGE_INFO < <(python3 -c "$_AZ_PARSE_CODE")
           unset _AZ_PARSE_CODE
           AZURE_STORAGE_KEY_SANITIZED="${_AZ_STORAGE_INFO[0]-}"
@@ -473,7 +473,12 @@ jobs:
           connection_account_key="${_AZ_STORAGE_INFO[2]-}"
           connection_account_name="${_AZ_STORAGE_INFO[3]-}"
           sanitized_sas_token="${_AZ_STORAGE_INFO[4]-}"
+          connection_string_normalized="${_AZ_STORAGE_INFO[5]-}"
           unset _AZ_STORAGE_INFO
+
+          if [ -n "${connection_string_normalized}" ]; then
+            AZURE_STORAGE_KEY="${connection_string_normalized}"
+          fi
 
           secret_account="${AZURE_STORAGE_ACCOUNT}"
           if [ -n "${connection_account_name}" ]; then
@@ -490,6 +495,7 @@ jobs:
 
           declare -a secret_args=()
           secret_args+=("--from-literal=AZURE_STORAGE_ACCOUNT=${secret_account}")
+          connection_string_literal="${connection_string_normalized}"
 
           case "${storage_key_type}" in
             connection_string|connection_string_sas)
@@ -512,6 +518,9 @@ jobs:
               else
                 echo "Using Azure SAS token credentials for CNPG backups."
               fi
+              if [ -z "${connection_string_literal}" ]; then
+                connection_string_literal="${AZURE_STORAGE_KEY_SANITIZED}"
+              fi
               ;;
             sas)
               if [ -z "${sanitized_sas_token}" ]; then
@@ -520,6 +529,7 @@ jobs:
               fi
               secret_args+=("--from-literal=AZURE_STORAGE_SAS_TOKEN=${sanitized_sas_token}")
               echo "Using Azure SAS token credentials for CNPG backups."
+              connection_string_literal="DefaultEndpointsProtocol=https;AccountName=${secret_account};BlobEndpoint=https://${secret_account}.blob.core.windows.net/;SharedAccessSignature=${sanitized_sas_token}"
               ;;
             account_key|*)
               if [ -z "${AZURE_STORAGE_KEY_SANITIZED}" ]; then
@@ -528,8 +538,19 @@ jobs:
               fi
               secret_args+=("--from-literal=AZURE_STORAGE_KEY=${AZURE_STORAGE_KEY_SANITIZED}")
               echo "Using Azure storage account key credentials for CNPG backups."
+              connection_string_literal="DefaultEndpointsProtocol=https;AccountName=${secret_account};AccountKey=${AZURE_STORAGE_KEY_SANITIZED};EndpointSuffix=core.windows.net"
               ;;
           esac
+
+          connection_string_literal="$(CONNECTION_STRING_VALUE="${connection_string_literal}" python3 -c 'import os; print(os.environ.get("CONNECTION_STRING_VALUE", "").strip())')"
+
+          if [ -z "${connection_string_literal}" ]; then
+            echo "Failed to compute a normalized Azure storage connection string from the provided credentials."
+            exit 1
+          fi
+
+          secret_args+=("--from-literal=AZURE_CONNECTION_STRING=${connection_string_literal}")
+          echo "Storing normalized Azure connection string for CNPG backups."
 
           echo "Creating or updating cnpg-azure-backup secret with normalized Azure credentials"
           kubectl -n ${{ inputs.NAMESPACE_IAM }} create secret generic cnpg-azure-backup \
@@ -553,15 +574,22 @@ jobs:
           AZURE_STORAGE_ACCOUNT="$(python3 -c "import os; print(os.environ.get('AZURE_STORAGE_ACCOUNT', '').strip())")"
 
           AZURE_STORAGE_KEY_RAW="${AZURE_STORAGE_KEY:-}"
-          _AZ_PARSE_CODE=$'import os\nimport urllib.parse\n\nvalue = os.environ.get("AZURE_STORAGE_KEY", "")\ntrimmed = value.strip()\nif not trimmed:\n    key_type = "empty"\n    account_key = ""\n    account_name = ""\n    sas_token = ""\nelse:\n    lowered = trimmed.lower()\n    account_key = ""\n    account_name = ""\n    sas_token = ""\n    key_type = ""\n    if (("accountkey=" in lowered) or ("sharedaccesssignature=" in lowered)) and (\n        ("accountname=" in lowered) or ("blobendpoint=" in lowered) or ("defaultendpointsprotocol=" in lowered)\n    ):\n        parts = {}\n        for part in trimmed.split(";"):\n            if not part or "=" not in part:\n                continue\n            key, val = part.split("=", 1)\n            parts[key.strip().lower()] = val.strip()\n        account_key = parts.get("accountkey", "")\n        account_name = parts.get("accountname", "")\n        shared_sig = parts.get("sharedaccesssignature", "")\n        if shared_sig:\n            sas_token = shared_sig.lstrip(" ?")\n        if account_key:\n            key_type = "connection_string"\n        elif shared_sig:\n            key_type = "connection_string_sas"\n        else:\n            key_type = "connection_string"\n    if not key_type or key_type == "empty":\n        candidate = trimmed\n        if candidate.lower().startswith("https://"):\n            try:\n                parsed = urllib.parse.urlparse(candidate)\n            except Exception:\n                parsed = None\n            if parsed:\n                if parsed.query:\n                    candidate = parsed.query\n                elif parsed.fragment:\n                    candidate = parsed.fragment\n                elif parsed.path:\n                    candidate = parsed.path\n        candidate = candidate.lstrip("/?")\n        lowered_candidate = candidate.lower()\n        if "sig=" in lowered_candidate and ("se=" in lowered_candidate or "expiry=" in lowered_candidate):\n            sas_token = candidate\n            key_type = "sas"\n    if not key_type:\n        key_type = "account_key"\n\nprint(trimmed)\nprint(key_type)\nprint(account_key)\nprint(account_name)\nprint(sas_token)\n'
+          _AZ_PARSE_CODE=$'import os\nimport urllib.parse\n\nvalue = os.environ.get("AZURE_STORAGE_KEY", "")\ntrimmed = value.strip()\nif not trimmed:\n    key_type = "empty"\n    account_key = ""\n    account_name = ""\n    sas_token = ""\n    connection_string = ""\nelse:\n    lowered = trimmed.lower()\n    account_key = ""\n    account_name = ""\n    sas_token = ""\n    key_type = ""\n    connection_string = ""\n    ordered_parts = []\n    if (("accountkey=" in lowered) or ("sharedaccesssignature=" in lowered)) and (\n        ("accountname=" in lowered) or ("blobendpoint=" in lowered) or ("defaultendpointsprotocol=" in lowered)\n    ):\n        parts = {}\n        for part in trimmed.split(";"):\n            if not part or "=" not in part:\n                continue\n            key, val = part.split("=", 1)\n            key_clean = key.strip()\n            val_clean = val.strip()\n            lower_key = key_clean.lower()\n            parts[lower_key] = val_clean\n            ordered_parts.append((key_clean, lower_key, val_clean))\n        account_key = parts.get("accountkey", "")\n        account_name = parts.get("accountname", "")\n        shared_sig = parts.get("sharedaccesssignature", "")\n        if shared_sig:\n            sas_token = shared_sig.lstrip(" ?")\n        if account_key:\n            key_type = "connection_string"\n        elif shared_sig:\n            key_type = "connection_string_sas"\n        else:\n            key_type = "connection_string"\n        sanitized_parts = []\n        used_shared_sig = False\n        for original_key, lower_key, value in ordered_parts:\n            if lower_key == "sharedaccesssignature" and sas_token:\n                sanitized_parts.append(f"{original_key}={sas_token}")\n                used_shared_sig = True\n            else:\n                sanitized_parts.append(f"{original_key}={value}")\n        if sas_token and not used_shared_sig:\n            sanitized_parts.append(f"SharedAccessSignature={sas_token}")\n        if sanitized_parts:\n            connection_string = ";".join(sanitized_parts)\n    if not key_type or key_type == "empty":\n        candidate = trimmed\n        if candidate.lower().startswith("https://"):\n            try:\n                parsed = urllib.parse.urlparse(candidate)\n            except Exception:\n                parsed = None\n            if parsed:\n                if parsed.query:\n                    candidate = parsed.query\n                elif parsed.fragment:\n                    candidate = parsed.fragment\n                elif parsed.path:\n                    candidate = parsed.path\n        candidate = candidate.lstrip("/?")\n        lowered_candidate = candidate.lower()\n        if "sig=" in lowered_candidate and ("se=" in lowered_candidate or "expiry=" in lowered_candidate):\n            sas_token = candidate\n            key_type = "sas"\n    if not key_type:\n        key_type = "account_key"\n    if key_type not in ("connection_string", "connection_string_sas"):\n        connection_string = ""\n\nprint(trimmed)\nprint(key_type)\nprint(account_key)\nprint(account_name)\nprint(sas_token)\nprint(connection_string)\n'
           mapfile -t _AZ_STORAGE_INFO < <(python3 -c "$_AZ_PARSE_CODE")
           unset _AZ_PARSE_CODE
-          AZURE_STORAGE_KEY="${_AZ_STORAGE_INFO[0]-}"
+          AZURE_STORAGE_KEY_PARSED="${_AZ_STORAGE_INFO[0]-}"
           storage_key_type="${_AZ_STORAGE_INFO[1]-}"
           connection_account_key="${_AZ_STORAGE_INFO[2]-}"
           connection_account_name="${_AZ_STORAGE_INFO[3]-}"
           sanitized_sas_token="${_AZ_STORAGE_INFO[4]-}"
+          connection_string_normalized="${_AZ_STORAGE_INFO[5]-}"
           unset _AZ_STORAGE_INFO
+
+          AZURE_STORAGE_KEY="${AZURE_STORAGE_KEY_PARSED}"
+
+          if [ -n "${connection_string_normalized}" ]; then
+            AZURE_STORAGE_KEY="${connection_string_normalized}"
+          fi
 
           if [ -z "${AZURE_STORAGE_ACCOUNT}" ]; then
             if [ -n "${connection_account_name}" ]; then
@@ -596,7 +624,7 @@ jobs:
             user_supplied_key=0
           fi
 
-          if [ "${AZURE_STORAGE_KEY_RAW}" != "${AZURE_STORAGE_KEY}" ] && [ "${user_supplied_key}" -eq 1 ]; then
+          if [ "${AZURE_STORAGE_KEY_RAW}" != "${AZURE_STORAGE_KEY_PARSED}" ] && [ "${user_supplied_key}" -eq 1 ]; then
             echo "Trimmed leading/trailing whitespace from AZURE_STORAGE_KEY secret"
           fi
 
@@ -731,9 +759,17 @@ jobs:
             echo "Retrieved storage account key for ${AZURE_STORAGE_ACCOUNT} via Azure CLI."
             if [ -n "${NAMESPACE_IAM:-}" ]; then
               echo "Updating cnpg-azure-backup secret with refreshed credentials in namespace ${NAMESPACE_IAM}"
+              local refreshed_connection_string="DefaultEndpointsProtocol=https;AccountName=${AZURE_STORAGE_ACCOUNT};AccountKey=${AZURE_STORAGE_KEY};EndpointSuffix=core.windows.net"
+              local -a secret_update_args=(
+                "--from-literal=AZURE_STORAGE_ACCOUNT=${AZURE_STORAGE_ACCOUNT}"
+                "--from-literal=AZURE_STORAGE_KEY=${AZURE_STORAGE_KEY}"
+                "--from-literal=AZURE_CONNECTION_STRING=${refreshed_connection_string}"
+              )
+              if [ -n "${sanitized_sas_token}" ]; then
+                secret_update_args+=("--from-literal=AZURE_STORAGE_SAS_TOKEN=${sanitized_sas_token}")
+              fi
               kubectl -n "${NAMESPACE_IAM}" create secret generic cnpg-azure-backup \
-                --from-literal=AZURE_STORAGE_ACCOUNT="${AZURE_STORAGE_ACCOUNT}" \
-                --from-literal=AZURE_STORAGE_KEY="${AZURE_STORAGE_KEY}" \
+                "${secret_update_args[@]}" \
                 --dry-run=client -o yaml | kubectl apply -f -
             else
               echo "WARNING: NAMESPACE_IAM environment variable is empty; skipping cnpg-azure-backup secret refresh."
@@ -1044,6 +1080,7 @@ jobs:
           check_secret_key midpoint-db-app username
           check_secret_key midpoint-db-app password
           check_secret_key cnpg-azure-backup AZURE_STORAGE_ACCOUNT
+          check_secret_key cnpg-azure-backup AZURE_CONNECTION_STRING
 
           azure_storage_key=$(kubectl -n "${ns}" get secret cnpg-azure-backup -o jsonpath='{.data.AZURE_STORAGE_KEY}' 2>/dev/null || true)
           azure_storage_sas=$(kubectl -n "${ns}" get secret cnpg-azure-backup -o jsonpath='{.data.AZURE_STORAGE_SAS_TOKEN}' 2>/dev/null || true)
