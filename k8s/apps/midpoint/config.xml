@@ -7,7 +7,7 @@
     <repository>
       <type>native</type>
       <jdbcUrl>jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/midpoint</jdbcUrl>
-      <jdbcUsername>midpoint</jdbcUsername>
+      <jdbcUsername>${env.MIDPOINT_DB_USERNAME}</jdbcUsername>
       <jdbcPassword>${env.MIDPOINT_DB_PASSWORD}</jdbcPassword>
     </repository>
     <audit>
