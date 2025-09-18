@@ -914,7 +914,90 @@ jobs:
             echo "Azure CLI delete-batch command does not support --no-progress; continuing without it."
           fi
 
-          run_az_storage_command no-capture "deleting blobs under ${prefix}/" blob delete-batch --source "${container}" --pattern "${prefix}/*" "${delete_batch_flags[@]}"
+          delete_blobs_with_delete_batch() {
+            local err_file stdout_file status err_output stdout_capture
+            err_file=$(mktemp)
+            stdout_file=$(mktemp)
+            set +e
+            az storage blob delete-batch \
+              --source "${container}" \
+              --pattern "${prefix}/*" \
+              "${delete_batch_flags[@]}" \
+              "${az_auth_args[@]}" \
+              1>"${stdout_file}" \
+              2>"${err_file}"
+            status=$?
+            set -e
+            stdout_capture=""
+            if [ -s "${stdout_file}" ]; then
+              stdout_capture="$(cat "${stdout_file}")"
+            fi
+            rm -f "${stdout_file}"
+
+            if [ "${status}" -eq 0 ]; then
+              if [ -n "${stdout_capture}" ]; then
+                printf '%s\n' "${stdout_capture}"
+              fi
+              rm -f "${err_file}"
+              return 0
+            fi
+
+            err_output=""
+            if [ -s "${err_file}" ]; then
+              err_output="$(cat "${err_file}")"
+            fi
+            rm -f "${err_file}"
+
+            if grep -qi 'cannot use a string pattern on a bytes-like object' <<<"${err_output}"; then
+              if [ -n "${stdout_capture}" ]; then
+                printf '%s\n' "${stdout_capture}"
+              fi
+              echo "Azure CLI delete-batch encountered an incompatibility with Python fnmatch; falling back to manual deletion."
+              return 2
+            fi
+
+            local re_err_file
+            re_err_file=$(mktemp)
+            printf '%s' "${err_output}" > "${re_err_file}"
+            handle_az_storage_failure "${status}" "${re_err_file}" "deleting blobs under ${prefix}/" "${stdout_capture}"
+            rm -f "${re_err_file}"
+            return 1
+          }
+
+          delete_blobs_manually() {
+            echo "Falling back to deleting blobs under ${prefix}/ individually via az storage blob delete"
+            local names_output
+            names_output="$(run_az_storage_command capture "listing blob names under ${prefix}/ for manual deletion" blob list --container-name "${container}" --prefix "${prefix}/" --query '[].name' -o tsv)"
+            if [ -z "${names_output}" ]; then
+              echo "No blob names returned for manual deletion; nothing to delete."
+              return 0
+            fi
+            local -a manual_blob_names=()
+            mapfile -t manual_blob_names < <(printf '%s\n' "${names_output}" | sed '/^$/d')
+            local manual_count="${#manual_blob_names[@]}"
+            if [ "${manual_count}" -eq 0 ]; then
+              echo "No blob names returned for manual deletion after filtering; nothing to delete."
+              return 0
+            fi
+            echo "Deleting ${manual_count} blob(s) individually because delete-batch failed"
+            local blob_name
+            for blob_name in "${manual_blob_names[@]}"; do
+              if [ -z "${blob_name}" ]; then
+                continue
+              fi
+              echo "Deleting blob ${blob_name}"
+              run_az_storage_command no-capture "deleting blob ${blob_name}" blob delete --container-name "${container}" --name "${blob_name}"
+            done
+          }
+
+          if ! delete_blobs_with_delete_batch; then
+            delete_attempt_status=$?
+            if [ "${delete_attempt_status}" -eq 2 ]; then
+              delete_blobs_manually
+            else
+              exit "${delete_attempt_status}"
+            fi
+          fi
 
           echo "Verifying Azure backup prefix ${prefix}/ is now empty"
           remaining_count="$(run_az_storage_command capture "verifying blob cleanup" blob list --container-name "${container}" --prefix "${prefix}/" --query 'length(@)' -o tsv)"
