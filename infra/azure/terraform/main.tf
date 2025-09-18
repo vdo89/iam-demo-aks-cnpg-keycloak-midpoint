@@ -26,8 +26,8 @@ resource "azurerm_resource_group" "rg" {
 }
 
 locals {
-  resource_group_location               = var.create_resource_group ? azurerm_resource_group.rg[0].location : data.azurerm_resource_group.rg[0].location
-  aks_default_node_max_surge_trim       = trimspace(var.aks_default_node_max_surge)
+  resource_group_location         = var.create_resource_group ? azurerm_resource_group.rg[0].location : data.azurerm_resource_group.rg[0].location
+  aks_default_node_max_surge_trim = trimspace(var.aks_default_node_max_surge)
 }
 
 # Storage account for CNPG backups (Azure Blob)
