@@ -17,6 +17,15 @@ on:
         description: 'Prefix for resource names'
         required: false
         default: 'rwsdemo'
+      AKS_NODE_VM_SIZE:
+        description: 'VM size for the default AKS node pool'
+        required: false
+        default: 'Standard_D4s_v3'
+      AKS_NODE_COUNT:
+        description: 'Node count for the default AKS node pool'
+        required: false
+        default: 3
+        type: number
 
 permissions:
   id-token: write
@@ -53,7 +62,9 @@ jobs:
         run: |
           terraform plan -input=false \
             -var="location=${{ inputs.LOCATION }}" \
-            -var="prefix=${{ inputs.RESOURCE_PREFIX }}"
+            -var="prefix=${{ inputs.RESOURCE_PREFIX }}" \
+            -var="aks_default_node_vm_size=${{ inputs.AKS_NODE_VM_SIZE }}" \
+            -var="aks_default_node_count=${{ inputs.AKS_NODE_COUNT }}"
 
       - name: Terraform Apply
         if: inputs.TF_ACTION == 'apply'
@@ -61,12 +72,19 @@ jobs:
         run: |
           terraform apply -auto-approve -input=false \
             -var="location=${{ inputs.LOCATION }}" \
-            -var="prefix=${{ inputs.RESOURCE_PREFIX }}"
+            -var="prefix=${{ inputs.RESOURCE_PREFIX }}" \
+            -var="aks_default_node_vm_size=${{ inputs.AKS_NODE_VM_SIZE }}" \
+            -var="aks_default_node_count=${{ inputs.AKS_NODE_COUNT }}"
 
       - name: Terraform Destroy
         if: inputs.TF_ACTION == 'destroy'
         working-directory: infra/azure/terraform
-        run: terraform destroy -auto-approve -input=false
+        run: |
+          terraform destroy -auto-approve -input=false \
+            -var="location=${{ inputs.LOCATION }}" \
+            -var="prefix=${{ inputs.RESOURCE_PREFIX }}" \
+            -var="aks_default_node_vm_size=${{ inputs.AKS_NODE_VM_SIZE }}" \
+            -var="aks_default_node_count=${{ inputs.AKS_NODE_COUNT }}"
 
       - name: Terraform Outputs
         if: inputs.TF_ACTION == 'apply'

@@ -40,7 +40,9 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
 
 1. Push this repo to GitHub.
 2. Run workflow **`01_aks_apply.yml`** (Actions tab → select workflow → *Run workflow*).
-   - Creates: Resource Group, **AKS** (small node size), **Storage Account** and a container for CNPG backups.
+   - Creates: Resource Group, **AKS** (default Standard_D4s_v3 node pool with three nodes), **Storage Account** and a container for CNPG backups.
+   - Override the node pool size/count by supplying the optional workflow inputs `AKS_NODE_VM_SIZE` and `AKS_NODE_COUNT`, or by setting the corresponding Terraform variables.
+   - **Heads-up**: Changing either value forces Terraform to replace the default node pool (and usually the cluster), so plan a short outage while the workflow destroys and recreates the nodes.
 3. Once it finishes, the workflow will print outputs and mark success.
 
 > You can stop/start AKS to save costs later: `az aks stop/start` (see links).
@@ -96,7 +98,8 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
 
 ## Where to change things
 
-- **Terraform vars**: `infra/azure/terraform/terraform.tfvars` (or via repo variables / workflow inputs)
+- **Terraform vars**: `infra/azure/terraform/terraform.tfvars` (or via repo variables / workflow inputs) – override
+  `location`, `prefix`, `aks_default_node_vm_size`, `aks_default_node_count` as needed.
 - **Helm/Argo versions**: see `k8s/addons/*/application.yaml`
 - **DB sizing**: `k8s/apps/cnpg/cluster.yaml`
 
@@ -107,8 +110,8 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     performs a fresh import.
 
 - **midPoint config**: `k8s/apps/midpoint/deployment.yaml` + `k8s/apps/midpoint/config.xml`
-  - The deployment constrains the JVM heap (`MP_MEM_INIT=768M`, `MP_MEM_MAX=1536M`) so the pod fits on the small demo
-    nodes. Bump these values together with the container `resources` block if you size the cluster up.
+  - The deployment constrains the JVM heap (`MP_MEM_INIT=768M`, `MP_MEM_MAX=1536M`) to keep resource usage predictable.
+    Adjust these values together with the container `resources` block if you customize the AKS node sizing beyond the defaults.
   - `config.xml` uses the **native PostgreSQL repository** (Sqale) recommended for midPoint 4.9 and later, which
     matches the CloudNativePG PostgreSQL 16 cluster created by the automation.
   - An init container now copies the default `/opt/midpoint/var` contents from the image into the writable volume used for
