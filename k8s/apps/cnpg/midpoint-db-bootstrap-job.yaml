@@ -46,29 +46,19 @@ spec:
               psql -h "${DB_HOST}" -U postgres -v ON_ERROR_STOP=1 \
                 --set=mp_user="${MIDPOINT_DB_USER}" \
                 --set=mp_password="${MIDPOINT_DB_PASSWORD}" <<'SQL'
-              DO $do$
-              DECLARE
-                role_name text := :'mp_user';
-                role_password text := :'mp_password';
-              BEGIN
-                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) THEN
-                  EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L', role_name, role_password);
-                ELSE
-                  EXECUTE format('ALTER ROLE %I PASSWORD %L', role_name, role_password);
-                  EXECUTE format('ALTER ROLE %I LOGIN', role_name);
-                END IF;
-              END
-              $do$;
+              SELECT CASE
+                       WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'mp_user') THEN
+                         format('CREATE ROLE %I LOGIN PASSWORD %L', :'mp_user', :'mp_password')
+                       ELSE
+                         format('ALTER ROLE %I PASSWORD %L; ALTER ROLE %I LOGIN', :'mp_user', :'mp_password', :'mp_user')
+                     END AS command;
+              \gexec
 
-              DO $do$
-                DECLARE
-                  role_name text := :'mp_user';
-                BEGIN
-                  IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'midpoint') THEN
-                    EXECUTE format('CREATE DATABASE %I OWNER %I', 'midpoint', role_name);
-                  ELSE
-                    EXECUTE format('ALTER DATABASE %I OWNER TO %I', 'midpoint', role_name);
-                  END IF;
-                END
-              $do$;
+              SELECT CASE
+                       WHEN NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'midpoint') THEN
+                         format('CREATE DATABASE %I OWNER %I', 'midpoint', :'mp_user')
+                       ELSE
+                         format('ALTER DATABASE %I OWNER TO %I', 'midpoint', :'mp_user')
+                     END AS command;
+              \gexec
               SQL
