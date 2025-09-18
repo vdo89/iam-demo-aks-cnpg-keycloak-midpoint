@@ -53,6 +53,7 @@ jobs:
           kubectl create ns argocd --dry-run=client -o yaml | kubectl apply -f -
           kubectl create ns ingress-nginx --dry-run=client -o yaml | kubectl apply -f -
           kubectl create ns cert-manager --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create ns keycloak --dry-run=client -o yaml | kubectl apply -f -
           kubectl create ns cnpg-system --dry-run=client -o yaml | kubectl apply -f -
           kubectl create ns ${{ inputs.NAMESPACE_IAM }} --dry-run=client -o yaml | kubectl apply -f -
 
@@ -1537,7 +1538,8 @@ jobs:
           set -euo pipefail
           kubectl apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/26.3.4/kubernetes/keycloaks.k8s.keycloak.org-v1.yml
           kubectl apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/26.3.4/kubernetes/keycloakrealmimports.k8s.keycloak.org-v1.yml
-          kubectl apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/26.3.4/kubernetes/kubernetes.yml
+          echo "Applying Keycloak operator controller manifests into namespace keycloak"
+          kubectl apply --namespace keycloak -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/26.3.4/kubernetes/kubernetes.yml
 
       - name: Prepare midPoint config and admin secret
         shell: bash
