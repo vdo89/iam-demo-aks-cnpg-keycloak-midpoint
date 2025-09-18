@@ -73,3 +73,9 @@ spec:
               END
               \$\$;
               SQL
+
+              echo "Ensuring required extensions exist in database 'midpoint'"
+              psql -h "${DB_HOST}" -U postgres -d midpoint -v ON_ERROR_STOP=1 <<'SQL'
+              CREATE EXTENSION IF NOT EXISTS pgcrypto;
+              CREATE EXTENSION IF NOT EXISTS pg_trgm;
+              SQL
