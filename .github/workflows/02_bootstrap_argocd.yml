@@ -820,6 +820,124 @@ jobs:
 
           echo "Azure backup prefix ${prefix}/ successfully emptied"
 
+      - name: Reset CloudNativePG cluster state if stuck
+        shell: bash
+        env:
+          NAMESPACE_IAM: ${{ inputs.NAMESPACE_IAM }}
+        run: |
+          set -euo pipefail
+
+          ns="${NAMESPACE_IAM}"
+          if [ -z "${ns}" ]; then
+            echo "NAMESPACE_IAM input must not be empty"
+            exit 1
+          fi
+
+          wait_for_cluster_absence() {
+            for attempt in $(seq 1 30); do
+              if ! kubectl -n "${ns}" get cluster iam-db >/dev/null 2>&1; then
+                echo "CloudNativePG cluster iam-db removed"
+                return 0
+              fi
+              echo "Waiting for cluster iam-db to be removed (attempt ${attempt}/30)"
+              sleep 10
+            done
+            return 1
+          }
+
+          cleanup_initdb_job() {
+            if kubectl -n "${ns}" get job iam-db-1-initdb >/dev/null 2>&1; then
+              echo "Deleting leftover CloudNativePG initdb job"
+              kubectl -n "${ns}" delete job iam-db-1-initdb --ignore-not-found --wait=false
+              for attempt in $(seq 1 12); do
+                if ! kubectl -n "${ns}" get job iam-db-1-initdb >/dev/null 2>&1; then
+                  echo "initdb job removed"
+                  return 0
+                fi
+                echo "Waiting for initdb job to terminate (attempt ${attempt}/12)"
+                sleep 5
+              done
+              echo "initdb job still present after waiting"
+              kubectl -n "${ns}" get job iam-db-1-initdb -o yaml || true
+              return 1
+            fi
+            return 0
+          }
+
+          list_cnpg_pvcs() {
+            kubectl -n "${ns}" get pvc -l cnpg.io/cluster=iam-db -o json 2>/dev/null \
+              | jq -r '.items[]?.metadata.name' | sed '/^$/d'
+          }
+
+          cleanup_pvcs() {
+            mapfile -t pvcs < <(list_cnpg_pvcs || true)
+            if [ "${#pvcs[@]}" -eq 0 ] || { [ "${#pvcs[@]}" -eq 1 ] && [ -z "${pvcs[0]}" ]; }; then
+              echo "No leftover CloudNativePG PVCs detected"
+              return 0
+            fi
+
+            echo "Deleting leftover CloudNativePG PVCs: ${pvcs[*]}"
+            kubectl -n "${ns}" delete pvc -l cnpg.io/cluster=iam-db --ignore-not-found
+
+            for attempt in $(seq 1 30); do
+              mapfile -t remaining < <(list_cnpg_pvcs || true)
+              if [ "${#remaining[@]}" -eq 0 ] || { [ "${#remaining[@]}" -eq 1 ] && [ -z "${remaining[0]}" ]; }; then
+                echo "CloudNativePG PVC cleanup complete"
+                return 0
+              fi
+              echo "Waiting for PVC deletion to finish (attempt ${attempt}/30): ${remaining[*]}"
+              sleep 10
+            done
+
+            echo "Timed out waiting for CloudNativePG PVCs to be removed"
+            kubectl -n "${ns}" get pvc -l cnpg.io/cluster=iam-db || true
+            return 1
+          }
+
+          cleanup_cluster_artifacts() {
+            cleanup_initdb_job
+            cleanup_pvcs
+          }
+
+          cluster_ready=""
+          cluster_deleting=""
+
+          if kubectl -n "${ns}" get cluster iam-db >/dev/null 2>&1; then
+            cluster_json=$(kubectl -n "${ns}" get cluster iam-db -o json)
+            cluster_ready=$(jq -r '.status.conditions[]? | select(.type=="Ready") | .status' <<<"${cluster_json}" | tail -n 1)
+            cluster_deleting=$(jq -r '.metadata.deletionTimestamp // ""' <<<"${cluster_json}")
+
+            if [ "${cluster_ready}" = "True" ] && [ -z "${cluster_deleting}" ]; then
+              echo "CloudNativePG cluster iam-db already Ready; skipping reset"
+              exit 0
+            fi
+
+            echo "CloudNativePG cluster iam-db exists but is not Ready (Ready condition: ${cluster_ready:-<unknown>}); forcing clean bootstrap"
+
+            if [ -n "${cluster_deleting}" ]; then
+              echo "Cluster already marked for deletion at ${cluster_deleting}; waiting for completion"
+            else
+              kubectl -n "${ns}" delete cluster iam-db --ignore-not-found --wait=false
+            fi
+
+            if ! wait_for_cluster_absence; then
+              echo "Cluster iam-db still present after waiting"
+              kubectl -n "${ns}" get cluster iam-db -o yaml || true
+              exit 1
+            fi
+
+            if ! cleanup_cluster_artifacts; then
+              exit 1
+            fi
+            echo "Stale CloudNativePG resources removed"
+          else
+            echo "CloudNativePG cluster iam-db not found; checking for leftover resources"
+            if ! cleanup_cluster_artifacts; then
+              exit 1
+            fi
+            echo "CloudNativePG namespace ${ns} is free of leftover PVCs"
+          fi
+
       - name: Validate CNPG prerequisites
         env:
           NAMESPACE_IAM: ${{ inputs.NAMESPACE_IAM }}
@@ -1093,7 +1211,22 @@ jobs:
             echo "Cluster iam-db did not reach Ready condition within timeout"
             kubectl -n "${ns}" get cluster iam-db -o yaml || true
             kubectl -n "${ns}" get pods -l cnpg.io/cluster=iam-db -o wide || true
+            kubectl -n "${ns}" get jobs -l cnpg.io/cluster=iam-db -o wide || true
             kubectl -n "${ns}" describe cluster iam-db || true
+
+            mapfile -t initdb_pods < <(kubectl -n "${ns}" get pods -l job-name=iam-db-1-initdb -o name 2>/dev/null || true)
+            if [ "${#initdb_pods[@]}" -eq 0 ]; then
+              echo "No initdb pods found when gathering diagnostics"
+            else
+              for pod in "${initdb_pods[@]}"; do
+                if [ -z "${pod}" ]; then
+                  continue
+                fi
+                echo "---- Logs for ${pod} ----"
+                kubectl -n "${ns}" logs "${pod}" || true
+                echo "---- End logs for ${pod} ----"
+              done
+            fi
             exit 1
           fi
 
