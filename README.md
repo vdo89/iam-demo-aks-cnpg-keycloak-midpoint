@@ -22,6 +22,7 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
   - `ARGOCD_REPO_TOKEN` – GitHub Personal Access Token (Classic) with **repo** scope so Argo CD can clone this repo
   - (Optional) `LOCATION` – default `westeurope`
   - (Optional) `RESOURCE_PREFIX` – short prefix, default `rwsdemo`
+  - `AZURE_STORAGE_KEY` – credential for the CNPG backup storage account. Supply an account key, a full connection string, or a SAS token; the bootstrap workflow normalizes it and creates the Kubernetes secret CloudNativePG expects.
   - **DB secrets** (you can change later):
     - `POSTGRES_SUPERUSER_PASSWORD` – password for CNPG `postgres` (workflow stores it in a `kubernetes.io/basic-auth` secret with username `postgres`)
     - `KEYCLOAK_DB_PASSWORD` – password for DB user `keycloak`

@@ -38,6 +38,9 @@ spec:
         storageKey:
           name: cnpg-azure-backup
           key: AZURE_STORAGE_KEY
+        storageSasToken:
+          name: cnpg-azure-backup
+          key: AZURE_STORAGE_SAS_TOKEN
       wal:
         compression: gzip
         maxParallel: 4

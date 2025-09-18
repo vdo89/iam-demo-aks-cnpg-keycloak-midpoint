@@ -465,9 +465,75 @@ jobs:
             echo "Trimmed leading/trailing whitespace from AZURE_STORAGE_KEY secret value"
           fi
 
+          _AZ_PARSE_CODE=$'import os\nimport urllib.parse\n\nvalue = os.environ.get("AZURE_STORAGE_KEY", "")\ntrimmed = value.strip()\nif not trimmed:\n    key_type = "empty"\n    account_key = ""\n    account_name = ""\n    sas_token = ""\nelse:\n    lowered = trimmed.lower()\n    account_key = ""\n    account_name = ""\n    sas_token = ""\n    key_type = ""\n    if (("accountkey=" in lowered) or ("sharedaccesssignature" in lowered)) and (\n        ("accountname" in lowered) or ("blobendpoint" in lowered) or ("defaultendpointsprotocol" in lowered)\n    ):\n        parts = {}\n        for part in trimmed.split(";"):\n            if not part or "=" not in part:\n                continue\n            key, val = part.split("=", 1)\n            parts[key.strip().lower()] = val.strip()\n        account_key = parts.get("accountkey", "")\n        account_name = parts.get("accountname", "")\n        shared_sig = parts.get("sharedaccesssignature", "")\n        if shared_sig:\n            sas_token = shared_sig.lstrip(" ?")\n        if account_key:\n            key_type = "connection_string"\n        elif shared_sig:\n            key_type = "connection_string_sas"\n        else:\n            key_type = "connection_string"\n    if not key_type or key_type == "empty":\n        candidate = trimmed\n        if candidate.lower().startswith("https://"):\n            try:\n                parsed = urllib.parse.urlparse(candidate)\n            except Exception:\n                parsed = None\n            if parsed:\n                if parsed.query:\n                    candidate = parsed.query\n                elif parsed.fragment:\n                    candidate = parsed.fragment\n                elif parsed.path:\n                    candidate = parsed.path\n        candidate = candidate.lstrip("/?")\n        lowered_candidate = candidate.lower()\n        if "sig=" in lowered_candidate and ("se=" in lowered_candidate or "expiry=" in lowered_candidate):\n            sas_token = candidate\n            key_type = "sas"\n    if not key_type:\n        key_type = "account_key"\n\nprint(trimmed)\nprint(key_type)\nprint(account_key)\nprint(account_name)\nprint(sas_token)\n'
+          mapfile -t _AZ_STORAGE_INFO < <(python3 -c "$_AZ_PARSE_CODE")
+          unset _AZ_PARSE_CODE
+          AZURE_STORAGE_KEY_SANITIZED="${_AZ_STORAGE_INFO[0]-}"
+          storage_key_type="${_AZ_STORAGE_INFO[1]-}"
+          connection_account_key="${_AZ_STORAGE_INFO[2]-}"
+          connection_account_name="${_AZ_STORAGE_INFO[3]-}"
+          sanitized_sas_token="${_AZ_STORAGE_INFO[4]-}"
+          unset _AZ_STORAGE_INFO
+
+          secret_account="${AZURE_STORAGE_ACCOUNT}"
+          if [ -n "${connection_account_name}" ]; then
+            if [ -n "${secret_account}" ] && [ "${secret_account}" != "${connection_account_name}" ]; then
+              echo "AZURE_STORAGE_ACCOUNT input (${secret_account}) differs from credentials account name (${connection_account_name}); using the credential value."
+            fi
+            secret_account="${connection_account_name}"
+          fi
+
+          if [ -z "${secret_account}" ]; then
+            echo "Unable to determine Azure storage account name from input or credentials."
+            exit 1
+          fi
+
+          declare -a secret_args=()
+          secret_args+=("--from-literal=AZURE_STORAGE_ACCOUNT=${secret_account}")
+
+          case "${storage_key_type}" in
+            connection_string|connection_string_sas)
+              if [ -n "${connection_account_key}" ]; then
+                secret_args+=("--from-literal=AZURE_STORAGE_KEY=${connection_account_key}")
+                echo "Detected Azure storage account key in connection string credentials."
+              fi
+              if [ -n "${sanitized_sas_token}" ]; then
+                secret_args+=("--from-literal=AZURE_STORAGE_SAS_TOKEN=${sanitized_sas_token}")
+                echo "Detected Azure SAS token in connection string credentials."
+              fi
+              if [ -z "${connection_account_key}" ] && [ -z "${sanitized_sas_token}" ]; then
+                echo "Unable to extract storage account key or SAS token from AZURE_STORAGE_KEY secret."
+                exit 1
+              fi
+              if [ -n "${connection_account_key}" ] && [ -n "${sanitized_sas_token}" ]; then
+                echo "Storing both storage account key and SAS token extracted from connection string."
+              elif [ -n "${connection_account_key}" ]; then
+                echo "Using Azure storage account key credentials for CNPG backups."
+              else
+                echo "Using Azure SAS token credentials for CNPG backups."
+              fi
+              ;;
+            sas)
+              if [ -z "${sanitized_sas_token}" ]; then
+                echo "Parsed SAS credential type but token value is empty."
+                exit 1
+              fi
+              secret_args+=("--from-literal=AZURE_STORAGE_SAS_TOKEN=${sanitized_sas_token}")
+              echo "Using Azure SAS token credentials for CNPG backups."
+              ;;
+            account_key|*)
+              if [ -z "${AZURE_STORAGE_KEY_SANITIZED}" ]; then
+                echo "AZURE_STORAGE_KEY secret is empty after trimming; provide a storage account key, SAS token, or connection string."
+                exit 1
+              fi
+              secret_args+=("--from-literal=AZURE_STORAGE_KEY=${AZURE_STORAGE_KEY_SANITIZED}")
+              echo "Using Azure storage account key credentials for CNPG backups."
+              ;;
+          esac
+
+          echo "Creating or updating cnpg-azure-backup secret with normalized Azure credentials"
           kubectl -n ${{ inputs.NAMESPACE_IAM }} create secret generic cnpg-azure-backup \
-            --from-literal=AZURE_STORAGE_ACCOUNT="${AZURE_STORAGE_ACCOUNT}" \
-            --from-literal=AZURE_STORAGE_KEY="${AZURE_STORAGE_KEY}" \
+            "${secret_args[@]}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Purge existing CNPG Azure backup prefix
@@ -860,7 +926,14 @@ jobs:
           check_secret_key midpoint-db-app username
           check_secret_key midpoint-db-app password
           check_secret_key cnpg-azure-backup AZURE_STORAGE_ACCOUNT
-          check_secret_key cnpg-azure-backup AZURE_STORAGE_KEY
+
+          azure_storage_key=$(kubectl -n "${ns}" get secret cnpg-azure-backup -o jsonpath='{.data.AZURE_STORAGE_KEY}' 2>/dev/null || true)
+          azure_storage_sas=$(kubectl -n "${ns}" get secret cnpg-azure-backup -o jsonpath='{.data.AZURE_STORAGE_SAS_TOKEN}' 2>/dev/null || true)
+
+          if [ -z "${azure_storage_key}" ] && [ -z "${azure_storage_sas}" ]; then
+            echo "ERROR: secret cnpg-azure-backup must contain AZURE_STORAGE_KEY or AZURE_STORAGE_SAS_TOKEN"
+            missing=1
+          fi
 
           if [ "${missing}" -ne 0 ]; then
             echo "Secret validation failed; aborting."
