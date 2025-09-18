@@ -26,8 +26,7 @@ resource "azurerm_resource_group" "rg" {
 }
 
 locals {
-  resource_group_location        = var.create_resource_group ? azurerm_resource_group.rg[0].location : data.azurerm_resource_group.rg[0].location
-  aks_default_node_surge_is_zero = trimspace(replace(var.aks_default_node_max_surge, "%", "")) == "0"
+  resource_group_location = var.create_resource_group ? azurerm_resource_group.rg[0].location : data.azurerm_resource_group.rg[0].location
 }
 
 # Storage account for CNPG backups (Azure Blob)
@@ -65,8 +64,7 @@ resource "azurerm_kubernetes_cluster" "aks" {
     temporary_name_for_rotation = "systemtmp"
 
     upgrade_settings {
-      max_surge       = var.aks_default_node_max_surge
-      max_unavailable = local.aks_default_node_surge_is_zero ? "1" : null
+      max_surge = var.aks_default_node_max_surge
     }
   }
 
