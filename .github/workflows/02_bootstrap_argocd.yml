@@ -1223,9 +1223,9 @@ jobs:
                             EXECUTE format('ALTER ROLE %I LOGIN', role_name);
                           END IF;
                         END
-                          $do$;
+                        $do$;
 
-                          DO $do$
+                        DO $do$
                           DECLARE
                             role_name text := :'mp_user';
                           BEGIN
@@ -1235,8 +1235,8 @@ jobs:
                               EXECUTE format('ALTER DATABASE %I OWNER TO %I', 'midpoint', role_name);
                             END IF;
                           END
-                          $do$;
-                          SQL
+                        $do$;
+                        SQL
           YAML
           export NS="${ns}"
           envsubst '$NS' < "${manifest}" | kubectl apply -f -
