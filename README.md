@@ -41,6 +41,7 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
 1. Push this repo to GitHub.
 2. Run workflow **`01_aks_apply.yml`** (Actions tab → select workflow → *Run workflow*).
   - Creates: Resource Group, **AKS** (default Standard_D4s_v3 node pool with one node so new subscriptions stay within the default vCPU quota), **Storage Account** and a container for CNPG backups.
+    - The default node pool upgrades with `max_surge=0` so the workflow never needs extra quota for temporary surge nodes. Expect a short outage while the single system node is replaced; raise `aks_default_node_max_surge` once your subscription has spare vCPU capacity to keep upgrades highly available.
     - After increasing your Azure vCPU quota you can scale the cluster by overriding `AKS_NODE_COUNT` (workflow input) or `aks_default_node_count` (Terraform variable).
      - The workflow auto-detects whether the target resource group already exists. If it does, Terraform reuses it instead of failing. Override the name with the optional `RESOURCE_GROUP_NAME` input when you want to create or reuse a group that does not follow the default `<prefix>-rg` pattern. For local runs you can achieve the same by setting `create_resource_group=false` and `resource_group_name=<name>`.
    - The workflow now bootstraps an **Azure Storage** backend for Terraform state (resource group `<prefix>-tfstate-rg`, storage account named `${prefix}tf<subscription-hash>`, container `tfstate`). State persists across runs so replays reuse the existing AKS cluster and CNPG storage account instead of erroring when they already exist. The automation retrieves an access key for the storage account and feeds it to Terraform automatically, so you do **not** need to grant additional data-plane roles (such as *Storage Blob Data Contributor*) to the GitHub OIDC app. For local Terraform runs initialize with the same backend settings (see the workflow logs for the exact storage account name) before planning or applying.
@@ -103,7 +104,7 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
 ## Where to change things
 
 - **Terraform vars**: `infra/azure/terraform/terraform.tfvars` (or via repo variables / workflow inputs) – override
-  `location`, `prefix`, `create_resource_group`, `resource_group_name`, `aks_default_node_vm_size`, `aks_default_node_count` as needed.
+  `location`, `prefix`, `create_resource_group`, `resource_group_name`, `aks_default_node_vm_size`, `aks_default_node_count`, `aks_default_node_max_surge` as needed.
 - **Helm/Argo versions**: see `k8s/addons/*/application.yaml`
 - **DB sizing**: `k8s/apps/cnpg/cluster.yaml`
 

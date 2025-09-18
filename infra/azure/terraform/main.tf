@@ -62,6 +62,10 @@ resource "azurerm_kubernetes_cluster" "aks" {
     # Required by the AzureRM provider when properties that force
     # a rotation (e.g. os_sku) are updated on the default node pool.
     temporary_name_for_rotation = "systemtmp"
+
+    upgrade_settings {
+      max_surge = var.aks_default_node_max_surge
+    }
   }
 
   identity {
