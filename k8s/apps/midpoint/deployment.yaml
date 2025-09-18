@@ -28,12 +28,23 @@ spec:
                 secretKeyRef:
                   name: midpoint-db-app
                   key: password
+            - name: MP_MEM_INIT
+              value: "768M"
+            - name: MP_MEM_MAX
+              value: "1536M"
           volumeMounts:
             - name: midpoint-home
               mountPath: /opt/midpoint/var
             - name: config-xml
               mountPath: /opt/midpoint/var/config.xml
               subPath: config.xml
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 1000m
+              memory: 2Gi
       volumes:
         - name: midpoint-home
           emptyDir: {}
