@@ -11,6 +11,29 @@ spec:
     metadata:
       labels: { app: midpoint }
     spec:
+      initContainers:
+        - name: midpoint-home-init
+          image: evolveum/midpoint:4.9
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              dest="/midpoint-home"
+              if [ ! -d "${dest}" ]; then
+                echo "Creating midPoint home directory at ${dest}"
+                mkdir -p "${dest}"
+              fi
+
+              if [ -z "$(ls -A "${dest}")" ]; then
+                echo "Populating midPoint home directory with default contents"
+                cp -a /opt/midpoint/var/. "${dest}/"
+              else
+                echo "midPoint home directory already populated; skipping default copy"
+              fi
+          volumeMounts:
+            - name: midpoint-home
+              mountPath: /midpoint-home
       containers:
         - name: midpoint
           image: evolveum/midpoint:4.9
