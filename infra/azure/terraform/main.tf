@@ -3,6 +3,8 @@ locals {
     project = "rws-iam-demo"
     owner   = "rws"
   }
+
+  resource_group_name = var.resource_group_name != "" ? var.resource_group_name : "${var.prefix}-rg"
 }
 
 resource "random_string" "sa_suffix" {
@@ -11,17 +13,27 @@ resource "random_string" "sa_suffix" {
   special = false
 }
 
+data "azurerm_resource_group" "rg" {
+  count = var.create_resource_group ? 0 : 1
+  name  = local.resource_group_name
+}
+
 resource "azurerm_resource_group" "rg" {
-  name     = "${var.prefix}-rg"
+  count    = var.create_resource_group ? 1 : 0
+  name     = local.resource_group_name
   location = var.location
   tags     = local.tags
+}
+
+locals {
+  resource_group_location = var.create_resource_group ? azurerm_resource_group.rg[0].location : data.azurerm_resource_group.rg[0].location
 }
 
 # Storage account for CNPG backups (Azure Blob)
 resource "azurerm_storage_account" "sa" {
   name                            = "${var.prefix}sa${random_string.sa_suffix.result}"
-  resource_group_name             = azurerm_resource_group.rg.name
-  location                        = azurerm_resource_group.rg.location
+  resource_group_name             = local.resource_group_name
+  location                        = local.resource_group_location
   account_tier                    = "Standard"
   account_replication_type        = "LRS"
   allow_nested_items_to_be_public = false
@@ -38,8 +50,8 @@ resource "azurerm_storage_container" "cnpg" {
 # AKS (defaults sized for Keycloak + midPoint demo workloads)
 resource "azurerm_kubernetes_cluster" "aks" {
   name                = "${var.prefix}-aks"
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
+  location            = local.resource_group_location
+  resource_group_name = local.resource_group_name
   dns_prefix          = "${var.prefix}-aks"
 
   default_node_pool {
