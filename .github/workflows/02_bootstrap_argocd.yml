@@ -906,7 +906,15 @@ jobs:
           fi
 
           echo "Deleting ${existing_count} Azure Blob object(s) under ${prefix}/ before bootstrapping CNPG"
-          run_az_storage_command no-capture "deleting blobs under ${prefix}/" blob delete-batch --source "${container}" --pattern "${prefix}/*" --no-progress
+
+          delete_batch_flags=()
+          if az storage blob delete-batch --help 2>&1 | grep -Fq -- '--no-progress'; then
+            delete_batch_flags+=("--no-progress")
+          else
+            echo "Azure CLI delete-batch command does not support --no-progress; continuing without it."
+          fi
+
+          run_az_storage_command no-capture "deleting blobs under ${prefix}/" blob delete-batch --source "${container}" --pattern "${prefix}/*" "${delete_batch_flags[@]}"
 
           echo "Verifying Azure backup prefix ${prefix}/ is now empty"
           remaining_count="$(run_az_storage_command capture "verifying blob cleanup" blob list --container-name "${container}" --prefix "${prefix}/" --query 'length(@)' -o tsv)"
