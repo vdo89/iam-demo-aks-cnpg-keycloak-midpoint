@@ -56,7 +56,7 @@ variable "aks_default_node_count" {
 
 variable "aks_default_node_max_surge" {
   type        = string
-  description = "Maximum number or percentage of surge nodes to add during upgrades of the default node pool. Use \"0\" to disable surge nodes when regional vCPU quota is tight; AKS keeps `max_unavailable=1` by default so upgrades still progress sequentially."
+  description = "Maximum number or percentage of surge nodes to add during upgrades of the default node pool. Use \"0\" to disable surge nodes when regional vCPU quota is tight; when you do, the module forces `max_unavailable=1` so the Azure API accepts the upgrade policy and the cluster still progresses upgrades sequentially."
   default     = "0"
 
   validation {
