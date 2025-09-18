@@ -65,6 +65,10 @@ spec:
                 secretKeyRef:
                   name: midpoint-db-app
                   key: password
+            - name: MP_SET_midpoint_repository_missingSchemaAction
+              value: create
+            - name: MP_SET_midpoint_repository_upgradeableSchemaAction
+              value: upgrade
             - name: MP_UNSET_midpoint_repository_hibernateHbm2ddl
               value: "1"
             - name: MP_NO_ENV_COMPAT

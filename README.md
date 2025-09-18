@@ -114,6 +114,9 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
   - An init container now copies the default `/opt/midpoint/var` contents from the image into the writable volume used for
     `midpoint.home`. This preserves the bundled keystore and directory structure so the server can start cleanly even when the
     pod is rescheduled onto a fresh node.
+  - midPoint now auto-creates and auto-upgrades its repository schema when it detects a fresh or older database. This prevents
+    CrashLoopBackOff cycles after rerunning the bootstrap workflow against an existing CNPG cluster that already contains a
+    schema from an earlier midPoint release.
 
 
 ### Keycloak realm GitOps notes
