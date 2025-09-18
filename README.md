@@ -111,6 +111,9 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     nodes. Bump these values together with the container `resources` block if you size the cluster up.
   - `config.xml` uses the **native PostgreSQL repository** (Sqale) recommended for midPoint 4.9 and later, which
     matches the CloudNativePG PostgreSQL 16 cluster created by the automation.
+  - An init container now copies the default `/opt/midpoint/var` contents from the image into the writable volume used for
+    `midpoint.home`. This preserves the bundled keystore and directory structure so the server can start cleanly even when the
+    pod is rescheduled onto a fresh node.
 
 
 ### Keycloak realm GitOps notes
