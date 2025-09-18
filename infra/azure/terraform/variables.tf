@@ -56,12 +56,28 @@ variable "aks_default_node_count" {
 
 variable "aks_default_node_max_surge" {
   type        = string
-  description = "Maximum number or percentage of surge nodes to add during upgrades of the default node pool. Use \"0\" to disable surge nodes when regional vCPU quota is tight."
+  description = "Maximum number or percentage of surge nodes to add during upgrades of the default node pool. Use \"0\" to disable surge nodes when regional vCPU quota is tight; the module then relies on max_unavailable to keep upgrades moving."
   default     = "0"
 
   validation {
     condition     = can(regex("^[0-9]+%?$", trimspace(var.aks_default_node_max_surge)))
     error_message = "aks_default_node_max_surge must be an integer (e.g. \"1\") or percentage (e.g. \"33%\"). Use \"0\" to avoid extra surge nodes on constrained subscriptions."
+  }
+}
+
+variable "aks_default_node_max_unavailable" {
+  type        = string
+  description = "Maximum number or percentage of nodes that can be unavailable during upgrades of the default node pool. Must be non-zero whenever surge nodes are disabled."
+  default     = "1"
+
+  validation {
+    condition     = can(regex("^[0-9]+%?$", trimspace(var.aks_default_node_max_unavailable)))
+    error_message = "aks_default_node_max_unavailable must be an integer (e.g. \"1\") or percentage (e.g. \"33%\")."
+  }
+
+  validation {
+    condition     = !(trimspace(var.aks_default_node_max_unavailable) == "0" && trimspace(var.aks_default_node_max_surge) == "0")
+    error_message = "At least one of aks_default_node_max_unavailable or aks_default_node_max_surge must be non-zero to satisfy AKS upgrade requirements."
   }
 }
 
