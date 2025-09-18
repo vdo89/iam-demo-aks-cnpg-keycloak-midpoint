@@ -2,4 +2,4 @@
 location = "westeurope"
 prefix   = "rwsdemo"
 # aks_default_node_vm_size = "Standard_D4s_v3"
-# aks_default_node_count   = 3
+# aks_default_node_count   = 1

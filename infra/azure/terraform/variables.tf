@@ -31,5 +31,5 @@ variable "aks_default_node_vm_size" {
 variable "aks_default_node_count" {
   type        = number
   description = "Number of nodes in the default AKS node pool"
-  default     = 3
+  default     = 1
 }
