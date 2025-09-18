@@ -42,6 +42,7 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
 2. Run workflow **`01_aks_apply.yml`** (Actions tab → select workflow → *Run workflow*).
    - Creates: Resource Group, **AKS** (default Standard_D4s_v3 node pool with three nodes), **Storage Account** and a container for CNPG backups.
      - The workflow auto-detects whether the target resource group already exists. If it does, Terraform reuses it instead of failing. Override the name with the optional `RESOURCE_GROUP_NAME` input when you want to create or reuse a group that does not follow the default `<prefix>-rg` pattern. For local runs you can achieve the same by setting `create_resource_group=false` and `resource_group_name=<name>`.
+   - The workflow now bootstraps an **Azure Storage** backend for Terraform state (resource group `<prefix>-tfstate-rg`, storage account named `${prefix}tf<subscription-hash>`, container `tfstate`). State persists across runs so replays reuse the existing AKS cluster and CNPG storage account instead of erroring when they already exist. For local Terraform runs initialize with the same backend settings (see the workflow logs for the exact storage account name) before planning or applying.
    - Override the node pool size/count by supplying the optional workflow inputs `AKS_NODE_VM_SIZE` and `AKS_NODE_COUNT`, or by setting the corresponding Terraform variables.
    - **Heads-up**: Changing either value forces Terraform to replace the default node pool (and usually the cluster), so plan a short outage while the workflow destroys and recreates the nodes.
 3. Once it finishes, the workflow will print outputs and mark success.
@@ -91,9 +92,10 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
 
 ## Clean up
 
-- Terraform destroy: run **`01_aks_apply.yml`** with `TF_ACTION: destroy` (dropdown when triggering)  
+- Terraform destroy: run **`01_aks_apply.yml`** with `TF_ACTION: destroy` (dropdown when triggering)
   or locally: `terraform destroy` from `infra/azure/terraform` (after `az login`).
 - Or stop cluster to save money: `az aks stop --name <cluster> --resource-group <rg>`
+- Remove the Terraform state bootstrap resources if you no longer need them: `az group delete --name <prefix>-tfstate-rg`
 
 ---
 
