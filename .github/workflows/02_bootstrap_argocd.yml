@@ -1602,12 +1602,52 @@ jobs:
 
           echo "Waiting for Argo CD application 'apps' to report Synced/Healthy status"
           diagnostics_dumped=0
+          last_resource_summary=""
+          apps_namespace="${{ inputs.NAMESPACE_IAM }}"
           for attempt in $(seq 1 90); do
-            sync_status=$(kubectl -n argocd get application apps -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")
-            health_status=$(kubectl -n argocd get application apps -o jsonpath='{.status.health.status}' 2>/dev/null || echo "")
-            operation_phase=$(kubectl -n argocd get application apps -o jsonpath='{.status.operationState.phase}' 2>/dev/null || echo "")
+            app_json=""
+            if ! app_json=$(kubectl -n argocd get application apps -o json 2>/dev/null); then
+              echo "Failed to fetch Argo CD application status (attempt ${attempt}/90); retrying in 10 seconds"
+              sleep 10
+              continue
+            fi
+
+            sync_status=$(jq -r '.status.sync.status // ""' <<<"${app_json}")
+            health_status=$(jq -r '.status.health.status // ""' <<<"${app_json}")
+            operation_phase=$(jq -r '.status.operationState.phase // ""' <<<"${app_json}")
+            resources_summary=$(jq -r '
+              .status.resources[]?
+              | select((.health.status // "") != "Healthy")
+              | [
+                  (.health.status // "Unknown"),
+                  (.kind // "Unknown"),
+                  (if .namespace then (.namespace + "/" + .name) else .name end),
+                  (.health.message // "")
+                ]
+              | @tsv
+            ' <<<"${app_json}")
 
             echo "apps status: sync=${sync_status:-<unknown>} health=${health_status:-<unknown>} operation=${operation_phase:-<unknown>} (attempt ${attempt}/90)"
+
+            if [ -n "${resources_summary}" ]; then
+              if [ "${resources_summary}" != "${last_resource_summary}" ]; then
+                echo "Resources still progressing or unhealthy:"
+                while IFS=$'\t' read -r res_health res_kind res_identifier res_message; do
+                  [ -z "${res_health}" ] && continue
+                  if [ -n "${res_message}" ]; then
+                    echo "  - ${res_kind} ${res_identifier}: ${res_health} (${res_message})"
+                  else
+                    echo "  - ${res_kind} ${res_identifier}: ${res_health}"
+                  fi
+                done <<<"${resources_summary}"
+                last_resource_summary="${resources_summary}"
+              fi
+            else
+              if [ -n "${last_resource_summary}" ]; then
+                echo "All managed resources currently report Healthy."
+              fi
+              last_resource_summary=""
+            fi
 
             if [ "${sync_status}" = "Synced" ]; then
               if [ "${health_status}" = "Healthy" ]; then
@@ -1617,6 +1657,11 @@ jobs:
               fi
               if [ "${health_status}" = "Unknown" ] && [ "${operation_phase}" = "Succeeded" ]; then
                 echo "apps application is synced; health reported as Unknown but last operation succeeded. Proceeding."
+                kubectl -n argocd get application apps
+                exit 0
+              fi
+              if [ "${operation_phase}" = "Succeeded" ] && [ -z "${resources_summary}" ]; then
+                echo "All managed resources report Healthy but Argo CD application health is ${health_status:-<unknown>}. Proceeding."
                 kubectl -n argocd get application apps
                 exit 0
               fi
@@ -1639,6 +1684,12 @@ jobs:
 
           echo "Timed out waiting for Argo CD application 'apps' to become synced and healthy"
           kubectl -n argocd get application apps -o yaml || true
+          if kubectl get ns "${apps_namespace}" >/dev/null 2>&1; then
+            echo "Pods in namespace ${apps_namespace}:"
+            kubectl -n "${apps_namespace}" get pods -o wide || true
+            echo "Recent events in namespace ${apps_namespace}:"
+            kubectl -n "${apps_namespace}" get events --sort-by=.metadata.creationTimestamp | tail -n 50 || true
+          fi
           exit 1
 
       - name: Show ingress endpoints (if available)
