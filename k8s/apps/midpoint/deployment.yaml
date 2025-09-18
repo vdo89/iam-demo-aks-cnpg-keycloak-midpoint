@@ -46,27 +46,16 @@ spec:
                 secretKeyRef:
                   name: midpoint-admin
                   key: password
+            - name: MIDPOINT_DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: midpoint-db-app
+                  key: username
             - name: MIDPOINT_DB_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: midpoint-db-app
                   key: password
-            - name: MP_SET_midpoint_repository_database
-              value: postgresql
-            - name: MP_SET_midpoint_repository_jdbcUrl
-              value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/midpoint
-            - name: MP_SET_midpoint_repository_jdbcUsername
-              valueFrom:
-                secretKeyRef:
-                  name: midpoint-db-app
-                  key: username
-            - name: MP_SET_midpoint_repository_jdbcPassword
-              valueFrom:
-                secretKeyRef:
-                  name: midpoint-db-app
-                  key: password
-            - name: MP_UNSET_midpoint_repository_hibernateHbm2ddl
-              value: "1"
             - name: MP_NO_ENV_COMPAT
               value: "1"
             - name: MP_MEM_INIT
