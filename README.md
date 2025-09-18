@@ -57,6 +57,7 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
      - The workflow pre-installs CloudNativePG CRDs with `kubectl apply --server-side`. It first attempts to render them via `helm show crds` and, if the chart does not publish CRDs in that location (as happens with recent releases), falls back to `helm template --include-crds` and filters the `CustomResourceDefinition` manifests. This keeps the large schemas out of Kubernetes' annotation history while the Argo CD application disables chart-managed CRDs (`crds.create=false`) to avoid reintroducing the oversized annotation.
    - Create **CNPG** cluster `iam-db` (+ Azure Blob backup config)
    - Run a one-off PostgreSQL job that ensures the `midpoint` database and role exist before midPoint starts
+   - Enable the required PostgreSQL extensions (`pgcrypto`, `pg_trgm`) for midPoint
    - Install **Keycloak Operator** then create a **Keycloak** CR bound to CNPG
    - Deploy **midPoint** bound to CNPG
    - Create a Kubernetes **Secret** with Azure Blob credentials (from repo secrets) for CNPG backups
