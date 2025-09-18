@@ -105,7 +105,7 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     payload, bump `metadata.annotations.iam.demo/realm-config-version` so Argo CD reapplies the manifest and Keycloak
     performs a fresh import.
 
-- **midPoint config**: `k8s/apps/midpoint/deployment.yaml` + `k8s/apps/midpoint/config.xml`
+- **midPoint config**: `k8s/apps/midpoint/deployment.yaml` (environment variables `MP_SET_*` drive the repository/DB settings)
 
 
 ### Keycloak realm GitOps notes
