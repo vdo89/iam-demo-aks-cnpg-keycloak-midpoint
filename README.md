@@ -44,7 +44,7 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     - Override `AKS_NODE_VM_SIZE` (workflow input) or `aks_default_node_vm_size` (Terraform variable) if you have quota for a larger SKU such as `Standard_D4s_v3` and want more CPU headroom.
 
     - The control plane defaults to the **AKS Free** tier (`AKS_SKU_TIER` workflow input / `aks_sku_tier` Terraform variable). Leave it on `Free` to avoid uptime SLA charges and because new/free subscriptions often lack the quota required for the paid tier.
-    - The default node pool upgrades with `max_surge=0` so the workflow never needs extra quota for temporary surge nodes. Terraform automatically sets `max_unavailable=1` in that scenario to satisfy the AKS API requirement that at least one upgrade budget is non-zero, which means upgrades briefly cordon the single system node. Expect a short outage while it is replaced; raise `aks_default_node_max_surge` once your subscription has spare vCPU capacity to keep upgrades highly available. You can also tweak `aks_default_node_max_unavailable` (default `1`) if you want AKS to drain more than one node at a time during upgrades.
+    - The default node pool upgrades with `max_surge=0` so the workflow never needs extra quota for temporary surge nodes. AKS automatically keeps `max_unavailable=1` in that scenario to satisfy the API requirement that at least one upgrade budget is non-zero, which means upgrades briefly cordon the single system node. Expect a short outage while it is replaced; raise `aks_default_node_max_surge` once your subscription has spare vCPU capacity so AKS can add surge nodes and keep upgrades highly available.
 
     - After increasing your Azure vCPU quota you can scale the cluster by overriding `AKS_NODE_COUNT` (workflow input) or `aks_default_node_count` (Terraform variable).
     - AKS upgrades that replace the system node pool (for example when switching the OS SKU) briefly request an extra node. Ensure the subscription has enough quota in the chosen VM family to accommodate that surge or request a quota increase before rerunning the workflow.
@@ -109,7 +109,7 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
 ## Where to change things
 
 - **Terraform vars**: `infra/azure/terraform/terraform.tfvars` (or via repo variables / workflow inputs) – override
-  `location`, `prefix`, `create_resource_group`, `resource_group_name`, `aks_default_node_vm_size`, `aks_default_node_count`, `aks_default_node_max_surge`, `aks_default_node_max_unavailable`, `aks_sku_tier` as needed.
+  `location`, `prefix`, `create_resource_group`, `resource_group_name`, `aks_default_node_vm_size`, `aks_default_node_count`, `aks_default_node_max_surge`, `aks_sku_tier` as needed.
 - **Helm/Argo versions**: see `k8s/addons/*/application.yaml`
 - **DB sizing**: `k8s/apps/cnpg/cluster.yaml`
 
