@@ -73,3 +73,16 @@ spec:
               END
               \$\$;
               SQL
+
+              psql -h "${DB_HOST}" -U postgres -d midpoint -v ON_ERROR_STOP=1 \
+                -c "CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;"
+
+              psql -h "${DB_HOST}" -U postgres -d midpoint -v ON_ERROR_STOP=1 <<SQL
+              DO \$\$
+              DECLARE
+                role_name text := '${mp_user_sql}';
+              BEGIN
+                EXECUTE format('ALTER EXTENSION pgcrypto OWNER TO %I', role_name);
+              END
+              \$\$;
+              SQL
