@@ -25,7 +25,7 @@ variable "resource_group_name" {
 variable "aks_default_node_vm_size" {
   type        = string
   description = "VM size for the default AKS node pool"
-  default     = "Standard_D4s_v3"
+  default     = "Standard_B2ms"
 }
 
 variable "aks_default_node_count" {
