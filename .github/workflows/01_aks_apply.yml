@@ -56,11 +56,61 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
+      - name: Ensure Terraform state storage
+        id: tfstate
+        shell: bash
+        working-directory: infra/azure/terraform
+        env:
+          LOCATION: ${{ inputs.LOCATION }}
+          RESOURCE_PREFIX: ${{ inputs.RESOURCE_PREFIX }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          STATE_RG="${RESOURCE_PREFIX}-tfstate-rg"
+          HASH="$(echo -n "${AZURE_SUBSCRIPTION_ID}" | sha256sum | cut -c1-8)"
+          STATE_SA_BASE="${RESOURCE_PREFIX}tf${HASH}"
+          STATE_SA="${STATE_SA_BASE:0:24}"
+
+          echo "Ensuring Terraform backend storage account ${STATE_SA} in resource group ${STATE_RG}."
+          az group create --name "${STATE_RG}" --location "${LOCATION}" --output none
+          if ! az storage account show --name "${STATE_SA}" --resource-group "${STATE_RG}" >/dev/null 2>&1; then
+            echo "Creating storage account ${STATE_SA} for Terraform state."
+            az storage account create \
+              --name "${STATE_SA}" \
+              --resource-group "${STATE_RG}" \
+              --location "${LOCATION}" \
+              --sku Standard_LRS \
+              --kind StorageV2 \
+              --min-tls-version TLS1_2 \
+              --allow-blob-public-access false \
+              --output none
+          else
+            echo "Storage account ${STATE_SA} already exists."
+          fi
+
+          az storage container create \
+            --name tfstate \
+            --account-name "${STATE_SA}" \
+            --auth-mode login \
+            --public-access off \
+            --output none
+
+          echo "resource_group=${STATE_RG}" >> "${GITHUB_OUTPUT}"
+          echo "storage_account=${STATE_SA}" >> "${GITHUB_OUTPUT}"
+
       - name: Terraform Init
         working-directory: infra/azure/terraform
-        run: terraform init -input=false
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform init -input=false \
+            -backend-config="resource_group_name=${{ steps.tfstate.outputs.resource_group }}" \
+            -backend-config="storage_account_name=${{ steps.tfstate.outputs.storage_account }}" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=${{ inputs.RESOURCE_PREFIX }}.tfstate" \
+            -backend-config="use_azuread_auth=true"
 
-      - name: Determine Resource Group configuration
+      - name: Determine resource configuration
         id: rg
         shell: bash
         working-directory: infra/azure/terraform
@@ -73,6 +123,8 @@ jobs:
           if [[ -z "${RG_NAME}" ]]; then
             RG_NAME="${RESOURCE_PREFIX}-rg"
           fi
+
+          AKS_NAME="${RESOURCE_PREFIX}-aks"
 
           CREATE_RG="true"
           if terraform state show azurerm_resource_group.rg[0] >/dev/null 2>&1; then
@@ -88,6 +140,55 @@ jobs:
 
           echo "resource_group_name=${RG_NAME}" >> "${GITHUB_OUTPUT}"
           echo "create_resource_group=${CREATE_RG}" >> "${GITHUB_OUTPUT}"
+          echo "aks_name=${AKS_NAME}" >> "${GITHUB_OUTPUT}"
+
+      - name: Import existing Azure resources (if needed)
+        if: inputs.TF_ACTION == 'apply'
+        shell: bash
+        working-directory: infra/azure/terraform
+        env:
+          RESOURCE_PREFIX: ${{ inputs.RESOURCE_PREFIX }}
+          RESOURCE_GROUP_NAME: ${{ steps.rg.outputs.resource_group_name }}
+          AKS_NAME: ${{ steps.rg.outputs.aks_name }}
+        run: |
+          set -euo pipefail
+
+          if terraform state show azurerm_storage_account.sa >/dev/null 2>&1; then
+            echo "Storage account already tracked in Terraform state."
+          else
+            SA_PREFIX="${RESOURCE_PREFIX}sa"
+            EXISTING_SA="$(az storage account list --resource-group "${RESOURCE_GROUP_NAME}" --query "[?starts_with(name, '${SA_PREFIX}')].name | [0]" -o tsv 2>/dev/null || true)"
+            if [[ -n "${EXISTING_SA}" ]]; then
+              echo "Importing storage account ${EXISTING_SA} into Terraform state."
+              SA_SUFFIX="${EXISTING_SA#${SA_PREFIX}}"
+              if [[ -n "${SA_SUFFIX}" ]]; then
+                terraform import random_string.sa_suffix "${SA_SUFFIX}"
+              else
+                echo "Existing storage account ${EXISTING_SA} does not match expected prefix ${SA_PREFIX}; skipping random suffix import." >&2
+              fi
+              terraform import azurerm_storage_account.sa "/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP_NAME}/providers/Microsoft.Storage/storageAccounts/${EXISTING_SA}"
+              set +e
+              terraform import azurerm_storage_container.cnpg "https://${EXISTING_SA}.blob.core.windows.net/cnpg-backups"
+              STATUS=$?
+              set -e
+              if [[ ${STATUS} -ne 0 ]]; then
+                echo "Storage container cnpg-backups not found; Terraform will create it."
+              fi
+            else
+              echo "No existing storage account with prefix ${SA_PREFIX} detected; Terraform will create one."
+            fi
+          fi
+
+          if terraform state show azurerm_kubernetes_cluster.aks >/dev/null 2>&1; then
+            echo "AKS cluster already tracked in Terraform state."
+          else
+            if az aks show --name "${AKS_NAME}" --resource-group "${RESOURCE_GROUP_NAME}" >/dev/null 2>&1; then
+              echo "Importing existing AKS cluster ${AKS_NAME} into Terraform state."
+              terraform import azurerm_kubernetes_cluster.aks "/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP_NAME}/providers/Microsoft.ContainerService/managedClusters/${AKS_NAME}"
+            else
+              echo "AKS cluster ${AKS_NAME} not found; Terraform will create it."
+            fi
+          fi
 
       - name: Terraform Plan
         if: inputs.TF_ACTION == 'apply'
