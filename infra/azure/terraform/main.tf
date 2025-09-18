@@ -59,6 +59,9 @@ resource "azurerm_kubernetes_cluster" "aks" {
     vm_size    = var.aks_default_node_vm_size
     node_count = var.aks_default_node_count
     os_sku     = "AzureLinux"
+    # Required by the AzureRM provider when properties that force
+    # a rotation (e.g. os_sku) are updated on the default node pool.
+    temporary_name_for_rotation = "systemtmp"
   }
 
   identity {
