@@ -1571,6 +1571,41 @@ jobs:
             fi
           done
 
+      - name: Configure Keycloak operator watch namespaces
+        shell: bash
+        env:
+          IAM_NAMESPACE: ${{ inputs.NAMESPACE_IAM }}
+        run: |
+          set -euo pipefail
+
+          operator_namespace=""
+          for ns in keycloak keycloak-system default; do
+            if kubectl -n "${ns}" get deployment keycloak-operator >/dev/null 2>&1; then
+              operator_namespace="${ns}"
+              break
+            fi
+          done
+
+          if [ -z "${operator_namespace}" ]; then
+            echo "Unable to locate keycloak-operator deployment in expected namespaces (keycloak, keycloak-system, default)."
+            echo "Available deployments:" || true
+            kubectl get deployments -A || true
+            exit 1
+          fi
+
+          watch_namespaces="${IAM_NAMESPACE}"
+          if [ "${IAM_NAMESPACE}" != "${operator_namespace}" ]; then
+            watch_namespaces="${watch_namespaces},${operator_namespace}"
+          fi
+
+          echo "Configuring keycloak-operator in namespace ${operator_namespace} to watch: ${watch_namespaces}"
+          kubectl -n "${operator_namespace}" set env deployment/keycloak-operator \
+            QUARKUS_OPERATOR_SDK_NAMESPACES="${watch_namespaces}" \
+            QUARKUS_OPERATOR_SDK_GENERATE_WITH_WATCHED_NAMESPACES="${watch_namespaces}" \
+            --overwrite
+
+          kubectl -n "${operator_namespace}" rollout status deployment/keycloak-operator --timeout=300s
+
       - name: Create Argo CD application for iam apps (Keycloak + midPoint)
         shell: bash
         run: |
