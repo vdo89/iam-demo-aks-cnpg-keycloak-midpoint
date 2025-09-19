@@ -74,6 +74,7 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
    - Deploy **midPoint** bound to CNPG
    - Create a Kubernetes **Secret** with Azure Blob credentials (from repo secrets) for CNPG backups
    - Purge any existing WAL/archive blobs in the Azure `cnpg-backups/iam-db` prefix so CloudNativePG can bootstrap cleanly on reruns
+   - When Argo CD leaves the `apps` application in `Progressing` because certain custom resources never publish health status (for example, the Keycloak CRDs), the workflow logs the affected objects once and continues after confirming no other workloads are still reconciling. This prevents a timeout even though the pods are already running.
 
 > By default, services are plain HTTP for simplicity and use **`nip.io`** hostnames you can visit from your browser.
 
