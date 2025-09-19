@@ -30,17 +30,57 @@ LOCK_PATTERNS=(
   "state blob is already locked"
 )
 
-FORCE_UNLOCK_AFTER_SECONDS=${TERRAFORM_LOCK_FORCE_UNLOCK_AFTER_SECONDS:-0}
-
-if ! [[ ${FORCE_UNLOCK_AFTER_SECONDS} =~ ^-?[0-9]+$ ]]; then
-  echo "Invalid TERRAFORM_LOCK_FORCE_UNLOCK_AFTER_SECONDS value (${FORCE_UNLOCK_AFTER_SECONDS}); defaulting to 0 (disabled)." >&2
-  FORCE_UNLOCK_AFTER_SECONDS=0
-elif (( FORCE_UNLOCK_AFTER_SECONDS < 0 )); then
-  echo "Negative TERRAFORM_LOCK_FORCE_UNLOCK_AFTER_SECONDS value (${FORCE_UNLOCK_AFTER_SECONDS}); defaulting to 0 (disabled)." >&2
-  FORCE_UNLOCK_AFTER_SECONDS=0
+DEFAULT_FORCE_UNLOCK_AFTER_SECONDS=3600
+FORCE_UNLOCK_AFTER_SECONDS_RAW="${TERRAFORM_LOCK_FORCE_UNLOCK_AFTER_SECONDS-}"
+if [[ -z ${FORCE_UNLOCK_AFTER_SECONDS_RAW} ]]; then
+  FORCE_UNLOCK_AFTER_SECONDS=${DEFAULT_FORCE_UNLOCK_AFTER_SECONDS}
+else
+  FORCE_UNLOCK_AFTER_SECONDS=${FORCE_UNLOCK_AFTER_SECONDS_RAW}
 fi
 
+if ! [[ ${FORCE_UNLOCK_AFTER_SECONDS} =~ ^[0-9]+$ ]]; then
+  echo "Invalid TERRAFORM_LOCK_FORCE_UNLOCK_AFTER_SECONDS value (${FORCE_UNLOCK_AFTER_SECONDS}); defaulting to ${DEFAULT_FORCE_UNLOCK_AFTER_SECONDS}." >&2
+  FORCE_UNLOCK_AFTER_SECONDS=${DEFAULT_FORCE_UNLOCK_AFTER_SECONDS}
+fi
+
+DEFAULT_FORCE_UNLOCK_AFTER_ATTEMPTS=3
+FORCE_UNLOCK_AFTER_ATTEMPTS_RAW="${TERRAFORM_LOCK_FORCE_UNLOCK_AFTER_ATTEMPTS-}"
+if [[ -z ${FORCE_UNLOCK_AFTER_ATTEMPTS_RAW} ]]; then
+  FORCE_UNLOCK_AFTER_ATTEMPTS=${DEFAULT_FORCE_UNLOCK_AFTER_ATTEMPTS}
+else
+  FORCE_UNLOCK_AFTER_ATTEMPTS=${FORCE_UNLOCK_AFTER_ATTEMPTS_RAW}
+fi
+
+if ! [[ ${FORCE_UNLOCK_AFTER_ATTEMPTS} =~ ^[0-9]+$ ]]; then
+  echo "Invalid TERRAFORM_LOCK_FORCE_UNLOCK_AFTER_ATTEMPTS value (${FORCE_UNLOCK_AFTER_ATTEMPTS}); defaulting to ${DEFAULT_FORCE_UNLOCK_AFTER_ATTEMPTS}." >&2
+  FORCE_UNLOCK_AFTER_ATTEMPTS=${DEFAULT_FORCE_UNLOCK_AFTER_ATTEMPTS}
+fi
+
+attempt_force_unlock() {
+  local lock_id="$1"
+
+  if [[ -z ${lock_id} ]]; then
+    echo "No lock ID provided for force unlock; skipping." >&2
+    return 1
+  fi
+
+  set +e
+  terraform force-unlock -force "${lock_id}"
+  local status=$?
+  set -e
+
+  if (( status == 0 )); then
+    echo "Successfully executed 'terraform force-unlock' for lock ${lock_id}."
+  else
+    echo "'terraform force-unlock' failed with exit code ${status}; continuing with retry strategy." >&2
+  fi
+
+  return ${status}
+}
+
 attempt=1
+last_lock_id=""
+consecutive_lock_attempts=0
 while (( attempt <= MAX_ATTEMPTS )); do
   echo "--- Terraform attempt ${attempt}/${MAX_ATTEMPTS}: terraform $*"
   tmp_log=$(mktemp)
@@ -72,8 +112,23 @@ while (( attempt <= MAX_ATTEMPTS )); do
   done
 
   if [[ ${lock_detected} == true ]]; then
-    lock_id=$(awk '/^  ID:/ { sub(/^  ID:[[:space:]]*/, ""); print; exit }' "${tmp_log}" | tr -d '\r')
-    lock_created=$(awk '/^  Created:/ { sub(/^  Created:[[:space:]]*/, ""); print; exit }' "${tmp_log}" | tr -d '\r')
+    lock_id=$(awk '/ID:[[:space:]]/ { sub(/^.*ID:[[:space:]]*/, ""); print; exit }' "${tmp_log}" | tr -d '\r')
+    lock_created=$(awk '/Created:[[:space:]]/ { sub(/^.*Created:[[:space:]]*/, ""); print; exit }' "${tmp_log}" | tr -d '\r')
+
+    if [[ -n ${lock_id} ]]; then
+      if [[ ${lock_id} == "${last_lock_id}" ]]; then
+        consecutive_lock_attempts=$(( consecutive_lock_attempts + 1 ))
+      else
+        last_lock_id=${lock_id}
+        consecutive_lock_attempts=1
+      fi
+    else
+      consecutive_lock_attempts=0
+      last_lock_id=""
+    fi
+
+    force_unlock_invoked=false
+    lock_age_seconds=""
 
     if (( FORCE_UNLOCK_AFTER_SECONDS > 0 )) && [[ -n ${lock_id} ]] && [[ -n ${lock_created} ]]; then
       lock_created_s=""
@@ -94,20 +149,36 @@ while (( attempt <= MAX_ATTEMPTS )); do
 
         if (( lock_age_seconds >= FORCE_UNLOCK_AFTER_SECONDS )); then
           echo "Terraform lock ${lock_id} is ${lock_age_seconds}s old (>= ${FORCE_UNLOCK_AFTER_SECONDS}s threshold); attempting force unlock."
-          set +e
-          terraform force-unlock -force "${lock_id}"
-          force_unlock_exit=$?
-          set -e
-          if (( force_unlock_exit == 0 )); then
-            echo "Successfully executed 'terraform force-unlock' for lock ${lock_id}."
+          if attempt_force_unlock "${lock_id}"; then
+            force_unlock_invoked=true
+            consecutive_lock_attempts=0
+            last_lock_id=""
           else
-            echo "'terraform force-unlock' failed with exit code ${force_unlock_exit}; continuing with retry strategy." >&2
+            force_unlock_invoked=true
           fi
         else
           echo "Terraform lock ${lock_id} is ${lock_age_seconds}s old (< ${FORCE_UNLOCK_AFTER_SECONDS}s threshold); skipping automatic force unlock."
         fi
       else
         echo "Unable to parse lock creation time (${lock_created}); skipping automatic force unlock." >&2
+      fi
+    fi
+
+    if (( FORCE_UNLOCK_AFTER_ATTEMPTS > 0 )) && [[ -n ${lock_id} ]]; then
+      if [[ ${force_unlock_invoked} != true ]]; then
+        if (( consecutive_lock_attempts >= FORCE_UNLOCK_AFTER_ATTEMPTS )); then
+          echo "Terraform lock ${lock_id} observed for ${consecutive_lock_attempts} consecutive attempt(s) (>= ${FORCE_UNLOCK_AFTER_ATTEMPTS}); attempting force unlock."
+          if attempt_force_unlock "${lock_id}"; then
+            force_unlock_invoked=true
+            consecutive_lock_attempts=0
+            last_lock_id=""
+          else
+            force_unlock_invoked=true
+          fi
+        elif (( FORCE_UNLOCK_AFTER_ATTEMPTS > 1 )); then
+          remaining_attempts=$(( FORCE_UNLOCK_AFTER_ATTEMPTS - consecutive_lock_attempts ))
+          echo "Terraform lock ${lock_id} observed for ${consecutive_lock_attempts} consecutive attempt(s); will force unlock after ${remaining_attempts} more attempt(s) if it persists."
+        fi
       fi
     fi
   fi
