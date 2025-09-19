@@ -1633,7 +1633,7 @@ jobs:
                   | [
                       (if .health == "" then "Unknown" else .health end),
                       .kind,
-                      (if .namespace != "" then (.namespace + "/" + .name) else .name),
+                      (if .namespace != "" then (.namespace + "/" + .name) else .name end),
                       .message
                     ]
                   | @tsv
