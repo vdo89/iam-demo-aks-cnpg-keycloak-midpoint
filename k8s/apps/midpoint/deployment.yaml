@@ -46,12 +46,16 @@ spec:
                 secretKeyRef:
                   name: midpoint-admin
                   key: password
-            - name: MIDPOINT_DB_USERNAME
+            - name: MP_SET_midpoint_repository_type
+              value: native
+            - name: MP_SET_midpoint_repository_jdbcUrl
+              value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/midpoint
+            - name: MP_SET_midpoint_repository_jdbcUsername
               valueFrom:
                 secretKeyRef:
                   name: midpoint-db-app
                   key: username
-            - name: MIDPOINT_DB_PASSWORD
+            - name: MP_SET_midpoint_repository_jdbcPassword
               valueFrom:
                 secretKeyRef:
                   name: midpoint-db-app

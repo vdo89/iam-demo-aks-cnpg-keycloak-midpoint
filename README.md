@@ -125,6 +125,9 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     Adjust these values together with the container `resources` block if you customize the AKS node sizing beyond the defaults.
   - `config.xml` uses the **native PostgreSQL repository** (Sqale) recommended for midPoint 4.9 and later, which
     matches the CloudNativePG PostgreSQL 16 cluster created by the automation.
+  - Repository connection settings are injected at runtime via the `MP_SET_midpoint_repository_*` environment variables in
+    the deployment so the GitOps config can stay credential-free. Update both the manifest and GitHub secrets when changing
+    the database hostname, username or password.
   - An init container now copies the default `/opt/midpoint/var` contents from the image into the writable volume used for
     `midpoint.home`. This preserves the bundled keystore and directory structure so the server can start cleanly even when the
     pod is rescheduled onto a fresh node.
