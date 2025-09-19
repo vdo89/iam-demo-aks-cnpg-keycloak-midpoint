@@ -129,6 +129,8 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     the demo deployment does not distribute a CA bundle to midPoint. Without the flag the driver may abort during the TLS
     handshake and the pod will restart in a crash loop. Disable the flag only after you install a trusted server certificate
     and update the midPoint keystore accordingly.
+    The deployment now clears the container image's default `MP_SET_midpoint_repository_*` environment variables so the
+    rendered `config.xml` remains authoritative for repository settings instead of reverting to the bundled H2 defaults.
   - The `midpoint-db-init` container renders `config.xml` from a template using the database credentials mounted as files.
     This keeps the GitOps manifests credential-free while ensuring the running pod always picks up the latest JDBC settings.
     Update both the manifest (for the JDBC URL or secret paths) and the GitHub secrets when changing the database hostname,
