@@ -51,6 +51,18 @@ spec:
                 printf '%s' "$1" | sed -e 's/[\\/&|]/\\&/g'
               }
 
+              escape_xml() {
+                local str="$1"
+
+                str="${str//&/&amp;}"
+                str="${str//</&lt;}"
+                str="${str//>/&gt;}"
+                str="${str//\'/&apos;}"
+                str="${str//\"/&quot;}"
+
+                printf '%s' "${str}"
+              }
+
               mask_file_output() {
                 local file_path="$1"
 
@@ -209,10 +221,14 @@ spec:
               tmp_config="$(mktemp)"
               cp "${config_template}" "${tmp_config}"
 
+              jdbc_url_xml="$(escape_xml "${jdbc_url}")"
+              db_username_xml="$(escape_xml "${db_username}")"
+              db_password_xml="$(escape_xml "${db_password}")"
+
               sed -i \
-                -e "s|__JDBC_URL__|$(escape_sed "${jdbc_url}")|g" \
-                -e "s|__JDBC_USERNAME__|$(escape_sed "${db_username}")|g" \
-                -e "s|__JDBC_PASSWORD__|$(escape_sed "${db_password}")|g" \
+                -e "s|__JDBC_URL__|$(escape_sed "${jdbc_url_xml}")|g" \
+                -e "s|__JDBC_USERNAME__|$(escape_sed "${db_username_xml}")|g" \
+                -e "s|__JDBC_PASSWORD__|$(escape_sed "${db_password_xml}")|g" \
                 "${tmp_config}"
 
               if grep -q '__JDBC_' "${tmp_config}"; then

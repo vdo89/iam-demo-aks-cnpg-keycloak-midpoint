@@ -134,7 +134,8 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
   - The `midpoint-db-init` container renders `config.xml` from a template using the database credentials mounted as files.
     This keeps the GitOps manifests credential-free while ensuring the running pod always picks up the latest JDBC settings.
     Update both the manifest (for the JDBC URL or secret paths) and the GitHub secrets when changing the database hostname,
-    username or password.
+    username or password. The helper now also escapes XML entities so passwords containing characters such as `&` or `<`
+    no longer corrupt the rendered configuration.
   - An init container now runs `midpoint.sh init-native` and then drives `ninja.sh run-sql` to create **and upgrade** the
     PostgreSQL schema before the main pod starts. The workflow is idempotent, so it safely bootstraps fresh clusters and also
     applies in-place upgrades when you bump the midPoint image version. The helper retries `midpoint.sh` and every `ninja`
