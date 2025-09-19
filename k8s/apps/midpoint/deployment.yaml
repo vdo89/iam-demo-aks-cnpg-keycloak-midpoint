@@ -42,6 +42,73 @@ spec:
             - |
               set -euo pipefail
 
+              read_secret_value() {
+                local value_var="$1"
+                local file_var="$2"
+                local description="$3"
+
+                local value="${!value_var-}"
+                local file_path="${!file_var-}"
+
+                if [ -n "${value}" ]; then
+                  printf '%s' "${value}"
+                  return 0
+                fi
+
+                if [ -n "${file_path}" ]; then
+                  if [ ! -r "${file_path}" ]; then
+                    echo "ERROR: ${description} file ${file_path} is not readable" >&2
+                    return 1
+                  fi
+
+                  cat "${file_path}"
+                  return 0
+                fi
+
+                echo "ERROR: ${description} not provided via \$${value_var} or \$${file_var}" >&2
+                return 1
+              }
+
+              escape_sed() {
+                printf '%s' "$1" | sed -e 's/[\\/&|]/\\&/g'
+              }
+
+              mask_file_output() {
+                local file_path="$1"
+
+                if [ ! -f "${file_path}" ]; then
+                  return 1
+                fi
+
+                if [ -n "${db_password:-}" ]; then
+                  local escaped_password
+                  escaped_password="$(escape_sed "${db_password}")"
+                  sed "s/${escaped_password}/********/g" "${file_path}"
+                else
+                  cat "${file_path}"
+                fi
+              }
+
+              run_ninja_sql() {
+                local label="$1"
+                shift
+
+                local log_file
+                log_file="$(mktemp)"
+
+                if /opt/midpoint/bin/ninja.sh -j "${postgres_driver}" "$@" >"${log_file}" 2>&1; then
+                  echo "ninja ${label} completed successfully"
+                  rm -f "${log_file}"
+                  return 0
+                fi
+
+                local status=$?
+                echo "ERROR: ninja ${label} failed with exit code ${status}" >&2
+                mask_file_output "${log_file}" >&2 || cat "${log_file}" >&2
+                rm -f "${log_file}"
+                return "${status}"
+              }
+
               config_template="/config-template/config.xml"
               config_target="/opt/midpoint/var/config.xml"
 
@@ -52,25 +119,21 @@ spec:
               fi
 
               jdbc_url="${MP_SET_midpoint_repository_jdbcUrl:-}"
-              jdbc_username="${MP_SET_midpoint_repository_jdbcUsername:-}"
-              jdbc_password="${MP_SET_midpoint_repository_jdbcPassword:-}"
-
-              if [ -z "${jdbc_url}" ] || [ -z "${jdbc_username}" ] || [ -z "${jdbc_password}" ]; then
-                echo "ERROR: Repository connection environment variables are incomplete" >&2
+              if [ -z "${jdbc_url}" ]; then
+                echo "ERROR: Repository JDBC URL is empty" >&2
                 exit 1
               fi
 
-              escape_sed() {
-                printf '%s' "$1" | sed -e 's/[\\/&|]/\\&/g'
-              }
+              db_username="$(read_secret_value MP_SET_midpoint_repository_jdbcUsername MP_SET_midpoint_repository_jdbcUsername_FILE 'repository username')"
+              db_password="$(read_secret_value MP_SET_midpoint_repository_jdbcPassword MP_SET_midpoint_repository_jdbcPassword_FILE 'repository password')"
 
               tmp_config="$(mktemp)"
               cp "${config_template}" "${tmp_config}"
 
               sed -i \
                 -e "s|__JDBC_URL__|$(escape_sed "${jdbc_url}")|g" \
-                -e "s|__JDBC_USERNAME__|$(escape_sed "${jdbc_username}")|g" \
-                -e "s|__JDBC_PASSWORD__|$(escape_sed "${jdbc_password}")|g" \
+                -e "s|__JDBC_USERNAME__|$(escape_sed "${db_username}")|g" \
+                -e "s|__JDBC_PASSWORD__|$(escape_sed "${db_password}")|g" \
                 "${tmp_config}"
 
               if grep -q '__JDBC_' "${tmp_config}"; then
@@ -94,36 +157,6 @@ spec:
 
               echo "Using JDBC driver: ${postgres_driver}"
 
-              db_url="${MP_SET_midpoint_repository_jdbcUrl:-}"
-              db_username="${MP_SET_midpoint_repository_jdbcUsername:-}"
-              db_password="${MP_SET_midpoint_repository_jdbcPassword:-}"
-              db_database="${MP_SET_midpoint_repository_database:-}"
-
-              java_opts_extra="${JAVA_OPTS:-}"
-              append_java_opt() {
-                local key="$1"
-                local value="$2"
-
-                if [ -z "${value}" ]; then
-                  return
-                fi
-
-                local escaped
-                escaped=$(printf '%s' "${value}" | sed 's/\\/\\\\/g; s/"/\\"/g')
-                java_opts_extra="${java_opts_extra} -D${key}=\"${escaped}\""
-              }
-
-              append_java_opt "midpoint.repository.jdbcUrl" "${db_url}"
-              append_java_opt "midpoint.repository.jdbcUsername" "${db_username}"
-              append_java_opt "midpoint.repository.jdbcPassword" "${db_password}"
-              append_java_opt "midpoint.repository.database" "${db_database}"
-
-              export JAVA_OPTS="${java_opts_extra}"
-
-              if [ -n "${db_url}" ]; then
-                echo "Configured JDBC connection overrides for midPoint database initialization"
-              fi
-
               echo "Initializing midPoint native repository assets"
               /opt/midpoint/bin/midpoint.sh init-native
 
@@ -136,7 +169,7 @@ spec:
               fi
 
               echo "----- ninja info -----"
-              cat "${info_log}" || true
+              mask_file_output "${info_log}" || cat "${info_log}" || true
               echo "----------------------"
 
               create_needed=0
@@ -161,9 +194,9 @@ spec:
 
               if [ "${create_needed}" -eq 1 ]; then
                 echo "Schema not fully initialized; applying create scripts"
-                
-                /opt/midpoint/bin/ninja.sh -j "${postgres_driver}" run-sql --create --mode repository
-                /opt/midpoint/bin/ninja.sh -j "${postgres_driver}" run-sql --create --mode audit
+
+                run_ninja_sql "repository create" run-sql --create --mode repository
+                run_ninja_sql "audit create" run-sql --create --mode audit
 
                 upgrade_needed=1
               else
@@ -173,8 +206,8 @@ spec:
               if [ "${upgrade_needed}" -eq 1 ]; then
                 echo "Applying repository upgrade scripts (idempotent)"
 
-                /opt/midpoint/bin/ninja.sh -j "${postgres_driver}" run-sql --upgrade --mode repository
-                /opt/midpoint/bin/ninja.sh -j "${postgres_driver}" run-sql --upgrade --mode audit
+                run_ninja_sql "repository upgrade" run-sql --upgrade --mode repository
+                run_ninja_sql "audit upgrade" run-sql --upgrade --mode audit
 
               else
                 echo "midPoint repository schema already at latest version"
@@ -190,16 +223,10 @@ spec:
               value: postgresql
             - name: MP_SET_midpoint_repository_jdbcUrl
               value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/midpoint?sslmode=disable
-            - name: MP_SET_midpoint_repository_jdbcUsername
-              valueFrom:
-                secretKeyRef:
-                  name: midpoint-db-app
-                  key: username
-            - name: MP_SET_midpoint_repository_jdbcPassword
-              valueFrom:
-                secretKeyRef:
-                  name: midpoint-db-app
-                  key: password
+            - name: MP_SET_midpoint_repository_jdbcUsername_FILE
+              value: /var/run/secrets/midpoint-db-app/username
+            - name: MP_SET_midpoint_repository_jdbcPassword_FILE
+              value: /var/run/secrets/midpoint-db-app/password
             - name: MP_NO_ENV_COMPAT
               value: "1"
           volumeMounts:
@@ -208,6 +235,9 @@ spec:
             - name: config-xml
               mountPath: /config-template
               readOnly: true
+            - name: midpoint-db-credentials
+              mountPath: /var/run/secrets/midpoint-db-app
+              readOnly: true
       containers:
         - name: midpoint
           image: evolveum/midpoint:4.9
@@ -215,27 +245,18 @@ spec:
             - name: http
               containerPort: 8080
           env:
-            - name: MP_SET_midpoint_administrator_initialPassword
-              valueFrom:
-                secretKeyRef:
-                  name: midpoint-admin
-                  key: password
+            - name: MP_SET_midpoint_administrator_initialPassword_FILE
+              value: /var/run/secrets/midpoint-admin/password
             - name: MP_SET_midpoint_repository_type
               value: native
             - name: MP_SET_midpoint_repository_database
               value: postgresql
             - name: MP_SET_midpoint_repository_jdbcUrl
               value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/midpoint?sslmode=disable
-            - name: MP_SET_midpoint_repository_jdbcUsername
-              valueFrom:
-                secretKeyRef:
-                  name: midpoint-db-app
-                  key: username
-            - name: MP_SET_midpoint_repository_jdbcPassword
-              valueFrom:
-                secretKeyRef:
-                  name: midpoint-db-app
-                  key: password
+            - name: MP_SET_midpoint_repository_jdbcUsername_FILE
+              value: /var/run/secrets/midpoint-db-app/username
+            - name: MP_SET_midpoint_repository_jdbcPassword_FILE
+              value: /var/run/secrets/midpoint-db-app/password
             - name: MP_SET_midpoint_repository_database
               value: postgresql
             - name: MP_NO_ENV_COMPAT
@@ -247,6 +268,12 @@ spec:
           volumeMounts:
             - name: midpoint-home
               mountPath: /opt/midpoint/var
+            - name: midpoint-db-credentials
+              mountPath: /var/run/secrets/midpoint-db-app
+              readOnly: true
+            - name: midpoint-admin-secret
+              mountPath: /var/run/secrets/midpoint-admin
+              readOnly: true
           resources:
             requests:
               cpu: 500m
@@ -260,6 +287,12 @@ spec:
         - name: config-xml
           configMap:
             name: midpoint-config
+        - name: midpoint-db-credentials
+          secret:
+            secretName: midpoint-db-app
+        - name: midpoint-admin-secret
+          secret:
+            secretName: midpoint-admin
 ---
 apiVersion: v1
 kind: Service
