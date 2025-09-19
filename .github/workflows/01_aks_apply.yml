@@ -157,17 +157,17 @@ jobs:
           fi
 
           PY_OUTPUT="$(printf '%s' "${BLOB_INFO}" | python - <<'PY'
-import json
-import sys
+          import json
+          import sys
 
-data = json.load(sys.stdin)
-lease_state = data.get("properties", {}).get("leaseState", "") or ""
-metadata = data.get("metadata") or {}
-lock_json = metadata.get("terraformlockid") or metadata.get("terraform-lock-id") or ""
-print(lease_state)
-print(lock_json)
-PY
-)"
+          data = json.load(sys.stdin)
+          lease_state = data.get("properties", {}).get("leaseState", "") or ""
+          metadata = data.get("metadata") or {}
+          lock_json = metadata.get("terraformlockid") or metadata.get("terraform-lock-id") or ""
+          print(lease_state)
+          print(lock_json)
+          PY
+          )"
 
           IFS=$'\n' read -r LEASE_STATE LOCK_JSON <<<"${PY_OUTPUT}" || true
           LEASE_STATE="${LEASE_STATE:-}"
@@ -185,53 +185,53 @@ PY
 
           export LOCK_JSON
           PY_LOCK="$(python - <<'PY'
-import datetime
-import json
-import os
-import sys
+          import datetime
+          import json
+          import os
+          import sys
 
-lock_json = os.environ.get("LOCK_JSON", "")
-lock_id = ""
-lock_age = ""
+          lock_json = os.environ.get("LOCK_JSON", "")
+          lock_id = ""
+          lock_age = ""
 
-if lock_json:
-    try:
-        info = json.loads(lock_json)
-    except json.JSONDecodeError as exc:  # pragma: no cover - defensive logging
-        print(f"Failed to decode lock metadata JSON: {exc}", file=sys.stderr)
-    else:
-        lock_id = info.get("ID") or ""
-        created_raw = (info.get("Created") or "").strip().replace(" UTC", "")
-        created_dt = None
-        for fmt in (
-            "%Y-%m-%d %H:%M:%S.%f %z",
-            "%Y-%m-%d %H:%M:%S %z",
-            "%Y-%m-%dT%H:%M:%S.%f%z",
-            "%Y-%m-%dT%H:%M:%S%z",
-        ):
-            try:
-                created_dt = datetime.datetime.strptime(created_raw, fmt)
-                break
-            except ValueError:
-                continue
-        if created_dt is None and created_raw:
-            for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
-                try:
-                    created_dt = datetime.datetime.strptime(created_raw, fmt)
-                    created_dt = created_dt.replace(tzinfo=datetime.timezone.utc)
-                    break
-                except ValueError:
-                    continue
-        if created_dt is not None:
-            age_seconds = int(
-                (datetime.datetime.now(datetime.timezone.utc) - created_dt.astimezone(datetime.timezone.utc)).total_seconds()
-            )
-            lock_age = str(max(age_seconds, 0))
+          if lock_json:
+              try:
+                  info = json.loads(lock_json)
+              except json.JSONDecodeError as exc:  # pragma: no cover - defensive logging
+                  print(f"Failed to decode lock metadata JSON: {exc}", file=sys.stderr)
+              else:
+                  lock_id = info.get("ID") or ""
+                  created_raw = (info.get("Created") or "").strip().replace(" UTC", "")
+                  created_dt = None
+                  for fmt in (
+                      "%Y-%m-%d %H:%M:%S.%f %z",
+                      "%Y-%m-%d %H:%M:%S %z",
+                      "%Y-%m-%dT%H:%M:%S.%f%z",
+                      "%Y-%m-%dT%H:%M:%S%z",
+                  ):
+                      try:
+                          created_dt = datetime.datetime.strptime(created_raw, fmt)
+                          break
+                      except ValueError:
+                          continue
+                  if created_dt is None and created_raw:
+                      for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+                          try:
+                              created_dt = datetime.datetime.strptime(created_raw, fmt)
+                              created_dt = created_dt.replace(tzinfo=datetime.timezone.utc)
+                              break
+                          except ValueError:
+                              continue
+                  if created_dt is not None:
+                      age_seconds = int(
+                          (datetime.datetime.now(datetime.timezone.utc) - created_dt.astimezone(datetime.timezone.utc)).total_seconds()
+                      )
+                      lock_age = str(max(age_seconds, 0))
 
-print(lock_id)
-print(lock_age)
-PY
-)"
+          print(lock_id)
+          print(lock_age)
+          PY
+          )"
 
           IFS=$'\n' read -r LOCK_ID LOCK_AGE <<<"${PY_LOCK}" || true
           LOCK_ID="${LOCK_ID:-}"
