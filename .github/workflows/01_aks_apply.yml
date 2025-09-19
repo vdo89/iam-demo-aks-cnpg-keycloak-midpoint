@@ -228,27 +228,82 @@ jobs:
                   print(f"Failed to decode lock metadata JSON: {exc}", file=sys.stderr)
               else:
                   lock_id = info.get("ID") or ""
-                  created_raw = (info.get("Created") or "").strip().replace(" UTC", "")
-                  created_dt = None
-                  for fmt in (
-                      "%Y-%m-%d %H:%M:%S.%f %z",
-                      "%Y-%m-%d %H:%M:%S %z",
-                      "%Y-%m-%dT%H:%M:%S.%f%z",
-                      "%Y-%m-%dT%H:%M:%S%z",
-                  ):
-                      try:
-                          created_dt = datetime.datetime.strptime(created_raw, fmt)
-                          break
-                      except ValueError:
-                          continue
-                  if created_dt is None and created_raw:
-                      for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
-                          try:
-                              created_dt = datetime.datetime.strptime(created_raw, fmt)
-                              created_dt = created_dt.replace(tzinfo=datetime.timezone.utc)
+                  created_raw = (info.get("Created") or "").strip()
+
+                  def _normalize_fraction(value: str) -> str:
+                      dot_index = value.find(".")
+                      if dot_index == -1:
+                          return value
+                      end_index = dot_index + 1
+                      length = len(value)
+                      while end_index < length and value[end_index].isdigit():
+                          end_index += 1
+                      digits = value[dot_index + 1 : end_index]
+                      remainder = value[end_index:]
+                      if not digits:
+                          return value[:dot_index] + remainder
+                      trimmed = digits[:6]
+                      return value[: dot_index + 1] + trimmed + remainder
+
+                  def _parse_created(value: str):
+                      text = (value or "").strip().replace(" UTC", "")
+                      if not text:
+                          return None
+                      if text.endswith(("Z", "z")):
+                          text = text[:-1] + "+00:00"
+
+                      normalized = _normalize_fraction(text)
+                      candidates = []
+                      seen_candidates = set()
+
+                      def _add_candidate(candidate: str):
+                          candidate = _normalize_fraction(candidate.strip())
+                          if not candidate or candidate in seen_candidates:
+                              return
+                          seen_candidates.add(candidate)
+                          candidates.append(candidate)
+
+                      _add_candidate(normalized)
+                      if "T" in normalized:
+                          _add_candidate(normalized.replace("T", " ", 1))
+
+                      tz_index = -1
+                      for idx in range(len(normalized) - 1, -1, -1):
+                          if normalized[idx] in "+-":
+                              tz_index = idx
                               break
-                          except ValueError:
-                              continue
+
+                      if tz_index != -1:
+                          prefix = normalized[:tz_index]
+                          tz_part = normalized[tz_index:]
+                          if ":" in tz_part:
+                              _add_candidate(prefix + tz_part.replace(":", ""))
+                          else:
+                              if len(tz_part) == 3 and tz_part[1:].isdigit():
+                                  tz_part = tz_part + "00"
+                              if len(tz_part) >= 5 and tz_part[1:3].isdigit() and tz_part[3:].isdigit():
+                                  colonised = tz_part[:3] + ":" + tz_part[3:]
+                                  _add_candidate(prefix + colonised)
+
+                      for candidate in candidates:
+                          for fmt in (
+                              "%Y-%m-%d %H:%M:%S.%f %z",
+                              "%Y-%m-%d %H:%M:%S.%f%z",
+                              "%Y-%m-%d %H:%M:%S %z",
+                              "%Y-%m-%dT%H:%M:%S.%f%z",
+                              "%Y-%m-%dT%H:%M:%S.%f %z",
+                              "%Y-%m-%dT%H:%M:%S%z",
+                              "%Y-%m-%dT%H:%M:%S %z",
+                              "%Y-%m-%d %H:%M:%S.%f",
+                              "%Y-%m-%d %H:%M:%S",
+                          ):
+                              try:
+                                  return datetime.datetime.strptime(candidate, fmt)
+                              except ValueError:
+                                  continue
+                      return None
+
+                  created_dt = _parse_created(created_raw)
                   if created_dt is not None:
                       age_seconds = int(
                           (datetime.datetime.now(datetime.timezone.utc) - created_dt.astimezone(datetime.timezone.utc)).total_seconds()
