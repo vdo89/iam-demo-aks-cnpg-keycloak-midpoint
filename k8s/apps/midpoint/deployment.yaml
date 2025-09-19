@@ -222,8 +222,30 @@ spec:
               fi
 
               midpoint_home="/opt/midpoint/var"
-              midpoint_uid="$(stat -c '%u' "${midpoint_home}" 2>/dev/null || echo 0)"
-              midpoint_gid="$(stat -c '%g' "${midpoint_home}" 2>/dev/null || echo 0)"
+
+              resolve_midpoint_owner() {
+                local candidate_uid
+                local candidate_gid
+
+                if candidate_uid="$(id -u midpoint 2>/dev/null)" && \
+                   candidate_gid="$(id -g midpoint 2>/dev/null)"; then
+                  midpoint_uid="${candidate_uid}"
+                  midpoint_gid="${candidate_gid}"
+                  return 0
+                fi
+
+                if candidate_uid="$(stat -c '%u' "${midpoint_home}" 2>/dev/null)" && \
+                   candidate_gid="$(stat -c '%g' "${midpoint_home}" 2>/dev/null)"; then
+                  midpoint_uid="${candidate_uid}"
+                  midpoint_gid="${candidate_gid}"
+                  return 0
+                fi
+
+                midpoint_uid=0
+                midpoint_gid=0
+              }
+
+              resolve_midpoint_owner
 
               echo "Setting ownership of config.xml to ${midpoint_uid}:${midpoint_gid}"
 
