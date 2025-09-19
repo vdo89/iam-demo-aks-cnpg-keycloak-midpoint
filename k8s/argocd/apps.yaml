@@ -16,7 +16,7 @@ spec:
     - group: k8s.keycloak.org
       kind: KeycloakRealmImport
       name: rws-realm-import
-      namespace: iam
+      namespace: keycloak
       jsonPointers:
         - /spec/realm
   syncPolicy:

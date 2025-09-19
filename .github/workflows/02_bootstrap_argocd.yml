@@ -22,6 +22,10 @@ on:
         description: 'Namespace for IAM stack (Keycloak + midPoint + DB)'
         required: false
         default: 'iam'
+      NAMESPACE_KEYCLOAK:
+        description: 'Namespace for the Keycloak operator and Keycloak CRs'
+        required: false
+        default: 'keycloak'
 
 permissions:
   id-token: write
@@ -53,7 +57,7 @@ jobs:
           kubectl create ns argocd --dry-run=client -o yaml | kubectl apply -f -
           kubectl create ns ingress-nginx --dry-run=client -o yaml | kubectl apply -f -
           kubectl create ns cert-manager --dry-run=client -o yaml | kubectl apply -f -
-          kubectl create ns keycloak --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create ns ${{ inputs.NAMESPACE_KEYCLOAK }} --dry-run=client -o yaml | kubectl apply -f -
           kubectl create ns cnpg-system --dry-run=client -o yaml | kubectl apply -f -
           kubectl create ns ${{ inputs.NAMESPACE_IAM }} --dry-run=client -o yaml | kubectl apply -f -
 
@@ -373,32 +377,39 @@ jobs:
           set -euo pipefail
 
           ns="${{ inputs.NAMESPACE_IAM }}"
+          keycloak_ns="${{ inputs.NAMESPACE_KEYCLOAK }}"
 
           if [ -z "${ns}" ]; then
             echo "NAMESPACE_IAM input must not be empty"
             exit 1
           fi
 
-          ensure_secret_type() {
-            local secret_name="$1"
-            local expected_type="$2"
+          if [ -z "${keycloak_ns}" ]; then
+            echo "NAMESPACE_KEYCLOAK input must not be empty"
+            exit 1
+          fi
 
-            if kubectl -n "${ns}" get secret "${secret_name}" >/dev/null 2>&1; then
+          ensure_secret_type() {
+            local namespace="$1"
+            local secret_name="$2"
+            local expected_type="$3"
+
+            if kubectl -n "${namespace}" get secret "${secret_name}" >/dev/null 2>&1; then
               local current_type
-              current_type=$(kubectl -n "${ns}" get secret "${secret_name}" -o jsonpath='{.type}')
+              current_type=$(kubectl -n "${namespace}" get secret "${secret_name}" -o jsonpath='{.type}')
 
               if [ "${current_type}" != "${expected_type}" ]; then
-                echo "Secret ${secret_name} exists with type ${current_type}; recreating with type ${expected_type}"
-                kubectl -n "${ns}" delete secret "${secret_name}" --wait=false --ignore-not-found
-                echo "Waiting for secret ${secret_name} to be fully removed before recreating"
+                echo "Secret ${namespace}/${secret_name} exists with type ${current_type}; recreating with type ${expected_type}"
+                kubectl -n "${namespace}" delete secret "${secret_name}" --wait=false --ignore-not-found
+                echo "Waiting for secret ${namespace}/${secret_name} to be fully removed before recreating"
                 for attempt in $(seq 1 12); do
-                  if ! kubectl -n "${ns}" get secret "${secret_name}" >/dev/null 2>&1; then
-                    echo "Secret ${secret_name} removed"
+                  if ! kubectl -n "${namespace}" get secret "${secret_name}" >/dev/null 2>&1; then
+                    echo "Secret ${namespace}/${secret_name} removed"
                     break
                   fi
 
                   if [ "${attempt}" -eq 12 ]; then
-                    echo "Secret ${secret_name} still present after waiting; aborting"
+                    echo "Secret ${namespace}/${secret_name} still present after waiting; aborting"
                     exit 1
                   fi
 
@@ -409,30 +420,34 @@ jobs:
           }
 
           apply_basic_auth_secret() {
-            local secret_name="$1"
-            local username="$2"
-            local password="$3"
-            local password_source="$4"
+            local namespace="$1"
+            local secret_name="$2"
+            local username="$3"
+            local password="$4"
+            local password_source="$5"
 
             if [ -z "${password}" ]; then
               echo "ERROR: password value for secret ${secret_name} is empty (expected GitHub secret ${password_source})"
               exit 1
             fi
 
-            ensure_secret_type "${secret_name}" "kubernetes.io/basic-auth"
+            ensure_secret_type "${namespace}" "${secret_name}" "kubernetes.io/basic-auth"
 
-            kubectl -n "${ns}" create secret generic "${secret_name}" \
+            kubectl -n "${namespace}" create secret generic "${secret_name}" \
               --type=kubernetes.io/basic-auth \
               --from-literal=username="${username}" \
               --from-literal=password="${password}" \
               --dry-run=client -o yaml | kubectl apply -f -
 
-            echo "Secret ${secret_name} ensured with type kubernetes.io/basic-auth"
+            echo "Secret ${namespace}/${secret_name} ensured with type kubernetes.io/basic-auth"
           }
 
-          apply_basic_auth_secret "cnpg-superuser" "postgres" "${{ secrets.POSTGRES_SUPERUSER_PASSWORD }}" "POSTGRES_SUPERUSER_PASSWORD"
-          apply_basic_auth_secret "keycloak-db-app" "keycloak" "${{ secrets.KEYCLOAK_DB_PASSWORD }}" "KEYCLOAK_DB_PASSWORD"
-          apply_basic_auth_secret "midpoint-db-app" "midpoint" "${{ secrets.MIDPOINT_DB_PASSWORD }}" "MIDPOINT_DB_PASSWORD"
+          apply_basic_auth_secret "${ns}" "cnpg-superuser" "postgres" "${{ secrets.POSTGRES_SUPERUSER_PASSWORD }}" "POSTGRES_SUPERUSER_PASSWORD"
+          apply_basic_auth_secret "${ns}" "keycloak-db-app" "keycloak" "${{ secrets.KEYCLOAK_DB_PASSWORD }}" "KEYCLOAK_DB_PASSWORD"
+          apply_basic_auth_secret "${ns}" "midpoint-db-app" "midpoint" "${{ secrets.MIDPOINT_DB_PASSWORD }}" "MIDPOINT_DB_PASSWORD"
+
+          echo "Mirroring keycloak-db-app secret into namespace ${keycloak_ns}"
+          apply_basic_auth_secret "${keycloak_ns}" "keycloak-db-app" "keycloak" "${{ secrets.KEYCLOAK_DB_PASSWORD }}" "KEYCLOAK_DB_PASSWORD"
 
       - name: Create Azure Blob secret for CNPG backups (connection string or key)
         shell: bash
@@ -1200,6 +1215,36 @@ jobs:
             exit 1
           fi
 
+      - name: Validate Keycloak namespace secrets
+        env:
+          NAMESPACE_KEYCLOAK: ${{ inputs.NAMESPACE_KEYCLOAK }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          keycloak_ns="${NAMESPACE_KEYCLOAK}"
+
+          if [ -z "${keycloak_ns}" ]; then
+            echo "NAMESPACE_KEYCLOAK input must not be empty"
+            exit 1
+          fi
+
+          echo "Checking Keycloak database secret exists in namespace ${keycloak_ns}"
+          if ! kubectl -n "${keycloak_ns}" get secret keycloak-db-app >/dev/null 2>&1; then
+            echo "ERROR: secret keycloak-db-app is missing from namespace ${keycloak_ns}"
+            exit 1
+          fi
+
+          for key in username password; do
+            value=$(kubectl -n "${keycloak_ns}" get secret keycloak-db-app -o jsonpath="{.data.${key}}" 2>/dev/null || true)
+            if [ -z "${value}" ]; then
+              echo "ERROR: secret keycloak-db-app in namespace ${keycloak_ns} does not contain key ${key}"
+              exit 1
+            fi
+          done
+
+          echo "Keycloak database secret present in namespace ${keycloak_ns}"
+
           WEBHOOK_READY_FROM_ENDPOINTS=""
           WEBHOOK_NOT_READY_FROM_ENDPOINTS=""
           WEBHOOK_READY_FROM_SLICES=""
@@ -1535,12 +1580,21 @@ jobs:
 
       - name: Install Keycloak Operator (CRDs + operator Deployment)
         shell: bash
+        env:
+          KEYCLOAK_NAMESPACE: ${{ inputs.NAMESPACE_KEYCLOAK }}
         run: |
           set -euo pipefail
           kubectl apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/26.3.4/kubernetes/keycloaks.k8s.keycloak.org-v1.yml
           kubectl apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/26.3.4/kubernetes/keycloakrealmimports.k8s.keycloak.org-v1.yml
-          echo "Applying Keycloak operator controller manifests into namespace keycloak"
-          kubectl apply --namespace keycloak -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/26.3.4/kubernetes/kubernetes.yml
+
+          keycloak_ns="${KEYCLOAK_NAMESPACE}"
+          if [ -z "${keycloak_ns}" ]; then
+            echo "NAMESPACE_KEYCLOAK input must not be empty"
+            exit 1
+          fi
+
+          echo "Applying Keycloak operator controller manifests into namespace ${keycloak_ns}"
+          kubectl apply --namespace "${keycloak_ns}" -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/26.3.4/kubernetes/kubernetes.yml
 
       - name: Prepare midPoint config and admin secret
         shell: bash
@@ -1558,13 +1612,22 @@ jobs:
 
       - name: Wait for Keycloak operator CRDs
         shell: bash
+        env:
+          KEYCLOAK_NAMESPACE: ${{ inputs.NAMESPACE_KEYCLOAK }}
         run: |
           set -euo pipefail
           echo "Waiting for Keycloak CRDs to become available..."
           for crd in keycloaks.k8s.keycloak.org keycloakrealmimports.k8s.keycloak.org; do
             kubectl wait --for=condition=Established crd/${crd} --timeout=300s
           done
-          for ns in keycloak-system keycloak default; do
+
+          keycloak_ns="${KEYCLOAK_NAMESPACE}"
+          if [ -z "${keycloak_ns}" ]; then
+            echo "NAMESPACE_KEYCLOAK input must not be empty"
+            exit 1
+          fi
+
+          for ns in keycloak-system "${keycloak_ns}" default; do
             if kubectl -n "$ns" get deployment keycloak-operator >/dev/null 2>&1; then
               kubectl -n "$ns" wait --for=condition=Available deployment/keycloak-operator --timeout=300s || true
               break
@@ -1866,20 +1929,35 @@ jobs:
 
       - name: Show ingress endpoints (if available)
         shell: bash
+        env:
+          KEYCLOAK_NAMESPACE: ${{ inputs.NAMESPACE_KEYCLOAK }}
+          NAMESPACE_IAM: ${{ inputs.NAMESPACE_IAM }}
         run: |
           set -euo pipefail
           echo "Ingress-NGINX service:"
           kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide || true
+
+          keycloak_ns="${KEYCLOAK_NAMESPACE}"
+          iam_ns="${NAMESPACE_IAM}"
+          if [ -z "${keycloak_ns}" ]; then
+            echo "NAMESPACE_KEYCLOAK input must not be empty"
+            exit 1
+          fi
+          if [ -z "${iam_ns}" ]; then
+            echo "NAMESPACE_IAM input must not be empty"
+            exit 1
+          fi
+
           echo "Keycloak service:"
-          if keycloak_svc_output=$(kubectl -n ${{ inputs.NAMESPACE_IAM }} get svc rws-keycloak -o wide 2>&1); then
+          if keycloak_svc_output=$(kubectl -n "${keycloak_ns}" get svc rws-keycloak -o wide 2>&1); then
             printf '%s\n' "${keycloak_svc_output}"
-          elif keycloak_svc_output=$(kubectl -n ${{ inputs.NAMESPACE_IAM }} get svc rws-keycloak-service -o wide 2>&1); then
+          elif keycloak_svc_output=$(kubectl -n "${keycloak_ns}" get svc rws-keycloak-service -o wide 2>&1); then
             echo "Service 'rws-keycloak' not found; showing 'rws-keycloak-service' instead."
             printf '%s\n' "${keycloak_svc_output}"
           else
             printf '%s\n' "${keycloak_svc_output}"
-            echo "Service rws-keycloak/rws-keycloak-service not found; listing all services in namespace ${{ inputs.NAMESPACE_IAM }} for troubleshooting."
-            kubectl -n ${{ inputs.NAMESPACE_IAM }} get svc -o wide || true
+            echo "Service rws-keycloak/rws-keycloak-service not found; listing all services in namespace ${keycloak_ns} for troubleshooting."
+            kubectl -n "${keycloak_ns}" get svc -o wide || true
           fi
           echo "midPoint service:"
-          kubectl -n ${{ inputs.NAMESPACE_IAM }} get svc midpoint -o wide || true
+          kubectl -n "${iam_ns}" get svc midpoint -o wide || true

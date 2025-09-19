@@ -71,6 +71,7 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
    - Run a one-off PostgreSQL job that ensures the `midpoint` database and role exist before midPoint starts
    - Enable the required PostgreSQL extensions (`pgcrypto`, `pg_trgm`) for midPoint
    - Install **Keycloak Operator** then create a **Keycloak** CR bound to CNPG
+     - Keycloak resources run in namespace `keycloak` (override via workflow input `NAMESPACE_KEYCLOAK`) so the operator can reconcile them.
    - Deploy **midPoint** bound to CNPG
    - Create a Kubernetes **Secret** with Azure Blob credentials (from repo secrets) for CNPG backups
    - Purge any existing WAL/archive blobs in the Azure `cnpg-backups/iam-db` prefix so CloudNativePG can bootstrap cleanly on reruns
@@ -91,9 +92,9 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
 ## 4) Demo – what to click
 
 - Get the external IP of **ingress-nginx** (the workflow prints it; or: `kubectl -n ingress-nginx get svc ingress-nginx-controller`).
-- Keycloak is exposed through the operator-managed service `rws-keycloak-service`; check it with `kubectl -n iam get svc rws-keycloak-service` if you need the cluster IP before Ingress is ready.
+- Keycloak is exposed through the operator-managed service `rws-keycloak-service`; check it with `kubectl -n keycloak get svc rws-keycloak-service` if you need the cluster IP before Ingress is ready.
 - Open Keycloak: `http://kc.<EXTERNAL-IP>.nip.io` (admin user and password are in secret `rws-keycloak-initial-admin` created by operator)
-  - The Keycloak Operator exposes HTTP on service **`rws-keycloak-service`** (note the `-service` suffix). Use `kubectl -n iam get svc` to list the generated service names instead of querying `rws-keycloak` directly.
+  - The Keycloak Operator exposes HTTP on service **`rws-keycloak-service`** (note the `-service` suffix). Use `kubectl -n keycloak get svc` to list the generated service names instead of querying `rws-keycloak` directly.
 - Open midPoint: `http://mp.<EXTERNAL-IP>.nip.io/midpoint`
   - Login: `administrator` / the `MIDPOINT_ADMIN_PASSWORD` you set
   - Check **Users**/**Roles**/**Orgs** seeded by the job
