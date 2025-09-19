@@ -42,6 +42,31 @@ spec:
             - |
               set -euo pipefail
 
+              escape_sed() {
+                printf '%s' "$1" | sed -e 's/[\\/&|]/\\&/g'
+              }
+
+              mask_file_output() {
+                local file_path="$1"
+
+                if [ ! -f "${file_path}" ]; then
+                  return 1
+                fi
+
+                if [ -n "${db_password:-}" ]; then
+                  local escaped_password
+                  escaped_password="$(escape_sed "${db_password}")"
+                  sed "s/${escaped_password}/********/g" "${file_path}"
+                else
+                  cat "${file_path}"
+                fi
+              }
+
+              print_masked_log() {
+                local file_path="$1"
+                mask_file_output "${file_path}" || cat "${file_path}"
+              }
+
               read_secret_value() {
                 local value_var="$1"
                 local file_var="$2"
@@ -69,24 +94,47 @@ spec:
                 return 1
               }
 
-              escape_sed() {
-                printf '%s' "$1" | sed -e 's/[\\/&|]/\\&/g'
+              parse_positive_int() {
+                local value="$1"
+                local fallback="$2"
+
+                if [[ "${value}" =~ ^[0-9]+$ ]] && [ "${value}" -ge 1 ]; then
+                  printf '%s' "${value}"
+                else
+                  printf '%s' "${fallback}"
+                fi
               }
 
-              mask_file_output() {
-                local file_path="$1"
+              ninja_max_attempts="$(parse_positive_int "${MP_NINJA_MAX_ATTEMPTS:-5}" 5)"
+              ninja_retry_delay_seconds="$(parse_positive_int "${MP_NINJA_RETRY_DELAY_SECONDS:-5}" 5)"
 
-                if [ ! -f "${file_path}" ]; then
-                  return 1
-                fi
+              run_ninja_command() {
+                local log_file="$1"
+                local label="$2"
+                shift 2
 
-                if [ -n "${db_password:-}" ]; then
-                  local escaped_password
-                  escaped_password="$(escape_sed "${db_password}")"
-                  sed "s/${escaped_password}/********/g" "${file_path}"
-                else
-                  cat "${file_path}"
-                fi
+                local attempt=1
+                local status=0
+
+                while [ "${attempt}" -le "${ninja_max_attempts}" ]; do
+                  if /opt/midpoint/bin/ninja.sh -j "${postgres_driver}" "$@" >"${log_file}" 2>&1; then
+                    echo "ninja ${label} completed successfully (attempt ${attempt}/${ninja_max_attempts})"
+                    return 0
+                  fi
+
+                  status=$?
+                  echo "ERROR: ninja ${label} failed with exit code ${status} (attempt ${attempt}/${ninja_max_attempts})" >&2
+                  mask_file_output "${log_file}" >&2 || cat "${log_file}" >&2
+
+                  if [ "${attempt}" -lt "${ninja_max_attempts}" ]; then
+                    echo "Retrying ninja ${label} in ${ninja_retry_delay_seconds}s" >&2
+                    sleep "${ninja_retry_delay_seconds}"
+                  fi
+
+                  attempt=$((attempt + 1))
+                done
+
+                return "${status}"
               }
 
               run_ninja_sql() {
@@ -96,16 +144,49 @@ spec:
                 local log_file
                 log_file="$(mktemp)"
 
-                if /opt/midpoint/bin/ninja.sh -j "${postgres_driver}" "$@" >"${log_file}" 2>&1; then
-                  echo "ninja ${label} completed successfully"
+                if run_ninja_command "${log_file}" "${label}" run-sql "$@"; then
                   rm -f "${log_file}"
                   return 0
                 fi
 
                 local status=$?
-                echo "ERROR: ninja ${label} failed with exit code ${status}" >&2
-                mask_file_output "${log_file}" >&2 || cat "${log_file}" >&2
                 rm -f "${log_file}"
+                return "${status}"
+              }
+
+              run_midpoint_init() {
+                local max_attempts
+                local retry_delay
+
+                max_attempts="$(parse_positive_int "${MIDPOINT_INIT_MAX_ATTEMPTS:-3}" 3)"
+                retry_delay="$(parse_positive_int "${MIDPOINT_INIT_RETRY_DELAY_SECONDS:-10}" 10)"
+
+                local attempt=1
+                local status=0
+
+                while [ "${attempt}" -le "${max_attempts}" ]; do
+                  local log_file
+                  log_file="$(mktemp)"
+
+                  if /opt/midpoint/bin/midpoint.sh init-native >"${log_file}" 2>&1; then
+                    echo "midpoint.sh init-native completed successfully (attempt ${attempt}/${max_attempts})"
+                    rm -f "${log_file}"
+                    return 0
+                  fi
+
+                  status=$?
+                  echo "WARNING: midpoint.sh init-native failed with exit code ${status} (attempt ${attempt}/${max_attempts})" >&2
+                  mask_file_output "${log_file}" >&2 || cat "${log_file}" >&2
+                  rm -f "${log_file}"
+
+                  if [ "${attempt}" -lt "${max_attempts}" ]; then
+                    echo "Retrying midpoint.sh init-native in ${retry_delay}s" >&2
+                    sleep "${retry_delay}"
+                  fi
+
+                  attempt=$((attempt + 1))
+                done
+
                 return "${status}"
               }
 
@@ -143,6 +224,7 @@ spec:
               fi
 
               chmod 600 "${tmp_config}"
+              chown "$(id -u)":"$(id -g)" "${tmp_config}"
               mv "${tmp_config}" "${config_target}"
 
               echo "Rendered config.xml with repository credentials"
@@ -157,19 +239,20 @@ spec:
 
               echo "Using JDBC driver: ${postgres_driver}"
 
-              echo "Initializing midPoint native repository assets"
-              /opt/midpoint/bin/midpoint.sh init-native
+              if ! run_midpoint_init; then
+                echo "Continuing with manual schema bootstrap despite midpoint.sh init-native failures" >&2
+              fi
 
               echo "Inspecting current repository schema state"
-              info_log="/tmp/ninja-info.log"
-              if /opt/midpoint/bin/ninja.sh -j "${postgres_driver}" -B info >"${info_log}" 2>&1; then
+              info_log="$(mktemp)"
+              if run_ninja_command "${info_log}" "info" -B info; then
                 ninja_status=0
               else
                 ninja_status=$?
               fi
 
               echo "----- ninja info -----"
-              mask_file_output "${info_log}" || cat "${info_log}" || true
+              print_masked_log "${info_log}" || true
               echo "----------------------"
 
               create_needed=0
@@ -195,8 +278,8 @@ spec:
               if [ "${create_needed}" -eq 1 ]; then
                 echo "Schema not fully initialized; applying create scripts"
 
-                run_ninja_sql "repository create" run-sql --create --mode repository
-                run_ninja_sql "audit create" run-sql --create --mode audit
+                run_ninja_sql "repository create" --create --mode repository
+                run_ninja_sql "audit create" --create --mode audit
 
                 upgrade_needed=1
               else
@@ -206,8 +289,8 @@ spec:
               if [ "${upgrade_needed}" -eq 1 ]; then
                 echo "Applying repository upgrade scripts (idempotent)"
 
-                run_ninja_sql "repository upgrade" run-sql --upgrade --mode repository
-                run_ninja_sql "audit upgrade" run-sql --upgrade --mode audit
+                run_ninja_sql "repository upgrade" --upgrade --mode repository
+                run_ninja_sql "audit upgrade" --upgrade --mode audit
 
               else
                 echo "midPoint repository schema already at latest version"

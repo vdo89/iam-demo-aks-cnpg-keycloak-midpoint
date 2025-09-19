@@ -1717,8 +1717,50 @@ jobs:
                       ;;
                     Pod)
                       if [ -n "${target_namespace}" ]; then
-                        echo "---- Last 40 log lines from pod ${target_namespace}/${res_name} ----"
-                        kubectl -n "${target_namespace}" logs "${res_name}" --tail=40 || true
+                        echo "---- kubectl describe pod ${target_namespace}/${res_name} ----"
+                        kubectl -n "${target_namespace}" describe pod "${res_name}" || true
+
+                        pod_json="$(kubectl -n "${target_namespace}" get pod "${res_name}" -o json 2>/dev/null || true)"
+
+                        if [ -n "${pod_json}" ]; then
+                          mapfile -t init_containers < <(jq -r '.spec.initContainers[]?.name' <<<"${pod_json}")
+                          mapfile -t app_containers < <(jq -r '.spec.containers[]?.name' <<<"${pod_json}")
+
+                          print_logs_for_container() {
+                            local container_name="$1"
+                            local container_type="$2"  # init or app
+                            local restart_count
+
+                            if [ "${container_type}" = "init" ]; then
+                              restart_count="$(jq -r --arg name "${container_name}" '.status.initContainerStatuses[]? | select(.name==$name) | .restartCount' <<<"${pod_json}")"
+                            else
+                              restart_count="$(jq -r --arg name "${container_name}" '.status.containerStatuses[]? | select(.name==$name) | .restartCount' <<<"${pod_json}")"
+                            fi
+
+                            if [ -z "${restart_count}" ] || ! [[ "${restart_count}" =~ ^[0-9]+$ ]]; then
+                              restart_count=0
+                            fi
+
+                            echo "---- Last 40 log lines from ${container_type} container ${container_name} in pod ${target_namespace}/${res_name} ----"
+                            kubectl -n "${target_namespace}" logs "${res_name}" --container "${container_name}" --tail=40 || true
+
+                            if [ "${restart_count}" -gt 0 ]; then
+                              echo "---- Previous 40 log lines from ${container_type} container ${container_name} in pod ${target_namespace}/${res_name} ----"
+                              kubectl -n "${target_namespace}" logs "${res_name}" --container "${container_name}" --previous --tail=40 || true
+                            fi
+                          }
+
+                          for container_name in "${init_containers[@]}"; do
+                            print_logs_for_container "${container_name}" init
+                          done
+
+                          for container_name in "${app_containers[@]}"; do
+                            print_logs_for_container "${container_name}" app
+                          done
+                        else
+                          echo "---- Last 40 log lines from pod ${target_namespace}/${res_name} ----"
+                          kubectl -n "${target_namespace}" logs "${res_name}" --tail=40 || true
+                        fi
                       fi
                       ;;
                     Service|Ingress|ConfigMap|Secret)
