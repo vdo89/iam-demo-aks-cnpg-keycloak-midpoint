@@ -379,6 +379,14 @@ spec:
               value: "1"
             - name: MP_UNSET_midpoint_repository_upgradeableSchemaAction
               value: "1"
+            - name: MP_UNSET_midpoint_repository_jdbcUsername
+              value: "1"
+            - name: MP_UNSET_midpoint_repository_jdbcPassword
+              value: "1"
+            - name: MP_UNSET_midpoint_repository_username
+              value: "1"
+            - name: MP_UNSET_midpoint_repository_password
+              value: "1"
           volumeMounts:
             - name: midpoint-home
               mountPath: /opt/midpoint/var
@@ -414,6 +422,14 @@ spec:
             - name: MP_UNSET_midpoint_repository_missingSchemaAction
               value: "1"
             - name: MP_UNSET_midpoint_repository_upgradeableSchemaAction
+              value: "1"
+            - name: MP_UNSET_midpoint_repository_jdbcUsername
+              value: "1"
+            - name: MP_UNSET_midpoint_repository_jdbcPassword
+              value: "1"
+            - name: MP_UNSET_midpoint_repository_username
+              value: "1"
+            - name: MP_UNSET_midpoint_repository_password
               value: "1"
           volumeMounts:
             - name: midpoint-home
