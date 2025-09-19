@@ -245,7 +245,7 @@ spec:
 
               echo "Inspecting current repository schema state"
               info_log="$(mktemp)"
-              if run_ninja_command "${info_log}" "info" -B info; then
+              if run_ninja_command "${info_log}" "info" info; then
                 ninja_status=0
               else
                 ninja_status=$?
@@ -272,6 +272,7 @@ spec:
 
               if [ "${ninja_status}" -ne 0 ]; then
                 echo "ninja info command exited with status ${ninja_status}"
+                create_needed=1
                 upgrade_needed=1
               fi
 
