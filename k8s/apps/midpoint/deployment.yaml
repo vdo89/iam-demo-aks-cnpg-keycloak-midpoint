@@ -103,7 +103,7 @@ spec:
             - name: MP_SET_midpoint_repository_database
               value: postgresql
             - name: MP_SET_midpoint_repository_jdbcUrl
-              value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/midpoint
+              value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/midpoint?sslmode=disable
             - name: MP_SET_midpoint_repository_jdbcUsername
               valueFrom:
                 secretKeyRef:
@@ -139,7 +139,7 @@ spec:
             - name: MP_SET_midpoint_repository_database
               value: postgresql
             - name: MP_SET_midpoint_repository_jdbcUrl
-              value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/midpoint
+              value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/midpoint?sslmode=disable
             - name: MP_SET_midpoint_repository_jdbcUsername
               valueFrom:
                 secretKeyRef:
