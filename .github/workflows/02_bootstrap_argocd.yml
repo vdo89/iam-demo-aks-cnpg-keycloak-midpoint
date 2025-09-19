@@ -1677,6 +1677,91 @@ jobs:
             if [ "${health_status}" = "Degraded" ] && [ "${diagnostics_dumped}" -eq 0 ]; then
               echo "apps application health is Degraded. Dumping application manifest for troubleshooting."
               kubectl -n argocd get application apps -o yaml || true
+
+              if [ -n "${resources_summary}" ]; then
+                echo "Collecting detailed status for non-healthy resources reported by Argo CD:"
+                while IFS=$'\t' read -r res_health res_kind res_identifier res_message; do
+                  [ -z "${res_kind}" ] && continue
+
+                  res_namespace=""
+                  res_name="${res_identifier}"
+                  if [[ "${res_identifier}" == */* ]]; then
+                    res_namespace="${res_identifier%%/*}"
+                    res_name="${res_identifier##*/}"
+                  fi
+
+                  if [ -n "${res_namespace}" ]; then
+                    target_namespace="${res_namespace}"
+                  else
+                    target_namespace=""
+                  fi
+
+                  if [ -n "${res_message}" ]; then
+                    echo "Resource ${res_kind} ${res_identifier} reported ${res_health}: ${res_message}"
+                  else
+                    echo "Resource ${res_kind} ${res_identifier} reported ${res_health}"
+                  fi
+
+                  case "${res_kind}" in
+                    Deployment)
+                      if [ -n "${target_namespace}" ]; then
+                        echo "---- kubectl describe deployment ${target_namespace}/${res_name} ----"
+                        kubectl -n "${target_namespace}" describe deployment "${res_name}" || true
+                      fi
+                      ;;
+                    StatefulSet)
+                      if [ -n "${target_namespace}" ]; then
+                        echo "---- kubectl describe statefulset ${target_namespace}/${res_name} ----"
+                        kubectl -n "${target_namespace}" describe statefulset "${res_name}" || true
+                      fi
+                      ;;
+                    Pod)
+                      if [ -n "${target_namespace}" ]; then
+                        echo "---- Last 40 log lines from pod ${target_namespace}/${res_name} ----"
+                        kubectl -n "${target_namespace}" logs "${res_name}" --tail=40 || true
+                      fi
+                      ;;
+                    Service|Ingress|ConfigMap|Secret)
+                      if [ -n "${target_namespace}" ]; then
+                        echo "---- kubectl get ${res_kind} ${target_namespace}/${res_name} -o yaml ----"
+                        kubectl -n "${target_namespace}" get "${res_kind,,}" "${res_name}" -o yaml || true
+                      else
+                        echo "---- kubectl get ${res_kind} ${res_name} -o yaml ----"
+                        kubectl get "${res_kind,,}" "${res_name}" -o yaml || true
+                      fi
+                      ;;
+                    Keycloak)
+                      if [ -n "${target_namespace}" ]; then
+                        echo "---- kubectl get keycloaks.k8s.keycloak.org ${target_namespace}/${res_name} -o yaml ----"
+                        kubectl -n "${target_namespace}" get keycloaks.k8s.keycloak.org "${res_name}" -o yaml || true
+                      fi
+                      ;;
+                    KeycloakRealmImport)
+                      if [ -n "${target_namespace}" ]; then
+                        echo "---- kubectl get keycloakrealmimports.k8s.keycloak.org ${target_namespace}/${res_name} -o yaml ----"
+                        kubectl -n "${target_namespace}" get keycloakrealmimports.k8s.keycloak.org "${res_name}" -o yaml || true
+                      fi
+                      ;;
+                    *)
+                      if [ -n "${target_namespace}" ]; then
+                        echo "---- kubectl get ${res_kind} ${target_namespace}/${res_name} -o yaml ----"
+                        kubectl -n "${target_namespace}" get "${res_kind,,}" "${res_name}" -o yaml || true
+                      else
+                        echo "---- kubectl get ${res_kind} ${res_name} -o yaml ----"
+                        kubectl get "${res_kind,,}" "${res_name}" -o yaml || true
+                      fi
+                      ;;
+                  esac
+                done <<<"${resources_summary}"
+              fi
+
+              if kubectl get ns "${apps_namespace}" >/dev/null 2>&1; then
+                echo "Pods in namespace ${apps_namespace}:"
+                kubectl -n "${apps_namespace}" get pods -o wide || true
+                echo "Recent events in namespace ${apps_namespace}:"
+                kubectl -n "${apps_namespace}" get events --sort-by=.metadata.creationTimestamp | tail -n 50 || true
+              fi
+
               diagnostics_dumped=1
             fi
 
