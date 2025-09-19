@@ -42,6 +42,48 @@ spec:
             - |
               set -euo pipefail
 
+              config_template="/config-template/config.xml"
+              config_target="/opt/midpoint/var/config.xml"
+
+              echo "Rendering midPoint configuration with repository connection settings"
+              if [ ! -f "${config_template}" ]; then
+                echo "ERROR: Config template ${config_template} not found" >&2
+                exit 1
+              fi
+
+              jdbc_url="${MP_SET_midpoint_repository_jdbcUrl:-}"
+              jdbc_username="${MP_SET_midpoint_repository_jdbcUsername:-}"
+              jdbc_password="${MP_SET_midpoint_repository_jdbcPassword:-}"
+
+              if [ -z "${jdbc_url}" ] || [ -z "${jdbc_username}" ] || [ -z "${jdbc_password}" ]; then
+                echo "ERROR: Repository connection environment variables are incomplete" >&2
+                exit 1
+              fi
+
+              escape_sed() {
+                printf '%s' "$1" | sed -e 's/[\\/&|]/\\&/g'
+              }
+
+              tmp_config="$(mktemp)"
+              cp "${config_template}" "${tmp_config}"
+
+              sed -i \
+                -e "s|__JDBC_URL__|$(escape_sed "${jdbc_url}")|g" \
+                -e "s|__JDBC_USERNAME__|$(escape_sed "${jdbc_username}")|g" \
+                -e "s|__JDBC_PASSWORD__|$(escape_sed "${jdbc_password}")|g" \
+                "${tmp_config}"
+
+              if grep -q '__JDBC_' "${tmp_config}"; then
+                echo "ERROR: Failed to substitute repository placeholders in config.xml" >&2
+                rm -f "${tmp_config}"
+                exit 1
+              fi
+
+              chmod 600 "${tmp_config}"
+              mv "${tmp_config}" "${config_target}"
+
+              echo "Rendered config.xml with repository credentials"
+
               echo "Locating PostgreSQL JDBC driver"
               postgres_driver="$(find /opt/midpoint/lib -maxdepth 1 -type f -name 'postgresql-*.jar' | sort | tail -n 1)"
 
@@ -164,8 +206,8 @@ spec:
             - name: midpoint-home
               mountPath: /opt/midpoint/var
             - name: config-xml
-              mountPath: /opt/midpoint/var/config.xml
-              subPath: config.xml
+              mountPath: /config-template
+              readOnly: true
       containers:
         - name: midpoint
           image: evolveum/midpoint:4.9
@@ -205,9 +247,6 @@ spec:
           volumeMounts:
             - name: midpoint-home
               mountPath: /opt/midpoint/var
-            - name: config-xml
-              mountPath: /opt/midpoint/var/config.xml
-              subPath: config.xml
           resources:
             requests:
               cpu: 500m
