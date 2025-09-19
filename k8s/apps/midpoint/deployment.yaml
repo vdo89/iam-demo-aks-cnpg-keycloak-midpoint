@@ -42,6 +42,8 @@ spec:
             - |
               set -euo pipefail
 
+              ninja_cmd_base=(/opt/midpoint/bin/ninja.sh)
+
               escape_sed() {
                 printf '%s' "$1" | sed -e 's/[\\/&|]/\\&/g'
               }
@@ -117,7 +119,7 @@ spec:
                 local status=0
 
                 while [ "${attempt}" -le "${ninja_max_attempts}" ]; do
-                  if /opt/midpoint/bin/ninja.sh -j "${postgres_driver}" "$@" >"${log_file}" 2>&1; then
+                  if "${ninja_cmd_base[@]}" "$@" >"${log_file}" 2>&1; then
                     echo "ninja ${label} completed successfully (attempt ${attempt}/${ninja_max_attempts})"
                     return 0
                   fi
@@ -230,14 +232,14 @@ spec:
               echo "Rendered config.xml with repository credentials"
 
               echo "Locating PostgreSQL JDBC driver"
-              postgres_driver="$(find /opt/midpoint/lib -maxdepth 1 -type f -name 'postgresql-*.jar' | sort | tail -n 1)"
+              postgres_driver="$(find /opt/midpoint/lib -type f -name 'postgresql-*.jar' | sort | tail -n 1)"
 
-              if [ -z "${postgres_driver}" ]; then
-                echo "ERROR: Could not find a PostgreSQL JDBC driver under /opt/midpoint/lib" >&2
-                exit 1
+              if [ -n "${postgres_driver}" ]; then
+                echo "Using JDBC driver: ${postgres_driver}"
+                ninja_cmd_base+=(-j "${postgres_driver}")
+              else
+                echo "WARNING: Could not find a PostgreSQL JDBC driver under /opt/midpoint/lib; relying on default classpath" >&2
               fi
-
-              echo "Using JDBC driver: ${postgres_driver}"
 
               if ! run_midpoint_init; then
                 echo "Continuing with manual schema bootstrap despite midpoint.sh init-native failures" >&2
