@@ -36,11 +36,14 @@ spec:
               mountPath: /midpoint-home
         - name: midpoint-db-init
           image: evolveum/midpoint:4.9
+          workingDir: /opt/midpoint
           command:
             - /bin/bash
             - -c
             - |
               set -euo pipefail
+
+              cd /opt/midpoint
 
               ninja_cmd_base=(/opt/midpoint/bin/ninja.sh)
 
