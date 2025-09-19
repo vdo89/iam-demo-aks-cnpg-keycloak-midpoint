@@ -283,7 +283,16 @@ spec:
 
               chmod 600 "${tmp_config}"
               chown "${midpoint_uid}:${midpoint_gid}" "${tmp_config}"
-              mv "${tmp_config}" "${config_target}"
+
+              if ! mv "${tmp_config}" "${config_target}"; then
+                status=$?
+                echo "ERROR: Failed to install rendered config.xml (mv exited with ${status})" >&2
+                rm -f "${tmp_config}" || true
+                exit "${status}"
+              fi
+
+              chmod 600 "${config_target}"
+              chown "${midpoint_uid}:${midpoint_gid}" "${config_target}"
 
               echo "Rendered config.xml with repository credentials"
 
