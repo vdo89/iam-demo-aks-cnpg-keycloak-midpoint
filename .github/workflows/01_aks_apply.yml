@@ -42,7 +42,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ format('{0}-terraform-{1}', replace(github.repository, '/', '-'), inputs.RESOURCE_PREFIX != '' && inputs.RESOURCE_PREFIX || 'rwsdemo') }}
+  group: ${{ format('{0}-terraform-{1}', github.repository_id, inputs.RESOURCE_PREFIX != '' && inputs.RESOURCE_PREFIX || 'rwsdemo') }}
   cancel-in-progress: false
 
 jobs:
