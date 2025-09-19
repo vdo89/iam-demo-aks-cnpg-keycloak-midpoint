@@ -34,6 +34,65 @@ spec:
           volumeMounts:
             - name: midpoint-home
               mountPath: /midpoint-home
+        - name: midpoint-db-init
+          image: evolveum/midpoint:4.9
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+
+              echo "Initializing midPoint native repository assets"
+              /opt/midpoint/bin/midpoint.sh init-native
+
+              echo "Inspecting current repository schema state"
+              if /opt/midpoint/bin/ninja.sh -B info >/tmp/ninja.log 2>&1; then
+                ninja_status=0
+              else
+                ninja_status=$?
+              fi
+
+              if grep -q "ERROR" /tmp/ninja.log; then
+                echo "Schema not fully initialized; applying create scripts"
+                /opt/midpoint/bin/ninja.sh run-sql --create --mode REPOSITORY
+                /opt/midpoint/bin/ninja.sh run-sql --create --mode AUDIT
+              else
+                if [ "${ninja_status}" -ne 0 ]; then
+                  echo "ninja info command failed without reporting schema errors"
+                  cat /tmp/ninja.log
+                  exit "${ninja_status}"
+                fi
+                echo "midPoint repository schema already initialized"
+              fi
+
+              rm -f /tmp/ninja.log
+
+              echo "midPoint repository bootstrap complete"
+          env:
+            - name: MP_SET_midpoint_repository_type
+              value: native
+            - name: MP_SET_midpoint_repository_database
+              value: postgresql
+            - name: MP_SET_midpoint_repository_jdbcUrl
+              value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/midpoint
+            - name: MP_SET_midpoint_repository_jdbcUsername
+              valueFrom:
+                secretKeyRef:
+                  name: midpoint-db-app
+                  key: username
+            - name: MP_SET_midpoint_repository_jdbcPassword
+              valueFrom:
+                secretKeyRef:
+                  name: midpoint-db-app
+                  key: password
+            - name: MP_NO_ENV_COMPAT
+              value: "1"
+          volumeMounts:
+            - name: midpoint-home
+              mountPath: /opt/midpoint/var
+            - name: config-xml
+              mountPath: /opt/midpoint/var/config.xml
+              subPath: config.xml
       containers:
         - name: midpoint
           image: evolveum/midpoint:4.9
@@ -62,6 +121,8 @@ spec:
                 secretKeyRef:
                   name: midpoint-db-app
                   key: password
+            - name: MP_SET_midpoint_repository_database
+              value: postgresql
             - name: MP_NO_ENV_COMPAT
               value: "1"
             - name: MP_MEM_INIT
