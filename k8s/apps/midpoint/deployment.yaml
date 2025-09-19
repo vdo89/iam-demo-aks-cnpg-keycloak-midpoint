@@ -52,6 +52,34 @@ spec:
 
               echo "Using JDBC driver: ${postgres_driver}"
 
+              jdbc_url="${MP_SET_midpoint_repository_jdbcUrl:-}"
+              jdbc_username="${MP_SET_midpoint_repository_jdbcUsername:-}"
+              jdbc_password="${MP_SET_midpoint_repository_jdbcPassword:-}"
+
+              if [ -z "${jdbc_url}" ]; then
+                echo "ERROR: MP_SET_midpoint_repository_jdbcUrl environment variable is empty" >&2
+                exit 1
+              fi
+
+              if [ -z "${jdbc_username}" ]; then
+                echo "ERROR: MP_SET_midpoint_repository_jdbcUsername environment variable is empty" >&2
+                exit 1
+              fi
+
+              if [ -z "${jdbc_password}" ]; then
+                echo "ERROR: MP_SET_midpoint_repository_jdbcPassword environment variable is empty" >&2
+                exit 1
+              fi
+
+              echo "midPoint repository JDBC user: ${jdbc_username}"
+              echo "midPoint repository JDBC URL: ${jdbc_url}"
+
+              ninja_jdbc_args=(
+                --jdbc-url "${jdbc_url}"
+                --jdbc-username "${jdbc_username}"
+                --jdbc-password "${jdbc_password}"
+              )
+
               echo "Initializing midPoint native repository assets"
               /opt/midpoint/bin/midpoint.sh init-native
 
@@ -90,8 +118,8 @@ spec:
               if [ "${create_needed}" -eq 1 ]; then
                 echo "Schema not fully initialized; applying create scripts"
                 
-                /opt/midpoint/bin/ninja.sh -j "${postgres_driver}" run-sql --create --mode repository
-                /opt/midpoint/bin/ninja.sh -j "${postgres_driver}" run-sql --create --mode audit
+                /opt/midpoint/bin/ninja.sh -j "${postgres_driver}" run-sql --mode repository --create "${ninja_jdbc_args[@]}"
+                /opt/midpoint/bin/ninja.sh -j "${postgres_driver}" run-sql --mode audit --create "${ninja_jdbc_args[@]}"
 
                 upgrade_needed=1
               else
@@ -101,8 +129,8 @@ spec:
               if [ "${upgrade_needed}" -eq 1 ]; then
                 echo "Applying repository upgrade scripts (idempotent)"
 
-                /opt/midpoint/bin/ninja.sh -j "${postgres_driver}" run-sql --upgrade --mode repository
-                /opt/midpoint/bin/ninja.sh -j "${postgres_driver}" run-sql --upgrade --mode audit
+                /opt/midpoint/bin/ninja.sh -j "${postgres_driver}" run-sql --mode repository --upgrade "${ninja_jdbc_args[@]}"
+                /opt/midpoint/bin/ninja.sh -j "${postgres_driver}" run-sql --mode audit --upgrade "${ninja_jdbc_args[@]}"
 
               else
                 echo "midPoint repository schema already at latest version"
