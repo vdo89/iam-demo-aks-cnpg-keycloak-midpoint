@@ -1583,6 +1583,48 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          dump_init_container_logs() {
+            local target_ns="$1"
+
+            if [ -z "${target_ns}" ]; then
+              return 0
+            fi
+
+            local pods_json
+            if ! pods_json=$(kubectl -n "${target_ns}" get pods -o json 2>/dev/null); then
+              echo "WARNING: Unable to retrieve pod details for namespace ${target_ns}" >&2
+              return 0
+            fi
+
+            local failing_pairs
+            failing_pairs="$(
+              jq -r '
+                .items[]? as $pod
+                | ($pod.status.initContainerStatuses // [])[]
+                | ( .state.waiting.reason // "" ) as $waiting_reason
+                | ( .state.terminated // {} ) as $term
+                | ( .lastState.terminated // {} ) as $last_term
+                | select(
+                    ($waiting_reason != "" and ($waiting_reason | test("^(CrashLoopBackOff|ErrImagePull|ImagePullBackOff|CreateContainerConfigError|Error)$")))
+                    or (($term.exitCode // 0) != 0)
+                    or (($last_term.exitCode // 0) != 0)
+                  )
+                | "\($pod.metadata.name)\t\(.name)"
+              ' <<<"${pods_json}"
+            )"
+
+            if [ -z "${failing_pairs}" ]; then
+              echo "No failing init containers detected in namespace ${target_ns}."
+              return 0
+            fi
+
+            echo "Collecting init container logs in namespace ${target_ns}:"
+            while IFS=$'\t' read -r pod_name init_name; do
+              [ -z "${pod_name}" ] && continue
+              echo "---- Logs for init container ${init_name} in pod ${target_ns}/${pod_name} ----"
+              kubectl -n "${target_ns}" logs "${pod_name}" -c "${init_name}" --tail=200 || true
+            done <<<"${failing_pairs}"
+          }
           echo "Ensuring Argo CD application 'apps' has been created before monitoring status"
           app_found=0
           for attempt in $(seq 1 60); do
@@ -1760,6 +1802,7 @@ jobs:
                 kubectl -n "${apps_namespace}" get pods -o wide || true
                 echo "Recent events in namespace ${apps_namespace}:"
                 kubectl -n "${apps_namespace}" get events --sort-by=.metadata.creationTimestamp | tail -n 50 || true
+                dump_init_container_logs "${apps_namespace}"
               fi
 
               diagnostics_dumped=1
@@ -1775,6 +1818,7 @@ jobs:
             kubectl -n "${apps_namespace}" get pods -o wide || true
             echo "Recent events in namespace ${apps_namespace}:"
             kubectl -n "${apps_namespace}" get events --sort-by=.metadata.creationTimestamp | tail -n 50 || true
+            dump_init_container_logs "${apps_namespace}"
           fi
           exit 1
 

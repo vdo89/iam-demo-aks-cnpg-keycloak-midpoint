@@ -109,6 +109,25 @@ spec:
                 return "${status}"
               }
 
+              run_midpoint_init_native() {
+                local log_file
+                log_file="$(mktemp)"
+
+                if MP_SET_midpoint_repository_jdbcUsername="${db_username}" \
+                   MP_SET_midpoint_repository_jdbcPassword="${db_password}" \
+                   /opt/midpoint/bin/midpoint.sh init-native >"${log_file}" 2>&1; then
+                  echo "midpoint.sh init-native completed successfully"
+                  rm -f "${log_file}"
+                  return 0
+                fi
+
+                local status=$?
+                echo "WARNING: midpoint.sh init-native failed with exit code ${status}" >&2
+                mask_file_output "${log_file}" >&2 || cat "${log_file}" >&2
+                rm -f "${log_file}"
+                return "${status}"
+              }
+
               config_template="/config-template/config.xml"
               config_target="/opt/midpoint/var/config.xml"
 
@@ -158,7 +177,9 @@ spec:
               echo "Using JDBC driver: ${postgres_driver}"
 
               echo "Initializing midPoint native repository assets"
-              /opt/midpoint/bin/midpoint.sh init-native
+              if ! run_midpoint_init_native; then
+                echo "Continuing with ninja-based schema inspection despite init-native failure" >&2
+              fi
 
               echo "Inspecting current repository schema state"
               info_log="/tmp/ninja-info.log"
