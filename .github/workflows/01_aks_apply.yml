@@ -392,7 +392,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          terraform plan -input=false \
+          ./scripts/terraform_with_lock_retry.sh plan -input=false \
             -var="location=${{ inputs.LOCATION }}" \
             -var="prefix=${{ inputs.RESOURCE_PREFIX }}" \
             -var="aks_default_node_vm_size=${{ inputs.AKS_NODE_VM_SIZE }}" \
@@ -407,7 +407,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          terraform apply -auto-approve -input=false \
+          ./scripts/terraform_with_lock_retry.sh apply -auto-approve -input=false \
             -var="location=${{ inputs.LOCATION }}" \
             -var="prefix=${{ inputs.RESOURCE_PREFIX }}" \
             -var="aks_default_node_vm_size=${{ inputs.AKS_NODE_VM_SIZE }}" \
@@ -422,7 +422,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          terraform destroy -auto-approve -input=false \
+          ./scripts/terraform_with_lock_retry.sh destroy -auto-approve -input=false \
             -var="location=${{ inputs.LOCATION }}" \
             -var="prefix=${{ inputs.RESOURCE_PREFIX }}" \
             -var="aks_default_node_vm_size=${{ inputs.AKS_NODE_VM_SIZE }}" \
