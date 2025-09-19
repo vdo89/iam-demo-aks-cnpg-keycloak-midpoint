@@ -125,6 +125,160 @@ jobs:
             -backend-config="container_name=tfstate" \
             -backend-config="key=${{ inputs.RESOURCE_PREFIX }}.tfstate"
 
+      - name: Break stale Terraform state lock
+        shell: bash
+        working-directory: infra/azure/terraform
+        env:
+          ARM_ACCESS_KEY: ${{ steps.tfstate.outputs.storage_account_key }}
+          STORAGE_ACCOUNT: ${{ steps.tfstate.outputs.storage_account }}
+          STORAGE_ACCOUNT_KEY: ${{ steps.tfstate.outputs.storage_account_key }}
+          RESOURCE_PREFIX: ${{ inputs.RESOURCE_PREFIX }}
+          STALE_LOCK_MAX_AGE_SECONDS: 3600
+        run: |
+          set -euo pipefail
+          if [[ -z "${STORAGE_ACCOUNT:-}" || -z "${STORAGE_ACCOUNT_KEY:-}" ]]; then
+            echo "Storage account details unavailable; skipping lock maintenance."
+            exit 0
+          fi
+
+          STATE_BLOB="${RESOURCE_PREFIX}.tfstate"
+          echo "Checking for stale Terraform state lock on blob ${STATE_BLOB}."
+
+          BLOB_INFO="$(az storage blob show \
+            --container-name tfstate \
+            --name "${STATE_BLOB}" \
+            --account-name "${STORAGE_ACCOUNT}" \
+            --account-key "${STORAGE_ACCOUNT_KEY}" \
+            -o json 2>/dev/null || true)"
+
+          if [[ -z "${BLOB_INFO}" || "${BLOB_INFO}" == "null" ]]; then
+            echo "State blob ${STATE_BLOB} not found; skipping lock maintenance."
+            exit 0
+          fi
+
+          PY_OUTPUT="$(printf '%s' "${BLOB_INFO}" | python - <<'PY'
+import json
+import sys
+
+data = json.load(sys.stdin)
+lease_state = data.get("properties", {}).get("leaseState", "") or ""
+metadata = data.get("metadata") or {}
+lock_json = metadata.get("terraformlockid") or metadata.get("terraform-lock-id") or ""
+print(lease_state)
+print(lock_json)
+PY
+)"
+
+          IFS=$'\n' read -r LEASE_STATE LOCK_JSON <<<"${PY_OUTPUT}" || true
+          LEASE_STATE="${LEASE_STATE:-}"
+          LOCK_JSON="${LOCK_JSON:-}"
+
+          if [[ "${LEASE_STATE}" != "leased" ]]; then
+            echo "No active lease detected on state blob."
+            exit 0
+          fi
+
+          if [[ -z "${LOCK_JSON}" ]]; then
+            echo "State blob is leased but missing Terraform lock metadata; manual unlock may be required."
+            exit 0
+          fi
+
+          export LOCK_JSON
+          PY_LOCK="$(python - <<'PY'
+import datetime
+import json
+import os
+import sys
+
+lock_json = os.environ.get("LOCK_JSON", "")
+lock_id = ""
+lock_age = ""
+
+if lock_json:
+    try:
+        info = json.loads(lock_json)
+    except json.JSONDecodeError as exc:  # pragma: no cover - defensive logging
+        print(f"Failed to decode lock metadata JSON: {exc}", file=sys.stderr)
+    else:
+        lock_id = info.get("ID") or ""
+        created_raw = (info.get("Created") or "").strip().replace(" UTC", "")
+        created_dt = None
+        for fmt in (
+            "%Y-%m-%d %H:%M:%S.%f %z",
+            "%Y-%m-%d %H:%M:%S %z",
+            "%Y-%m-%dT%H:%M:%S.%f%z",
+            "%Y-%m-%dT%H:%M:%S%z",
+        ):
+            try:
+                created_dt = datetime.datetime.strptime(created_raw, fmt)
+                break
+            except ValueError:
+                continue
+        if created_dt is None and created_raw:
+            for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+                try:
+                    created_dt = datetime.datetime.strptime(created_raw, fmt)
+                    created_dt = created_dt.replace(tzinfo=datetime.timezone.utc)
+                    break
+                except ValueError:
+                    continue
+        if created_dt is not None:
+            age_seconds = int(
+                (datetime.datetime.now(datetime.timezone.utc) - created_dt.astimezone(datetime.timezone.utc)).total_seconds()
+            )
+            lock_age = str(max(age_seconds, 0))
+
+print(lock_id)
+print(lock_age)
+PY
+)"
+
+          IFS=$'\n' read -r LOCK_ID LOCK_AGE <<<"${PY_LOCK}" || true
+          LOCK_ID="${LOCK_ID:-}"
+          LOCK_AGE="${LOCK_AGE:-}"
+
+          if [[ -z "${LOCK_ID}" ]]; then
+            echo "Unable to determine lock ID; skipping automatic unlock."
+            exit 0
+          fi
+
+          if [[ -z "${LOCK_AGE}" || ! "${LOCK_AGE}" =~ ^[0-9]+$ ]]; then
+            echo "Could not determine lock age for ${LOCK_ID}; skipping automatic unlock."
+            exit 0
+          fi
+
+          THRESHOLD="${STALE_LOCK_MAX_AGE_SECONDS:-3600}"
+          if [[ -z "${THRESHOLD}" || ! "${THRESHOLD}" =~ ^[0-9]+$ ]]; then
+            echo "Invalid STALE_LOCK_MAX_AGE_SECONDS value (${THRESHOLD}); defaulting to 3600 seconds." >&2
+            THRESHOLD=3600
+          fi
+
+          if (( LOCK_AGE < THRESHOLD )); then
+            echo "Terraform lock ${LOCK_ID} is ${LOCK_AGE}s old; below threshold ${THRESHOLD}s."
+            exit 0
+          fi
+
+          echo "Terraform lock ${LOCK_ID} appears stale (${LOCK_AGE}s >= ${THRESHOLD}s); attempting force-unlock."
+          set +e
+          terraform force-unlock -force "${LOCK_ID}"
+          UNLOCK_EXIT=$?
+          set -e
+
+          if [[ ${UNLOCK_EXIT} -eq 0 ]]; then
+            echo "Successfully released stale Terraform lock ${LOCK_ID}."
+            exit 0
+          fi
+
+          echo "terraform force-unlock failed with exit code ${UNLOCK_EXIT}; attempting to break Azure Storage lease directly." >&2
+          az storage blob lease break \
+            --container-name tfstate \
+            --blob-name "${STATE_BLOB}" \
+            --account-name "${STORAGE_ACCOUNT}" \
+            --account-key "${STORAGE_ACCOUNT_KEY}" \
+            --break-period 0 \
+            --output none
+          echo "Azure Storage lease break invoked for ${STATE_BLOB}. Continuing with Terraform operations."
+
       - name: Determine resource configuration
         id: rg
         shell: bash
