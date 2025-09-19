@@ -91,9 +91,9 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
 ## 4) Demo – what to click
 
 - Get the external IP of **ingress-nginx** (the workflow prints it; or: `kubectl -n ingress-nginx get svc ingress-nginx-controller`).
-- Keycloak is exposed through the operator-managed service `rws-keycloak-service`; check it with `kubectl -n iam get svc rws-keycloak-service` if you need the cluster IP before Ingress is ready.
+- Keycloak is exposed through the ClusterIP service `rws-keycloak-service` defined in `k8s/apps/keycloak/keycloak.yaml`; check it with `kubectl -n iam get svc rws-keycloak-service` if you need the cluster IP before Ingress is ready.
 - Open Keycloak: `http://kc.<EXTERNAL-IP>.nip.io` (admin user and password are in secret `rws-keycloak-initial-admin` created by operator)
-  - The Keycloak Operator exposes HTTP on service **`rws-keycloak-service`** (note the `-service` suffix). Use `kubectl -n iam get svc` to list the generated service names instead of querying `rws-keycloak` directly.
+  - The Keycloak operator-managed pods carry the `app.kubernetes.io/instance=rws-keycloak` label, so the `rws-keycloak-service` service automatically targets them.
 - Open midPoint: `http://mp.<EXTERNAL-IP>.nip.io/midpoint`
   - Login: `administrator` / the `MIDPOINT_ADMIN_PASSWORD` you set
   - Check **Users**/**Roles**/**Orgs** seeded by the job
