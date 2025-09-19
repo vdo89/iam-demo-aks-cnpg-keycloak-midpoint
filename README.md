@@ -125,6 +125,10 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     Adjust these values together with the container `resources` block if you customize the AKS node sizing beyond the defaults.
   - `config.xml` uses the **native PostgreSQL repository** (Sqale) recommended for midPoint 4.9 and later, which
     matches the CloudNativePG PostgreSQL 16 cluster created by the automation.
+    The JDBC URL explicitly sets `sslmode=disable` because CloudNativePG issues self-signed server certificates by default and
+    the demo deployment does not distribute a CA bundle to midPoint. Without the flag the driver may abort during the TLS
+    handshake and the pod will restart in a crash loop. Disable the flag only after you install a trusted server certificate
+    and update the midPoint keystore accordingly.
   - Repository connection settings are injected at runtime via the `MP_SET_midpoint_repository_*` environment variables in
     the deployment so the GitOps config can stay credential-free. Update both the manifest and GitHub secrets when changing
     the database hostname, username or password.

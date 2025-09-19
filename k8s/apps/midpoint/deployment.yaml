@@ -89,8 +89,10 @@ spec:
 
               if [ "${create_needed}" -eq 1 ]; then
                 echo "Schema not fully initialized; applying create scripts"
-                /opt/midpoint/bin/ninja.sh -j "${postgres_driver}" run-sql --create --mode REPOSITORY
-                /opt/midpoint/bin/ninja.sh -j "${postgres_driver}" run-sql --create --mode AUDIT
+                
+                /opt/midpoint/bin/ninja.sh run-sql --create --mode repository
+                /opt/midpoint/bin/ninja.sh run-sql --create --mode audit
+
                 upgrade_needed=1
               else
                 echo "midPoint repository schema already initialized"
@@ -98,8 +100,10 @@ spec:
 
               if [ "${upgrade_needed}" -eq 1 ]; then
                 echo "Applying repository upgrade scripts (idempotent)"
-                /opt/midpoint/bin/ninja.sh -j "${postgres_driver}" run-sql --upgrade --mode REPOSITORY
-                /opt/midpoint/bin/ninja.sh -j "${postgres_driver}" run-sql --upgrade --mode AUDIT
+
+                /opt/midpoint/bin/ninja.sh run-sql --upgrade --mode repository
+                /opt/midpoint/bin/ninja.sh run-sql --upgrade --mode audit
+
               else
                 echo "midPoint repository schema already at latest version"
               fi
@@ -113,7 +117,7 @@ spec:
             - name: MP_SET_midpoint_repository_database
               value: postgresql
             - name: MP_SET_midpoint_repository_jdbcUrl
-              value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/midpoint
+              value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/midpoint?sslmode=disable
             - name: MP_SET_midpoint_repository_jdbcUsername
               valueFrom:
                 secretKeyRef:
@@ -149,7 +153,7 @@ spec:
             - name: MP_SET_midpoint_repository_database
               value: postgresql
             - name: MP_SET_midpoint_repository_jdbcUrl
-              value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/midpoint
+              value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/midpoint?sslmode=disable
             - name: MP_SET_midpoint_repository_jdbcUsername
               valueFrom:
                 secretKeyRef:
