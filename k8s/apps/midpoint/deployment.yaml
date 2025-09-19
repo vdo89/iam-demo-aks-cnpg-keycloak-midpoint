@@ -52,12 +52,30 @@ spec:
 
               echo "Using JDBC driver: ${postgres_driver}"
 
+              db_url="${MP_SET_midpoint_repository_jdbcUrl:-}"
+              db_username="${MP_SET_midpoint_repository_jdbcUsername:-}"
+              db_password="${MP_SET_midpoint_repository_jdbcPassword:-}"
+
+              if [ -z "${db_url}" ] || [ -z "${db_username}" ] || [ -z "${db_password}" ]; then
+                echo "ERROR: Repository JDBC connection details are not fully specified via MP_SET_midpoint_repository_* env vars" >&2
+                exit 1
+              fi
+
               echo "Initializing midPoint native repository assets"
               /opt/midpoint/bin/midpoint.sh init-native
 
+              run_ninja() {
+                /opt/midpoint/bin/ninja.sh \
+                  -j "${postgres_driver}" \
+                  --jdbc-url "${db_url}" \
+                  --jdbc-username "${db_username}" \
+                  --jdbc-password "${db_password}" \
+                  "$@"
+              }
+
               echo "Inspecting current repository schema state"
               info_log="/tmp/ninja-info.log"
-              if /opt/midpoint/bin/ninja.sh -j "${postgres_driver}" -B info >"${info_log}" 2>&1; then
+              if run_ninja info >"${info_log}" 2>&1; then
                 ninja_status=0
               else
                 ninja_status=$?
@@ -90,8 +108,8 @@ spec:
               if [ "${create_needed}" -eq 1 ]; then
                 echo "Schema not fully initialized; applying create scripts"
                 
-                /opt/midpoint/bin/ninja.sh run-sql --create --mode repository
-                /opt/midpoint/bin/ninja.sh run-sql --create --mode audit
+                run_ninja run-sql --create --mode repository
+                run_ninja run-sql --create --mode audit
 
                 upgrade_needed=1
               else
@@ -101,8 +119,8 @@ spec:
               if [ "${upgrade_needed}" -eq 1 ]; then
                 echo "Applying repository upgrade scripts (idempotent)"
 
-                /opt/midpoint/bin/ninja.sh run-sql --upgrade --mode repository
-                /opt/midpoint/bin/ninja.sh run-sql --upgrade --mode audit
+                run_ninja run-sql --upgrade --mode repository
+                run_ninja run-sql --upgrade --mode audit
 
               else
                 echo "midPoint repository schema already at latest version"
