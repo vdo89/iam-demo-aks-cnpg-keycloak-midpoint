@@ -71,6 +71,7 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
    - Run a one-off PostgreSQL job that ensures the `midpoint` database and role exist before midPoint starts
    - Enable the required PostgreSQL extensions (`pgcrypto`, `pg_trgm`) for midPoint
    - Install **Keycloak Operator** then create a **Keycloak** CR bound to CNPG
+     - The workflow now reconfigures the operator deployment to watch the `iam` application namespace (in addition to its home namespace) so it publishes the generated services, such as `rws-keycloak-service`, where Argo CD manages the workloads.
    - Deploy **midPoint** bound to CNPG
    - Create a Kubernetes **Secret** with Azure Blob credentials (from repo secrets) for CNPG backups
    - Purge any existing WAL/archive blobs in the Azure `cnpg-backups/iam-db` prefix so CloudNativePG can bootstrap cleanly on reruns
