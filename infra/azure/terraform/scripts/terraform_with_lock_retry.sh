@@ -30,6 +30,16 @@ LOCK_PATTERNS=(
   "state blob is already locked"
 )
 
+FORCE_UNLOCK_AFTER_SECONDS=${TERRAFORM_LOCK_FORCE_UNLOCK_AFTER_SECONDS:-0}
+
+if ! [[ ${FORCE_UNLOCK_AFTER_SECONDS} =~ ^-?[0-9]+$ ]]; then
+  echo "Invalid TERRAFORM_LOCK_FORCE_UNLOCK_AFTER_SECONDS value (${FORCE_UNLOCK_AFTER_SECONDS}); defaulting to 0 (disabled)." >&2
+  FORCE_UNLOCK_AFTER_SECONDS=0
+elif (( FORCE_UNLOCK_AFTER_SECONDS < 0 )); then
+  echo "Negative TERRAFORM_LOCK_FORCE_UNLOCK_AFTER_SECONDS value (${FORCE_UNLOCK_AFTER_SECONDS}); defaulting to 0 (disabled)." >&2
+  FORCE_UNLOCK_AFTER_SECONDS=0
+fi
+
 attempt=1
 while (( attempt <= MAX_ATTEMPTS )); do
   echo "--- Terraform attempt ${attempt}/${MAX_ATTEMPTS}: terraform $*"
@@ -52,12 +62,55 @@ while (( attempt <= MAX_ATTEMPTS )); do
   fi
 
   lock_detected=false
+  lock_id=""
+  lock_created=""
   for pattern in "${LOCK_PATTERNS[@]}"; do
     if grep -qi "${pattern}" "${tmp_log}"; then
       lock_detected=true
       break
     fi
   done
+
+  if [[ ${lock_detected} == true ]]; then
+    lock_id=$(awk '/^  ID:/ { sub(/^  ID:[[:space:]]*/, ""); print; exit }' "${tmp_log}" | tr -d '\r')
+    lock_created=$(awk '/^  Created:/ { sub(/^  Created:[[:space:]]*/, ""); print; exit }' "${tmp_log}" | tr -d '\r')
+
+    if (( FORCE_UNLOCK_AFTER_SECONDS > 0 )) && [[ -n ${lock_id} ]] && [[ -n ${lock_created} ]]; then
+      lock_created_s=""
+      # Remove fractional seconds to improve parsing reliability (e.g., 2024-04-09 12:34:56).
+      lock_created_trimmed=${lock_created%%.*}
+      if lock_created_epoch=$(date -d "${lock_created}" +%s 2>/dev/null); then
+        lock_created_s=${lock_created_epoch}
+      elif lock_created_epoch=$(date -d "${lock_created_trimmed}" +%s 2>/dev/null); then
+        lock_created_s=${lock_created_epoch}
+      fi
+
+      if [[ -n ${lock_created_s} ]]; then
+        now_epoch=$(date +%s)
+        lock_age_seconds=$(( now_epoch - lock_created_s ))
+        if (( lock_age_seconds < 0 )); then
+          lock_age_seconds=0
+        fi
+
+        if (( lock_age_seconds >= FORCE_UNLOCK_AFTER_SECONDS )); then
+          echo "Terraform lock ${lock_id} is ${lock_age_seconds}s old (>= ${FORCE_UNLOCK_AFTER_SECONDS}s threshold); attempting force unlock."
+          set +e
+          terraform force-unlock -force "${lock_id}"
+          force_unlock_exit=$?
+          set -e
+          if (( force_unlock_exit == 0 )); then
+            echo "Successfully executed 'terraform force-unlock' for lock ${lock_id}."
+          else
+            echo "'terraform force-unlock' failed with exit code ${force_unlock_exit}; continuing with retry strategy." >&2
+          fi
+        else
+          echo "Terraform lock ${lock_id} is ${lock_age_seconds}s old (< ${FORCE_UNLOCK_AFTER_SECONDS}s threshold); skipping automatic force unlock."
+        fi
+      else
+        echo "Unable to parse lock creation time (${lock_created}); skipping automatic force unlock." >&2
+      fi
+    fi
+  fi
 
   rm -f "${tmp_log}"
 
