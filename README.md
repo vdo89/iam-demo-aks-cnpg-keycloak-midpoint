@@ -134,7 +134,9 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     the database hostname, username or password.
   - An init container now runs `midpoint.sh init-native` and then drives `ninja.sh run-sql` to create **and upgrade** the
     PostgreSQL schema before the main pod starts. The workflow is idempotent, so it safely bootstraps fresh clusters and also
-    applies in-place upgrades when you bump the midPoint image version.
+    applies in-place upgrades when you bump the midPoint image version. The helper retries `midpoint.sh` and every `ninja`
+    invocation with exponential backoff, masking credentials in the captured logs so transient database hiccups do not leave
+    the pod stuck in a crash loop and operators have actionable diagnostics when a retry finally gives up.
   - An init container now copies the default `/opt/midpoint/var` contents from the image into the writable volume used for
     `midpoint.home`. This preserves the bundled keystore and directory structure so the server can start cleanly even when the
     pod is rescheduled onto a fresh node.
@@ -158,7 +160,13 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
 - **Permanent fix**: Secrets are now mounted as volumes and referenced via the `_FILE` variants of the `MP_SET_*` variables,
   and the init container reads the credential files directly before calling `ninja` (see `k8s/apps/midpoint/deployment.yaml`).
   This removes the double-parsing pitfall and lets midPoint use the literal secret values. The helper also masks sensitive data
-  in the captured logs so operators still get actionable diagnostics when a different error occurs.
+  in the captured logs so operators still get actionable diagnostics when a different error occurs. It now retries
+  `midpoint.sh init-native` and the `ninja` schema commands before giving up so a short database failover no longer bricks the
+  deployment.
+
+- **Diagnostics**: When the Argo CD `apps` application reports a degraded pod, the bootstrap workflow now dumps the `describe`
+  output plus the last and previous log snippets for every init and app container. This makes the failing init container output
+  immediately visible in the Action logs without having to rerun the troubleshooting steps manually.
 
 
 ### Keycloak realm GitOps notes
