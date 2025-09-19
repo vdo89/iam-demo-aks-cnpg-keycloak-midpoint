@@ -41,11 +41,8 @@ spec:
             - name: http
               containerPort: 8080
           env:
-            - name: MP_SET_midpoint_administrator_initialPassword
-              valueFrom:
-                secretKeyRef:
-                  name: midpoint-admin
-                  key: password
+            - name: MP_SET_midpoint_administrator_initialPassword_FILE
+              value: /run/secrets/midpoint-admin/password
             - name: MP_SET_midpoint_repository_type
               value: native
             - name: MP_SET_midpoint_repository_jdbcUrl
@@ -55,11 +52,8 @@ spec:
                 secretKeyRef:
                   name: midpoint-db-app
                   key: username
-            - name: MP_SET_midpoint_repository_jdbcPassword
-              valueFrom:
-                secretKeyRef:
-                  name: midpoint-db-app
-                  key: password
+            - name: MP_SET_midpoint_repository_jdbcPassword_FILE
+              value: /run/secrets/midpoint-db-app/password
             - name: MP_NO_ENV_COMPAT
               value: "1"
             - name: MP_MEM_INIT
@@ -72,6 +66,12 @@ spec:
             - name: config-xml
               mountPath: /opt/midpoint/var/config.xml
               subPath: config.xml
+            - name: midpoint-admin-secret
+              mountPath: /run/secrets/midpoint-admin
+              readOnly: true
+            - name: midpoint-db-app-secret
+              mountPath: /run/secrets/midpoint-db-app
+              readOnly: true
           resources:
             requests:
               cpu: 500m
@@ -85,6 +85,12 @@ spec:
         - name: config-xml
           configMap:
             name: midpoint-config
+        - name: midpoint-admin-secret
+          secret:
+            secretName: midpoint-admin
+        - name: midpoint-db-app-secret
+          secret:
+            secretName: midpoint-db-app
 ---
 apiVersion: v1
 kind: Service
