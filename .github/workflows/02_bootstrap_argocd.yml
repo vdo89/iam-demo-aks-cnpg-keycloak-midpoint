@@ -445,6 +445,10 @@ jobs:
           AZURE_STORAGE_ACCOUNT_RAW="${AZURE_STORAGE_ACCOUNT:-}"
           AZURE_STORAGE_ACCOUNT="$(python3 -c "import os; print(os.environ.get('AZURE_STORAGE_ACCOUNT', '').strip())")"
 
+          if [ -n "${AZURE_STORAGE_ACCOUNT_RAW}" ] && [ "${AZURE_STORAGE_ACCOUNT_RAW}" != "${AZURE_STORAGE_ACCOUNT}" ]; then
+            echo "Trimmed leading/trailing whitespace from AZURE_STORAGE_ACCOUNT input"
+          fi
+
           AZURE_STORAGE_KEY_RAW="${AZURE_STORAGE_KEY:-}"
           AZURE_STORAGE_KEY="$(python3 -c "import os; print(os.environ.get('AZURE_STORAGE_KEY', '').strip())")"
 
@@ -456,10 +460,6 @@ jobs:
           if [ -z "${AZURE_STORAGE_KEY}" ]; then
             echo "AZURE_STORAGE_KEY secret is required for demo backup. Add it in repo secrets."
             exit 1
-          fi
-
-          if [ "${AZURE_STORAGE_ACCOUNT_RAW}" != "${AZURE_STORAGE_ACCOUNT}" ]; then
-            echo "Trimmed leading/trailing whitespace from AZURE_STORAGE_ACCOUNT input"
           fi
 
           if [ "${AZURE_STORAGE_KEY_RAW}" != "${AZURE_STORAGE_KEY}" ]; then
@@ -573,6 +573,11 @@ jobs:
 
           AZURE_STORAGE_ACCOUNT_RAW="${AZURE_STORAGE_ACCOUNT:-}"
           AZURE_STORAGE_ACCOUNT="$(python3 -c "import os; print(os.environ.get('AZURE_STORAGE_ACCOUNT', '').strip())")"
+          AZURE_STORAGE_ACCOUNT_INPUT="${AZURE_STORAGE_ACCOUNT}"
+
+          if [ -n "${AZURE_STORAGE_ACCOUNT_RAW}" ] && [ "${AZURE_STORAGE_ACCOUNT_RAW}" != "${AZURE_STORAGE_ACCOUNT}" ]; then
+            echo "Trimmed leading/trailing whitespace from AZURE_STORAGE_ACCOUNT input"
+          fi
 
           AZURE_STORAGE_KEY_RAW="${AZURE_STORAGE_KEY:-}"
           _AZ_PARSE_CODE=$'import os\nimport urllib.parse\n\nvalue = os.environ.get("AZURE_STORAGE_KEY", "")\ntrimmed = value.strip()\nif not trimmed:\n    key_type = "empty"\n    account_key = ""\n    account_name = ""\n    sas_token = ""\n    connection_string = ""\nelse:\n    lowered = trimmed.lower()\n    account_key = ""\n    account_name = ""\n    sas_token = ""\n    key_type = ""\n    connection_string = ""\n    ordered_parts = []\n    if (("accountkey=" in lowered) or ("sharedaccesssignature=" in lowered)) and (\n        ("accountname=" in lowered) or ("blobendpoint=" in lowered) or ("defaultendpointsprotocol=" in lowered)\n    ):\n        parts = {}\n        for part in trimmed.split(";"):\n            if not part or "=" not in part:\n                continue\n            key, val = part.split("=", 1)\n            key_clean = key.strip()\n            val_clean = val.strip()\n            lower_key = key_clean.lower()\n            parts[lower_key] = val_clean\n            ordered_parts.append((key_clean, lower_key, val_clean))\n        account_key = parts.get("accountkey", "")\n        account_name = parts.get("accountname", "")\n        shared_sig = parts.get("sharedaccesssignature", "")\n        if shared_sig:\n            sas_token = shared_sig.lstrip(" ?")\n        if account_key:\n            key_type = "connection_string"\n        elif shared_sig:\n            key_type = "connection_string_sas"\n        else:\n            key_type = "connection_string"\n        sanitized_parts = []\n        used_shared_sig = False\n        for original_key, lower_key, value in ordered_parts:\n            if lower_key == "sharedaccesssignature" and sas_token:\n                sanitized_parts.append(f"{original_key}={sas_token}")\n                used_shared_sig = True\n            else:\n                sanitized_parts.append(f"{original_key}={value}")\n        if sas_token and not used_shared_sig:\n            sanitized_parts.append(f"SharedAccessSignature={sas_token}")\n        if sanitized_parts:\n            connection_string = ";".join(sanitized_parts)\n    if not key_type or key_type == "empty":\n        candidate = trimmed\n        if candidate.lower().startswith("https://"):\n            try:\n                parsed = urllib.parse.urlparse(candidate)\n            except Exception:\n                parsed = None\n            if parsed:\n                if parsed.query:\n                    candidate = parsed.query\n                elif parsed.fragment:\n                    candidate = parsed.fragment\n                elif parsed.path:\n                    candidate = parsed.path\n        candidate = candidate.lstrip("/?")\n        lowered_candidate = candidate.lower()\n        if "sig=" in lowered_candidate and ("se=" in lowered_candidate or "expiry=" in lowered_candidate):\n            sas_token = candidate\n            key_type = "sas"\n    if not key_type:\n        key_type = "account_key"\n    if key_type not in ("connection_string", "connection_string_sas"):\n        connection_string = ""\n\nprint(trimmed)\nprint(key_type)\nprint(account_key)\nprint(account_name)\nprint(sas_token)\nprint(connection_string)\n'
@@ -592,18 +597,18 @@ jobs:
             AZURE_STORAGE_KEY="${connection_string_normalized}"
           fi
 
-          if [ -z "${AZURE_STORAGE_ACCOUNT}" ]; then
-            if [ -n "${connection_account_name}" ]; then
-              AZURE_STORAGE_ACCOUNT="${connection_account_name}"
-              echo "Derived storage account name ${AZURE_STORAGE_ACCOUNT} from AZURE_STORAGE_KEY secret"
-            else
-              echo "STORAGE_ACCOUNT input must not be empty"
-              exit 1
+          if [ -n "${connection_account_name}" ]; then
+            if [ -n "${AZURE_STORAGE_ACCOUNT_INPUT}" ] && [ "${AZURE_STORAGE_ACCOUNT_INPUT,,}" != "${connection_account_name,,}" ]; then
+              echo "AZURE_STORAGE_ACCOUNT input (${AZURE_STORAGE_ACCOUNT_INPUT}) differs from AccountName (${connection_account_name}) parsed from AZURE_STORAGE_KEY; using credential account name."
+            elif [ -z "${AZURE_STORAGE_ACCOUNT_INPUT}" ]; then
+              echo "Derived storage account name ${connection_account_name} from AZURE_STORAGE_KEY secret"
             fi
+            AZURE_STORAGE_ACCOUNT="${connection_account_name}"
           fi
 
-          if [ "${AZURE_STORAGE_ACCOUNT_RAW}" != "${AZURE_STORAGE_ACCOUNT}" ]; then
-            echo "Trimmed leading/trailing whitespace from AZURE_STORAGE_ACCOUNT input"
+          if [ -z "${AZURE_STORAGE_ACCOUNT}" ]; then
+            echo "STORAGE_ACCOUNT input must not be empty"
+            exit 1
           fi
 
           RESOURCE_GROUP_RAW="${RESOURCE_GROUP:-}"
@@ -627,10 +632,6 @@ jobs:
 
           if [ "${AZURE_STORAGE_KEY_RAW}" != "${AZURE_STORAGE_KEY_PARSED}" ] && [ "${user_supplied_key}" -eq 1 ]; then
             echo "Trimmed leading/trailing whitespace from AZURE_STORAGE_KEY secret"
-          fi
-
-          if [ -n "${connection_account_name}" ] && [ "${AZURE_STORAGE_ACCOUNT,,}" != "${connection_account_name,,}" ]; then
-            echo "WARNING: STORAGE_ACCOUNT (${AZURE_STORAGE_ACCOUNT}) does not match AccountName (${connection_account_name}) parsed from AZURE_STORAGE_KEY"
           fi
 
           account_key_for_cli=""
