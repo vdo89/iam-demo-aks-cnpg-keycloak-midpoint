@@ -60,19 +60,19 @@ spec:
                 END IF;
               END
               \$\$;
-
-              DO \$\$
-              DECLARE
-                role_name text := '${mp_user_sql}';
-              BEGIN
-                IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'midpoint') THEN
-                  EXECUTE format('CREATE DATABASE %I OWNER %I', 'midpoint', role_name);
-                ELSE
-                  EXECUTE format('ALTER DATABASE %I OWNER TO %I', 'midpoint', role_name);
-                END IF;
-              END
-              \$\$;
               SQL
+
+              mp_user_identifier=${MIDPOINT_DB_USER//\"/\"\"}
+
+              echo "Ensuring database 'midpoint' exists and is owned by '${MIDPOINT_DB_USER}'"
+              db_exists=$(psql -h "${DB_HOST}" -U postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'midpoint'")
+              if [[ -z "${db_exists// }" ]]; then
+                echo "Creating database 'midpoint'"
+                psql -h "${DB_HOST}" -U postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"midpoint\" OWNER \"${mp_user_identifier}\""
+              else
+                echo "Database 'midpoint' already exists; ensuring ownership"
+                psql -h "${DB_HOST}" -U postgres -v ON_ERROR_STOP=1 -c "ALTER DATABASE \"midpoint\" OWNER TO \"${mp_user_identifier}\""
+              fi
 
               echo "Ensuring required extensions exist in database 'midpoint'"
               psql -h "${DB_HOST}" -U postgres -d midpoint -v ON_ERROR_STOP=1 <<'SQL'
