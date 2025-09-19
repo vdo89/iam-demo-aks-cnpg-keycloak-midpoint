@@ -52,6 +52,36 @@ spec:
 
               echo "Using JDBC driver: ${postgres_driver}"
 
+              db_url="${MP_SET_midpoint_repository_jdbcUrl:-}"
+              db_username="${MP_SET_midpoint_repository_jdbcUsername:-}"
+              db_password="${MP_SET_midpoint_repository_jdbcPassword:-}"
+              db_database="${MP_SET_midpoint_repository_database:-}"
+
+              java_opts_extra="${JAVA_OPTS:-}"
+              append_java_opt() {
+                local key="$1"
+                local value="$2"
+
+                if [ -z "${value}" ]; then
+                  return
+                fi
+
+                local escaped
+                escaped=$(printf '%s' "${value}" | sed 's/\\/\\\\/g; s/"/\\"/g')
+                java_opts_extra="${java_opts_extra} -D${key}=\"${escaped}\""
+              }
+
+              append_java_opt "midpoint.repository.jdbcUrl" "${db_url}"
+              append_java_opt "midpoint.repository.jdbcUsername" "${db_username}"
+              append_java_opt "midpoint.repository.jdbcPassword" "${db_password}"
+              append_java_opt "midpoint.repository.database" "${db_database}"
+
+              export JAVA_OPTS="${java_opts_extra}"
+
+              if [ -n "${db_url}" ]; then
+                echo "Configured JDBC connection overrides for midPoint database initialization"
+              fi
+
               echo "Initializing midPoint native repository assets"
               /opt/midpoint/bin/midpoint.sh init-native
 
