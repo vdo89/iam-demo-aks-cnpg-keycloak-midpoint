@@ -160,10 +160,37 @@ jobs:
           import json
           import sys
 
-          data = json.load(sys.stdin)
-          lease_state = data.get("properties", {}).get("leaseState", "") or ""
-          metadata = data.get("metadata") or {}
+          raw = sys.stdin.read()
+          text = raw.strip()
+
+          data = {}
+          if text and text.lower() != "null":
+              try:
+                  parsed = json.loads(text)
+              except json.JSONDecodeError as exc:  # pragma: no cover - defensive logging
+                  print(f"Failed to decode blob metadata JSON: {exc}", file=sys.stderr)
+              else:
+                  if isinstance(parsed, dict):
+                      data = parsed
+                  else:  # pragma: no cover - defensive logging
+                      print(
+                          "Unexpected JSON type for blob metadata; expected an object.",
+                          file=sys.stderr,
+                      )
+
+          if not isinstance(data, dict):
+              data = {}
+
+          properties = data.get("properties")
+          if not isinstance(properties, dict):
+              properties = {}
+          lease_state = properties.get("leaseState", "") or ""
+
+          metadata = data.get("metadata")
+          if not isinstance(metadata, dict):
+              metadata = {}
           lock_json = metadata.get("terraformlockid") or metadata.get("terraform-lock-id") or ""
+
           print(lease_state)
           print(lock_json)
           PY
