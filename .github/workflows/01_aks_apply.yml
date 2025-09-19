@@ -41,6 +41,10 @@ permissions:
   id-token: write
   contents: read
 
+concurrency:
+  group: ${{ format('{0}-terraform-{1}', replace(github.repository, '/', '-'), inputs.RESOURCE_PREFIX != '' && inputs.RESOURCE_PREFIX || 'rwsdemo') }}
+  cancel-in-progress: false
+
 jobs:
   terraform:
     runs-on: ubuntu-latest
