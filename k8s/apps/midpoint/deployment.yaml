@@ -72,31 +72,21 @@ spec:
                 mask_file_output "${file_path}" || cat "${file_path}"
               }
 
-              read_secret_value() {
-                local value_var="$1"
-                local file_var="$2"
-                local description="$3"
+              read_secret_file() {
+                local file_path="$1"
+                local description="$2"
 
-                local value="${!value_var-}"
-                local file_path="${!file_var-}"
-
-                if [ -n "${value}" ]; then
-                  printf '%s' "${value}"
-                  return 0
+                if [ -z "${file_path}" ]; then
+                  echo "ERROR: ${description} file path is empty" >&2
+                  return 1
                 fi
 
-                if [ -n "${file_path}" ]; then
-                  if [ ! -r "${file_path}" ]; then
-                    echo "ERROR: ${description} file ${file_path} is not readable" >&2
-                    return 1
-                  fi
-
-                  cat "${file_path}"
-                  return 0
+                if [ ! -r "${file_path}" ]; then
+                  echo "ERROR: ${description} file ${file_path} is not readable" >&2
+                  return 1
                 fi
 
-                echo "ERROR: ${description} not provided via \$${value_var} or \$${file_var}" >&2
-                return 1
+                cat "${file_path}"
               }
 
               parse_positive_int() {
@@ -109,6 +99,18 @@ spec:
                   printf '%s' "${fallback}"
                 fi
               }
+
+              jdbc_url="${MIDPOINT_JDBC_URL:-}"
+              if [ -z "${jdbc_url}" ]; then
+                echo "ERROR: Repository JDBC URL is empty" >&2
+                exit 1
+              fi
+
+              db_username_file="${MIDPOINT_DB_USERNAME_FILE:-/var/run/secrets/midpoint-db-app/username}"
+              db_password_file="${MIDPOINT_DB_PASSWORD_FILE:-/var/run/secrets/midpoint-db-app/password}"
+
+              db_username="$(read_secret_file "${db_username_file}" 'repository username')"
+              db_password="$(read_secret_file "${db_password_file}" 'repository password')"
 
               ninja_max_attempts="$(parse_positive_int "${MP_NINJA_MAX_ATTEMPTS:-5}" 5)"
               ninja_retry_delay_seconds="$(parse_positive_int "${MP_NINJA_RETRY_DELAY_SECONDS:-5}" 5)"
@@ -203,15 +205,6 @@ spec:
                 echo "ERROR: Config template ${config_template} not found" >&2
                 exit 1
               fi
-
-              jdbc_url="${MP_SET_midpoint_repository_jdbcUrl:-}"
-              if [ -z "${jdbc_url}" ]; then
-                echo "ERROR: Repository JDBC URL is empty" >&2
-                exit 1
-              fi
-
-              db_username="$(read_secret_value MP_SET_midpoint_repository_jdbcUsername MP_SET_midpoint_repository_jdbcUsername_FILE 'repository username')"
-              db_password="$(read_secret_value MP_SET_midpoint_repository_jdbcPassword MP_SET_midpoint_repository_jdbcPassword_FILE 'repository password')"
 
               tmp_config="$(mktemp)"
               cp "${config_template}" "${tmp_config}"
@@ -312,15 +305,11 @@ spec:
 
               echo "midPoint repository bootstrap complete"
           env:
-            - name: MP_SET_midpoint_repository_type
-              value: native
-            - name: MP_SET_midpoint_repository_database
-              value: postgresql
-            - name: MP_SET_midpoint_repository_jdbcUrl
+            - name: MIDPOINT_JDBC_URL
               value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/midpoint?sslmode=disable
-            - name: MP_SET_midpoint_repository_jdbcUsername_FILE
+            - name: MIDPOINT_DB_USERNAME_FILE
               value: /var/run/secrets/midpoint-db-app/username
-            - name: MP_SET_midpoint_repository_jdbcPassword_FILE
+            - name: MIDPOINT_DB_PASSWORD_FILE
               value: /var/run/secrets/midpoint-db-app/password
             - name: MP_NO_ENV_COMPAT
               value: "1"
@@ -342,18 +331,6 @@ spec:
           env:
             - name: MP_SET_midpoint_administrator_initialPassword_FILE
               value: /var/run/secrets/midpoint-admin/password
-            - name: MP_SET_midpoint_repository_type
-              value: native
-            - name: MP_SET_midpoint_repository_database
-              value: postgresql
-            - name: MP_SET_midpoint_repository_jdbcUrl
-              value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/midpoint?sslmode=disable
-            - name: MP_SET_midpoint_repository_jdbcUsername_FILE
-              value: /var/run/secrets/midpoint-db-app/username
-            - name: MP_SET_midpoint_repository_jdbcPassword_FILE
-              value: /var/run/secrets/midpoint-db-app/password
-            - name: MP_SET_midpoint_repository_database
-              value: postgresql
             - name: MP_NO_ENV_COMPAT
               value: "1"
             - name: MP_MEM_INIT
@@ -363,9 +340,6 @@ spec:
           volumeMounts:
             - name: midpoint-home
               mountPath: /opt/midpoint/var
-            - name: midpoint-db-credentials
-              mountPath: /var/run/secrets/midpoint-db-app
-              readOnly: true
             - name: midpoint-admin-secret
               mountPath: /var/run/secrets/midpoint-admin
               readOnly: true
