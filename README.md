@@ -138,6 +138,27 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
   - An init container now copies the default `/opt/midpoint/var` contents from the image into the writable volume used for
     `midpoint.home`. This preserves the bundled keystore and directory structure so the server can start cleanly even when the
     pod is rescheduled onto a fresh node.
+  - Secrets are mounted as files and consumed via the `_FILE` environment variable variants to avoid shell re-interpretation of
+    special characters (notably `$`) inside database or administrator passwords. Without this, the `midpoint-db-init` init
+    container kept crashing during the `ninja` schema commands because Bash expanded characters such as `$$` to the process ID,
+    causing authentication failures. The updated init script now reads the credentials from those files, substitutes them into
+    `config.xml`, and invokes `ninja` directly with enhanced error logging so failed runs surface the sanitized command output
+    instead of leaving operators to guess at the root cause.
+
+### Troubleshooting: midPoint init container crash loops
+
+- **Symptom**: Argo CD reports the `apps` application as `Degraded` and `kubectl describe pod midpoint-…` shows
+  `Init:CrashLoopBackOff` on the `midpoint-db-init` container while the event log records repeated `BackOff restarting failed
+  container midpoint-db-init` messages.
+- **Root cause**: When the database or admin passwords contained characters that are special to the shell (most commonly `$`),
+  the previous init script exported them through `JAVA_OPTS`/`MP_SET_*` environment variables. The downstream `ninja.sh` wrapper
+  evaluates those variables via `eval`, so Bash expanded `$` sequences (for example, `$$` became the PID). The altered password
+  then failed PostgreSQL authentication, aborting the schema check/upgrade with a non-zero exit code and re-triggering the init
+  container.
+- **Permanent fix**: Secrets are now mounted as volumes and referenced via the `_FILE` variants of the `MP_SET_*` variables,
+  and the init container reads the credential files directly before calling `ninja` (see `k8s/apps/midpoint/deployment.yaml`).
+  This removes the double-parsing pitfall and lets midPoint use the literal secret values. The helper also masks sensitive data
+  in the captured logs so operators still get actionable diagnostics when a different error occurs.
 
 
 ### Keycloak realm GitOps notes
