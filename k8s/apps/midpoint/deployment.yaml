@@ -225,8 +225,14 @@ spec:
                 exit 1
               fi
 
+              midpoint_home="/opt/midpoint/var"
+              midpoint_uid="$(stat -c '%u' "${midpoint_home}" 2>/dev/null || echo 0)"
+              midpoint_gid="$(stat -c '%g' "${midpoint_home}" 2>/dev/null || echo 0)"
+
+              echo "Setting ownership of config.xml to ${midpoint_uid}:${midpoint_gid}"
+
               chmod 600 "${tmp_config}"
-              chown "$(id -u)":"$(id -g)" "${tmp_config}"
+              chown "${midpoint_uid}:${midpoint_gid}" "${tmp_config}"
               mv "${tmp_config}" "${config_target}"
 
               echo "Rendered config.xml with repository credentials"
