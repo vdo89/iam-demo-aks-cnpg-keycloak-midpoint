@@ -92,6 +92,7 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
 
 - Get the external IP of **ingress-nginx** (the workflow prints it; or: `kubectl -n ingress-nginx get svc ingress-nginx-controller`).
 - Open Keycloak: `http://kc.<EXTERNAL-IP>.nip.io` (admin user and password are in secret `rws-keycloak-initial-admin` created by operator)
+  - The Keycloak Operator exposes HTTP on service **`rws-keycloak-service`** (note the `-service` suffix). Use `kubectl -n iam get svc` to list the generated service names instead of querying `rws-keycloak` directly.
 - Open midPoint: `http://mp.<EXTERNAL-IP>.nip.io/midpoint`
   - Login: `administrator` / the `MIDPOINT_ADMIN_PASSWORD` you set
   - Check **Users**/**Roles**/**Orgs** seeded by the job
