@@ -46,26 +46,55 @@ spec:
               /opt/midpoint/bin/midpoint.sh init-native
 
               echo "Inspecting current repository schema state"
-              if /opt/midpoint/bin/ninja.sh -B info >/tmp/ninja.log 2>&1; then
+              info_log="/tmp/ninja-info.log"
+              if /opt/midpoint/bin/ninja.sh -B info >"${info_log}" 2>&1; then
                 ninja_status=0
               else
                 ninja_status=$?
               fi
 
-              if grep -q "ERROR" /tmp/ninja.log; then
+              echo "----- ninja info -----"
+              cat "${info_log}" || true
+              echo "----------------------"
+
+              create_needed=0
+              upgrade_needed=0
+
+              if grep -qiE 'NOT[ _-]*INITIALIZED|SCHEMA[[:space:]]*STATE[[:space:]]*:[[:space:]]*(EMPTY|FAILED|MISSING)|NO[[:space:]]*SCHEMA' "${info_log}"; then
+                create_needed=1
+              fi
+
+              if grep -qiE 'ERROR' "${info_log}" && grep -qiE 'SCHEMA|REPOSITORY' "${info_log}"; then
+                create_needed=1
+              fi
+
+              if grep -qiE 'UPGRADE[[:space:]]+(IS[[:space:]]+)?(REQUIRED|NEEDED|RECOMMENDED)' "${info_log}"; then
+                upgrade_needed=1
+              fi
+
+              if [ "${ninja_status}" -ne 0 ]; then
+                echo "ninja info command exited with status ${ninja_status}"
+                upgrade_needed=1
+              fi
+
+              if [ "${create_needed}" -eq 1 ]; then
                 echo "Schema not fully initialized; applying create scripts"
                 /opt/midpoint/bin/ninja.sh run-sql --create --mode REPOSITORY
                 /opt/midpoint/bin/ninja.sh run-sql --create --mode AUDIT
+                upgrade_needed=1
               else
-                if [ "${ninja_status}" -ne 0 ]; then
-                  echo "ninja info command failed without reporting schema errors"
-                  cat /tmp/ninja.log
-                  exit "${ninja_status}"
-                fi
                 echo "midPoint repository schema already initialized"
               fi
 
-              rm -f /tmp/ninja.log
+              if [ "${upgrade_needed}" -eq 1 ]; then
+                echo "Applying repository upgrade scripts (idempotent)"
+                /opt/midpoint/bin/ninja.sh run-sql --upgrade --mode REPOSITORY
+                /opt/midpoint/bin/ninja.sh run-sql --upgrade --mode AUDIT
+              else
+                echo "midPoint repository schema already at latest version"
+              fi
+
+              rm -f "${info_log}"
 
               echo "midPoint repository bootstrap complete"
           env:
