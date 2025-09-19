@@ -22,10 +22,10 @@ spec:
             - name: objs
               mountPath: /objects
           command:
-            - sh
-            - -lc
+            - /bin/sh
+            - -ec
             - |
-              set -euo pipefail
+              set -eu
               MP_URL="${MIDPOINT_URL:-http://midpoint:8080/midpoint}"
               echo "Using midPoint at: $MP_URL"
 
