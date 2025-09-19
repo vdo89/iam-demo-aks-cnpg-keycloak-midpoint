@@ -225,8 +225,18 @@ spec:
                 exit 1
               fi
 
+              target_dir="$(dirname "${config_target}")"
+              target_owner="$(stat -c '%u:%g' "${target_dir}" 2>/dev/null || true)"
+              config_owner_uid="${target_owner%%:*}"
+              config_owner_gid="${target_owner##*:}"
+
+              if [ -z "${config_owner_uid}" ] || [ -z "${config_owner_gid}" ]; then
+                config_owner_uid="$(id -u)"
+                config_owner_gid="$(id -g)"
+              fi
+
               chmod 600 "${tmp_config}"
-              chown "$(id -u)":"$(id -g)" "${tmp_config}"
+              chown "${config_owner_uid}:${config_owner_gid}" "${tmp_config}"
               mv "${tmp_config}" "${config_target}"
 
               echo "Rendered config.xml with repository credentials"
