@@ -226,23 +226,55 @@ spec:
               resolve_midpoint_owner() {
                 local candidate_uid
                 local candidate_gid
+                local sample_path
+
+                if [ -f "${config_target}" ]; then
+                  if candidate_uid="$(stat -c '%u' "${config_target}" 2>/dev/null)" && \
+                     candidate_gid="$(stat -c '%g' "${config_target}" 2>/dev/null)"; then
+                    if [ "${candidate_uid}" -ne 0 ] || [ "${candidate_gid}" -ne 0 ]; then
+                      midpoint_uid="${candidate_uid}"
+                      midpoint_gid="${candidate_gid}"
+                      echo "Reusing ownership ${midpoint_uid}:${midpoint_gid} from existing config.xml"
+                      return 0
+                    fi
+                  fi
+                fi
 
                 if candidate_uid="$(id -u midpoint 2>/dev/null)" && \
                    candidate_gid="$(id -g midpoint 2>/dev/null)"; then
                   midpoint_uid="${candidate_uid}"
                   midpoint_gid="${candidate_gid}"
+                  echo "Resolved midpoint user via passwd entry: ${midpoint_uid}:${midpoint_gid}"
                   return 0
                 fi
+
+                while IFS= read -r sample_path; do
+                  if [ -z "${sample_path}" ]; then
+                    continue
+                  fi
+
+                  if candidate_uid="$(stat -c '%u' "${sample_path}" 2>/dev/null)" && \
+                     candidate_gid="$(stat -c '%g' "${sample_path}" 2>/dev/null)"; then
+                    if [ "${candidate_uid}" -ne 0 ] || [ "${candidate_gid}" -ne 0 ]; then
+                      midpoint_uid="${candidate_uid}"
+                      midpoint_gid="${candidate_gid}"
+                      printf 'Derived midpoint owner %s:%s from %s\n' "${midpoint_uid}" "${midpoint_gid}" "${sample_path}"
+                      return 0
+                    fi
+                  fi
+                done < <(find "${midpoint_home}" -mindepth 1 -maxdepth 3 -print 2>/dev/null || true)
 
                 if candidate_uid="$(stat -c '%u' "${midpoint_home}" 2>/dev/null)" && \
                    candidate_gid="$(stat -c '%g' "${midpoint_home}" 2>/dev/null)"; then
                   midpoint_uid="${candidate_uid}"
                   midpoint_gid="${candidate_gid}"
+                  echo "Falling back to midpoint home ownership ${midpoint_uid}:${midpoint_gid}"
                   return 0
                 fi
 
                 midpoint_uid=0
                 midpoint_gid=0
+                echo "Falling back to root ownership for config.xml"
               }
 
               resolve_midpoint_owner
