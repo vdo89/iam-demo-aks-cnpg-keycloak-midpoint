@@ -335,6 +335,18 @@ spec:
               value: /var/run/secrets/midpoint-db-app/password
             - name: MP_NO_ENV_COMPAT
               value: "1"
+            - name: MP_UNSET_midpoint_repository_database
+              value: "1"
+            - name: MP_UNSET_midpoint_repository_jdbcUrl
+              value: "1"
+            - name: MP_UNSET_midpoint_repository_hibernateHbm2ddl
+              value: "1"
+            - name: MP_UNSET_midpoint_repository_initializationFailTimeout
+              value: "1"
+            - name: MP_UNSET_midpoint_repository_missingSchemaAction
+              value: "1"
+            - name: MP_UNSET_midpoint_repository_upgradeableSchemaAction
+              value: "1"
           volumeMounts:
             - name: midpoint-home
               mountPath: /opt/midpoint/var
@@ -359,6 +371,18 @@ spec:
               value: "768M"
             - name: MP_MEM_MAX
               value: "1536M"
+            - name: MP_UNSET_midpoint_repository_database
+              value: "1"
+            - name: MP_UNSET_midpoint_repository_jdbcUrl
+              value: "1"
+            - name: MP_UNSET_midpoint_repository_hibernateHbm2ddl
+              value: "1"
+            - name: MP_UNSET_midpoint_repository_initializationFailTimeout
+              value: "1"
+            - name: MP_UNSET_midpoint_repository_missingSchemaAction
+              value: "1"
+            - name: MP_UNSET_midpoint_repository_upgradeableSchemaAction
+              value: "1"
           volumeMounts:
             - name: midpoint-home
               mountPath: /opt/midpoint/var
