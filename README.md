@@ -128,6 +128,8 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
   - Repository connection settings are injected at runtime via the `MP_SET_midpoint_repository_*` environment variables in
     the deployment so the GitOps config can stay credential-free. Update both the manifest and GitHub secrets when changing
     the database hostname, username or password.
+  - An init container now runs `midpoint.sh init-native` and `ninja.sh run-sql` before the main pod starts so the PostgreSQL
+    schema is present even on fresh clusters. The commands are idempotent and skip creation when the schema already exists.
   - An init container now copies the default `/opt/midpoint/var` contents from the image into the writable volume used for
     `midpoint.home`. This preserves the bundled keystore and directory structure so the server can start cleanly even when the
     pod is rescheduled onto a fresh node.
