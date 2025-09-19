@@ -1871,6 +1871,15 @@ jobs:
           echo "Ingress-NGINX service:"
           kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide || true
           echo "Keycloak service:"
-          kubectl -n ${{ inputs.NAMESPACE_IAM }} get svc rws-keycloak -o wide || true
+          if keycloak_svc_output=$(kubectl -n ${{ inputs.NAMESPACE_IAM }} get svc rws-keycloak -o wide 2>&1); then
+            printf '%s\n' "${keycloak_svc_output}"
+          elif keycloak_svc_output=$(kubectl -n ${{ inputs.NAMESPACE_IAM }} get svc rws-keycloak-service -o wide 2>&1); then
+            echo "Service 'rws-keycloak' not found; showing 'rws-keycloak-service' instead."
+            printf '%s\n' "${keycloak_svc_output}"
+          else
+            printf '%s\n' "${keycloak_svc_output}"
+            echo "Service rws-keycloak/rws-keycloak-service not found; listing all services in namespace ${{ inputs.NAMESPACE_IAM }} for troubleshooting."
+            kubectl -n ${{ inputs.NAMESPACE_IAM }} get svc -o wide || true
+          fi
           echo "midPoint service:"
           kubectl -n ${{ inputs.NAMESPACE_IAM }} get svc midpoint -o wide || true
