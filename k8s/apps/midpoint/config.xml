@@ -6,10 +6,10 @@
     </webApplication>
     <repository>
       <type>native</type>
-      <!-- The deployment overrides these defaults via MP_SET_midpoint_repository_* env vars. -->
-      <jdbcUrl>jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/midpoint?sslmode=disable</jdbcUrl>
-      <jdbcUsername>midpoint</jdbcUsername>
-      <jdbcPassword>changeit</jdbcPassword>
+      <!-- Populated by the midpoint-db-init init container at runtime. -->
+      <jdbcUrl>__JDBC_URL__</jdbcUrl>
+      <jdbcUsername>__JDBC_USERNAME__</jdbcUsername>
+      <jdbcPassword>__JDBC_PASSWORD__</jdbcPassword>
     </repository>
     <audit>
       <auditService>
