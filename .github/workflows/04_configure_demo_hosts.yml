@@ -1,0 +1,170 @@
+name: 04 - Configure demo hosts (nip.io) & Ingresses
+
+on:
+  workflow_dispatch:
+    inputs:
+      RESOURCE_GROUP:
+        description: 'AKS Resource Group (from TF outputs)'
+        required: true
+        default: 'rwsdemo-rg'
+      AKS_NAME:
+        description: 'AKS cluster name (from TF outputs)'
+        required: true
+        default: 'rwsdemo-aks'
+      NAMESPACE_IAM:
+        description: 'Namespace for IAM stack (Keycloak + midPoint)'
+        required: true
+        default: 'iam'
+      KEYCLOAK_SERVICE_NAME:
+        description: 'Keycloak Service name (check kubectl -n <ns> get svc)'
+        required: true
+        default: 'rws-keycloak'
+      KEYCLOAK_SERVICE_PORT:
+        description: 'Keycloak Service port (8080 for httpEnabled=true)'
+        required: true
+        default: '8080'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get AKS credentials
+        uses: azure/aks-set-context@v4
+        with:
+          resource-group: ${{ inputs.RESOURCE_GROUP }}
+          cluster-name: ${{ inputs.AKS_NAME }}
+
+      - name: Resolve EXTERNAL_IP for ingress-nginx LoadBalancer
+        id: ip
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Waiting for external IP of ingress-nginx LoadBalancer..."
+          for i in {1..15}; do
+            EXTERNAL_IP=$(kubectl -n ingress-nginx get svc ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}' || true)
+            if [ -n "${EXTERNAL_IP:-}" ]; then break; fi
+            echo "Attempt $i: no IP yet, retrying in 10s..."
+            sleep 10
+          done
+          if [ -z "${EXTERNAL_IP:-}" ]; then
+            HNAME=$(kubectl -n ingress-nginx get svc ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || true)
+            if [ -n "${HNAME:-}" ]; then
+              if ! command -v dig >/dev/null 2>&1; then
+                sudo apt-get update >/dev/null 2>&1 && sudo apt-get install -y dnsutils >/dev/null 2>&1
+              fi
+              EXTERNAL_IP=$(dig +short "$HNAME" | tail -n1 || true)
+            fi
+          fi
+          if [ -z "${EXTERNAL_IP:-}" ]; then
+            echo "ERROR: Could not determine external IP/hostname for ingress-nginx-controller."
+            kubectl -n ingress-nginx get svc ingress-nginx-controller -o yaml || true
+            exit 1
+          fi
+          echo "EXTERNAL_IP=$EXTERNAL_IP" | tee -a $GITHUB_ENV
+          echo "KC_HOST=kc.${EXTERNAL_IP}.nip.io" | tee -a $GITHUB_ENV
+          echo "MP_HOST=mp.${EXTERNAL_IP}.nip.io" | tee -a $GITHUB_ENV
+          echo "keycloak_url=http://kc.${EXTERNAL_IP}.nip.io" >> $GITHUB_OUTPUT
+          echo "midpoint_url=http://mp.${EXTERNAL_IP}.nip.io/midpoint" >> $GITHUB_OUTPUT
+          echo "Resolved EXTERNAL_IP: $EXTERNAL_IP"
+          echo "Keycloak host: $KC_HOST"
+          echo "midPoint host: $MP_HOST"
+
+      - name: Patch/Create midPoint Ingress
+        env:
+          NAMESPACE: ${{ inputs.NAMESPACE_IAM }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if kubectl -n "$NAMESPACE" get ingress midpoint >/dev/null 2>&1; then
+            echo "Patching existing midPoint Ingress host -> ${MP_HOST}"
+            kubectl -n "$NAMESPACE" patch ingress midpoint --type=json               -p="[{'op':'replace','path':'/spec/rules/0/host','value':'${MP_HOST}'}]"
+          else
+            echo "Creating midPoint Ingress with host ${MP_HOST}"
+            cat <<EOF | kubectl -n "$NAMESPACE" apply -f -
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: midpoint
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "16m"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: ${MP_HOST}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: midpoint
+            port:
+              number: 8080
+EOF
+          fi
+          kubectl -n "$NAMESPACE" get ingress midpoint -o wide
+
+      - name: Create/Update Keycloak Ingress (public)
+        env:
+          NAMESPACE: ${{ inputs.NAMESPACE_IAM }}
+          SVC: ${{ inputs.KEYCLOAK_SERVICE_NAME }}
+          PORT: ${{ inputs.KEYCLOAK_SERVICE_PORT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Applying Keycloak public Ingress for host ${KC_HOST} -> ${SVC}:${PORT}"
+          cat <<EOF | kubectl -n "$NAMESPACE" apply -f -
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rws-keycloak-public
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "16m"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: ${KC_HOST}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: ${SVC}
+            port:
+              number: ${PORT}
+EOF
+          kubectl -n "$NAMESPACE" get ingress rws-keycloak-public -o wide
+
+      - name: Smoke-test endpoints
+        shell: bash
+        run: |
+          set +e
+          echo "Keycloak:  http://${KC_HOST}"
+          echo "midPoint:  http://${MP_HOST}/midpoint"
+          for i in {1..10}; do
+            echo "HTTP HEAD try $i ..."
+            (curl -sS -I --max-time 5 "http://${KC_HOST}" | head -n 1 &&              curl -sS -I --max-time 5 "http://${MP_HOST}/midpoint" | head -n 1) && break
+            sleep 5
+          done
+          true
+
+      - name: Summary
+        shell: bash
+        run: |
+          echo "✅ Done. Open these URLs in your browser:"
+          echo "🔗 Keycloak : http://${KC_HOST}"
+          echo "🔗 midPoint : http://${MP_HOST}/midpoint"
