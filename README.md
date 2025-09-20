@@ -129,6 +129,10 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     the upstream image, so letting the runtime build step execute avoids the crash loop without having to maintain a
     pre-built custom image.
   - Keycloak enables the CLI flag `health-enabled=true` so the readiness endpoints are exposed for the operator's probes.
+    The manifest pins Keycloak to **26.0.8** because 26.0.0 fails to start once build-time options such as `kc.db`
+    or `kc.health-enabled` diverge from what was baked into the optimized image, which is exactly the case for this
+    deployment. The regression was fixed upstream (Keycloak issue #33902) and shipping the patched image ensures the
+    StatefulSet does not get stuck in a CrashLoopBackOff when we reconcile the database and health settings.
     Keycloak 26 automatically rebuilds the optimized image when runtime options change, and the legacy `auto-build`
     configuration knob was removed upstream. Leaving the old `kc.auto-build=true` entry forces the operator to render the
     invalid `--kc.auto-build` flag which causes the pod to exit immediately, so the manifest purposely omits that option.
