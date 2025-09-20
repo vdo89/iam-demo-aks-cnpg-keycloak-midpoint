@@ -7,7 +7,9 @@ spec:
   image: quay.io/keycloak/keycloak:26.0
   instances: 1
   additionalOptions:
-    - name: kc.auto-build
+    - name: auto-build
+      value: "true"
+    - name: health-enabled
       value: "true"
   db:
     vendor: postgres

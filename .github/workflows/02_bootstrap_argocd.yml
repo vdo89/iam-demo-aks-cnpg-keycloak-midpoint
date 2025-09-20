@@ -1802,6 +1802,8 @@ jobs:
           diagnostics_dumped=0
           last_tracked_resource_summary=""
           last_ignored_resource_summary=""
+          ignored_resources_first_observed=""
+          ignored_diagnostics_dumped=0
           apps_namespace="${{ inputs.NAMESPACE_IAM }}"
           for attempt in $(seq 1 90); do
             app_json=""
@@ -1880,33 +1882,78 @@ jobs:
 
             if [ -n "${ignored_resources_summary}" ]; then
               if [ "${ignored_resources_summary}" != "${last_ignored_resource_summary}" ]; then
-                echo "Argo CD did not report health status for the following synced resources (treating them as healthy):"
+                echo "Argo CD has not reported health status for the following synced resources yet; continuing to wait for explicit health information:"
                 while IFS=$'\t' read -r ignored_kind ignored_identifier; do
                   [ -z "${ignored_kind}" ] && continue
                   echo "  - ${ignored_kind} ${ignored_identifier}"
                 done <<<"${ignored_resources_summary}"
                 last_ignored_resource_summary="${ignored_resources_summary}"
+                ignored_resources_first_observed="${attempt}"
+                ignored_diagnostics_dumped=0
+              fi
+
+              if [ -z "${ignored_resources_first_observed}" ]; then
+                ignored_resources_first_observed="${attempt}"
+              fi
+
+              observations=$((attempt - ignored_resources_first_observed + 1))
+              if [ "${ignored_diagnostics_dumped}" -eq 0 ] && [ "${observations}" -ge 6 ]; then
+                echo "Collecting current state for resources still missing Argo CD health information:"
+                while IFS=$'\t' read -r ignored_kind ignored_identifier; do
+                  [ -z "${ignored_kind}" ] && continue
+
+                  ignored_namespace=""
+                  ignored_name="${ignored_identifier}"
+                  if [[ "${ignored_identifier}" == */* ]]; then
+                    ignored_namespace="${ignored_identifier%%/*}"
+                    ignored_name="${ignored_identifier##*/}"
+                  fi
+
+                  case "${ignored_kind}" in
+                    Keycloak)
+                      if [ -n "${ignored_namespace}" ]; then
+                        echo "---- kubectl get keycloaks.k8s.keycloak.org ${ignored_namespace}/${ignored_name} -o yaml ----"
+                        kubectl -n "${ignored_namespace}" get keycloaks.k8s.keycloak.org "${ignored_name}" -o yaml || true
+                      fi
+                      ;;
+                    KeycloakRealmImport)
+                      if [ -n "${ignored_namespace}" ]; then
+                        echo "---- kubectl get keycloakrealmimports.k8s.keycloak.org ${ignored_namespace}/${ignored_name} -o yaml ----"
+                        kubectl -n "${ignored_namespace}" get keycloakrealmimports.k8s.keycloak.org "${ignored_name}" -o yaml || true
+                      fi
+                      ;;
+                    Service|Ingress|ConfigMap|Secret)
+                      if [ -n "${ignored_namespace}" ]; then
+                        echo "---- kubectl get ${ignored_kind} ${ignored_namespace}/${ignored_name} -o yaml ----"
+                        kubectl -n "${ignored_namespace}" get "${ignored_kind,,}" "${ignored_name}" -o yaml || true
+                      else
+                        echo "---- kubectl get ${ignored_kind} ${ignored_name} -o yaml ----"
+                        kubectl get "${ignored_kind,,}" "${ignored_name}" -o yaml || true
+                      fi
+                      ;;
+                    *)
+                      if [ -n "${ignored_namespace}" ]; then
+                        echo "---- kubectl get ${ignored_kind} ${ignored_namespace}/${ignored_name} -o yaml ----"
+                        kubectl -n "${ignored_namespace}" get "${ignored_kind,,}" "${ignored_name}" -o yaml || true
+                      else
+                        echo "---- kubectl get ${ignored_kind} ${ignored_name} -o yaml ----"
+                        kubectl get "${ignored_kind,,}" "${ignored_name}" -o yaml || true
+                      fi
+                      ;;
+                  esac
+                done <<<"${ignored_resources_summary}"
+                ignored_diagnostics_dumped=1
               fi
             else
               last_ignored_resource_summary=""
+              ignored_resources_first_observed=""
+              ignored_diagnostics_dumped=0
             fi
 
-            if [ "${sync_status}" = "Synced" ]; then
-              if [ "${health_status}" = "Healthy" ]; then
-                echo "apps application is synced and healthy"
-                kubectl -n argocd get application apps
-                exit 0
-              fi
-              if [ "${health_status}" = "Unknown" ] && [ "${operation_phase}" = "Succeeded" ]; then
-                echo "apps application is synced; health reported as Unknown but last operation succeeded. Proceeding."
-                kubectl -n argocd get application apps
-                exit 0
-              fi
-              if [ "${operation_phase}" = "Succeeded" ] && [ -z "${tracked_resources_summary}" ]; then
-                echo "All tracked resources report Healthy but Argo CD application health is ${health_status:-<unknown>}. Proceeding."
-                kubectl -n argocd get application apps
-                exit 0
-              fi
+            if [ "${sync_status}" = "Synced" ] && [ "${health_status}" = "Healthy" ]; then
+              echo "apps application is synced and healthy"
+              kubectl -n argocd get application apps
+              exit 0
             fi
 
             if [ "${operation_phase}" = "Failed" ] && [ "${diagnostics_dumped}" -eq 0 ]; then
