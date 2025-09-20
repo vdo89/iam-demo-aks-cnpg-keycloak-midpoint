@@ -12,13 +12,20 @@ spec:
       value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/keycloak?sslmode=disable
     - name: KC_HEALTH_ENABLED
       value: "true"
+    # Pin a safe default features list so the operator stops appending the
+    # removed "health" toggle. The 26.0.8 operator still injects its defaults
+    # whenever the enabled list is empty, which makes the pod exit with
+    # "health is an unrecognized feature".
+    - name: KC_FEATURES
+      value: token-exchange
   # Disable the operator's default feature toggles so it does not inject the
   # legacy "health" feature into KC_FEATURES. Keycloak 26 removed that flag
   # and will crash if we request it, so we enable the health endpoints via
   # KC_HEALTH_ENABLED instead. The operator still adds "health" when the
   # enabled list is empty, so explicitly disable it to keep KC_FEATURES blank.
   features:
-    enabled: []
+    enabled:
+      - token-exchange
     disabled:
       - health
   db:
