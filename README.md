@@ -136,7 +136,8 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     `spec.features.enabled` to a harmless feature (`token-exchange`) to force the operator to stop requesting the
     removed flag. If you upgrade the image again and the health endpoints disappear, review the upstream release notes
     for the replacement environment variable or CLI flag before adjusting the feature list.
-    The manifest pins Keycloak to **26.0.8** because 26.0.0 fails to start once build-time options such as `kc.db`
+
+  - The manifest pins Keycloak to **26.0.8** because 26.0.0 fails to start once build-time options such as `kc.db`
     or `kc.health-enabled` diverge from what was baked into the optimized image, which is exactly the case for this
     deployment. The regression was fixed upstream (Keycloak issue #33902) and shipping the patched image ensures the
     StatefulSet does not get stuck in a CrashLoopBackOff when we reconcile the database and health settings.
