@@ -6,6 +6,9 @@ metadata:
 spec:
   image: quay.io/keycloak/keycloak:26.0
   instances: 1
+  additionalOptions:
+    - name: kc.auto-build
+      value: "true"
   db:
     vendor: postgres
     host: iam-db-rw.iam.svc.cluster.local
