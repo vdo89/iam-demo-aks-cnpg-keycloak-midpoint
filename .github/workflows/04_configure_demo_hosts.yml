@@ -94,26 +94,26 @@ jobs:
           else
             echo "Creating midPoint Ingress with host ${MP_HOST}"
             cat <<EOF | kubectl -n "$NAMESPACE" apply -f -
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: midpoint
-  annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: "16m"
-spec:
-  ingressClassName: nginx
-  rules:
-  - host: ${MP_HOST}
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
             name: midpoint
-            port:
-              number: 8080
-EOF
+            annotations:
+              nginx.ingress.kubernetes.io/proxy-body-size: "16m"
+          spec:
+            ingressClassName: nginx
+            rules:
+            - host: ${MP_HOST}
+              http:
+                paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: midpoint
+                      port:
+                        number: 8080
+          EOF
           fi
           kubectl -n "$NAMESPACE" get ingress midpoint -o wide
 
@@ -127,26 +127,26 @@ EOF
           set -euo pipefail
           echo "Applying Keycloak public Ingress for host ${KC_HOST} -> ${SVC}:${PORT}"
           cat <<EOF | kubectl -n "$NAMESPACE" apply -f -
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: rws-keycloak-public
-  annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: "16m"
-spec:
-  ingressClassName: nginx
-  rules:
-  - host: ${KC_HOST}
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: ${SVC}
-            port:
-              number: ${PORT}
-EOF
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: rws-keycloak-public
+            annotations:
+              nginx.ingress.kubernetes.io/proxy-body-size: "16m"
+          spec:
+            ingressClassName: nginx
+            rules:
+            - host: ${KC_HOST}
+              http:
+                paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: ${SVC}
+                      port:
+                        number: ${PORT}
+          EOF
           kubectl -n "$NAMESPACE" get ingress rws-keycloak-public -o wide
 
       - name: Smoke-test endpoints
