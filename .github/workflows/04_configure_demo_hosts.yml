@@ -111,6 +111,7 @@ jobs:
             exit 1
           fi
           echo "NODE_RESOURCE_GROUP=${NODE_RG}" | tee -a "$GITHUB_ENV"
+          export NODE_RESOURCE_GROUP="${NODE_RG}"
 
           python3 <<'PY'
           import json
