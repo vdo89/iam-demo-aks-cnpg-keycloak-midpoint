@@ -123,11 +123,10 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     clears `spec.realm`, so Argo CD ignores differences on that path to avoid endless resyncs. When you change the realm
     payload, bump `metadata.annotations.iam.demo/realm-config-version` so Argo CD reapplies the manifest and Keycloak
     performs a fresh import.
-  - Keycloak now sets the configuration property `kc.auto-build=true` (so the operator keeps the persisted build-time
-    configuration in sync with the runtime options) and the CLI flag `health-enabled=true` (so the readiness endpoints are
-    exposed for the operator's probes). Without the auto-build property the pod can crash-loop after password rotations or
-    image upgrades because the runtime options would not match the persisted build-time configuration, and without the
-    health flag the operator's probes would never succeed.
+  - Keycloak enables the CLI flag `health-enabled=true` so the readiness endpoints are exposed for the operator's probes.
+    Keycloak 26 automatically rebuilds the optimized image when runtime options change, and the legacy `auto-build`
+    configuration knob was removed upstream. Leaving the old `kc.auto-build=true` entry forces the operator to render the
+    invalid `--kc.auto-build` flag which causes the pod to exit immediately, so the manifest purposely omits that option.
   - The PostgreSQL connection now uses an explicit JDBC URL with `sslmode=disable` so Keycloak skips TLS validation against
     CloudNativePG's self-signed server certificate. Without this override the startup probe repeatedly fails with
     `connection refused`, the pod restarts, and the application never reaches Healthy.
