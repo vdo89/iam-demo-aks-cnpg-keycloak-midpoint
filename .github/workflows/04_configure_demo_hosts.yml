@@ -90,7 +90,8 @@ jobs:
           set -euo pipefail
           if kubectl -n "$NAMESPACE" get ingress midpoint >/dev/null 2>&1; then
             echo "Patching existing midPoint Ingress host -> ${MP_HOST}"
-            kubectl -n "$NAMESPACE" patch ingress midpoint --type=json               -p="[{'op':'replace','path':'/spec/rules/0/host','value':'${MP_HOST}'}]"
+            PATCH_PAYLOAD=$(printf '[{"op":"replace","path":"/spec/rules/0/host","value":"%s"}]' "${MP_HOST}")
+            kubectl -n "$NAMESPACE" patch ingress midpoint --type=json -p "${PATCH_PAYLOAD}"
           else
             echo "Creating midPoint Ingress with host ${MP_HOST}"
             cat <<EOF | kubectl -n "$NAMESPACE" apply -f -
