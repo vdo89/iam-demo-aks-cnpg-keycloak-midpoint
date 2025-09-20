@@ -18,16 +18,15 @@ spec:
     # "health is an unrecognized feature".
     - name: KC_FEATURES
       value: token-exchange
-  # Disable the operator's default feature toggles so it does not inject the
-  # legacy "health" feature into KC_FEATURES. Keycloak 26 removed that flag
+  # Pin the operator's feature list to a known good entry so it does not inject
+  # the legacy "health" feature into KC_FEATURES. Keycloak 26 removed that flag
   # and will crash if we request it, so we enable the health endpoints via
   # KC_HEALTH_ENABLED instead. The operator still adds "health" when the
-  # enabled list is empty, so explicitly disable it to keep KC_FEATURES blank.
+  # enabled list is empty, so explicitly enable a harmless feature to keep
+  # KC_FEATURES stable.
   features:
     enabled:
       - token-exchange
-    disabled:
-      - health
   db:
     vendor: postgres
     url: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/keycloak?sslmode=disable
