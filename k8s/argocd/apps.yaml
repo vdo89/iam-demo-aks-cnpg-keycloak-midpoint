@@ -12,6 +12,18 @@ spec:
     repoURL: https://github.com/${REPO_OWNER}/${REPO_NAME}
     targetRevision: HEAD
     path: k8s/apps
+    kustomize:
+      patchesJson6902:
+        - target:
+            group: networking.k8s.io
+            version: v1
+            kind: Ingress
+            name: midpoint
+            namespace: iam
+          patch: |-
+            - op: replace
+              path: /spec/rules/0/host
+              value: mp.127.0.0.1.nip.io
   ignoreDifferences:
     - group: k8s.keycloak.org
       kind: KeycloakRealmImport

@@ -84,25 +84,84 @@ jobs:
           echo "Keycloak host: $KC_HOST"
           echo "midPoint host: $MP_HOST"
 
-      - name: Patch/Create midPoint Ingress
-        env:
-          NAMESPACE: ${{ inputs.NAMESPACE_IAM }}
+      - name: Verify nip.io hostnames resolve to EXTERNAL_IP
         shell: bash
         run: |
           set -euo pipefail
-          if kubectl -n "$NAMESPACE" get ingress midpoint >/dev/null 2>&1; then
-            echo "Reconciling existing midPoint Ingress host -> ${MP_HOST}"
-          else
-            echo "Creating midPoint Ingress with host ${MP_HOST}"
+          if ! command -v dig >/dev/null 2>&1; then
+            sudo apt-get update >/dev/null 2>&1
+            sudo apt-get install -y dnsutils >/dev/null 2>&1
           fi
-          kubectl -n "$NAMESPACE" create ingress midpoint \
-            --class=nginx \
-            --rule="${MP_HOST}/=midpoint:8080" \
-            --annotation=nginx.ingress.kubernetes.io/proxy-body-size=16m \
-            --dry-run=client \
-            -o yaml \
-            | kubectl apply -f -
-          kubectl -n "$NAMESPACE" get ingress midpoint -o wide
+          for host in "$KC_HOST" "$MP_HOST"; do
+            echo "Checking DNS for $host ..."
+            RESOLVED=$(dig +short "$host" | tail -n1 || true)
+            if [ "${RESOLVED}" != "${EXTERNAL_IP}" ]; then
+              echo "ERROR: $host resolved to '${RESOLVED:-<empty>}' but expected ${EXTERNAL_IP}."
+              dig "$host" || true
+              exit 1
+            fi
+          done
+          echo "nip.io DNS looks good for ${EXTERNAL_IP}."
+
+      - name: Update midPoint ingress host via Argo CD
+        env:
+          MP_HOST: ${{ env.MP_HOST }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Updating Argo CD application patch for midPoint ingress host -> ${MP_HOST}"
+          PATCH=$(cat <<EOF
+- op: replace
+  path: /spec/rules/0/host
+  value: ${MP_HOST}
+EOF
+)
+          JSON_PATCH=$(jq -n --arg patch "$PATCH" '{
+            "spec": {
+              "source": {
+                "kustomize": {
+                  "patchesJson6902": [
+                    {
+                      "target": {
+                        "group": "networking.k8s.io",
+                        "version": "v1",
+                        "kind": "Ingress",
+                        "name": "midpoint",
+                        "namespace": "iam"
+                      },
+                      "patch": $patch
+                    }
+                  ]
+                }
+              }
+            }
+          }')
+          kubectl -n argocd patch application apps --type merge --patch "$JSON_PATCH"
+          echo "Current Argo CD patch:"
+          kubectl -n argocd get application apps -o json | jq -r '.spec.source.kustomize.patchesJson6902[0].patch'
+
+      - name: Wait for Argo CD to apply midPoint ingress host
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Waiting for Argo CD application 'apps' to become Synced & Healthy after host update..."
+          sync=""
+          health=""
+          for i in {1..30}; do
+            sync=$(kubectl -n argocd get application apps -o jsonpath='{.status.sync.status}' || true)
+            health=$(kubectl -n argocd get application apps -o jsonpath='{.status.health.status}' || true)
+            echo "Attempt $i: sync=${sync:-<unknown>} health=${health:-<unknown>}"
+            if [ "$sync" = "Synced" ] && [ "$health" = "Healthy" ]; then
+              break
+            fi
+            sleep 10
+          done
+          if [ "$sync" != "Synced" ] || [ "$health" != "Healthy" ]; then
+            echo "ERROR: Argo CD application did not reconcile successfully."
+            kubectl -n argocd get application apps -o yaml || true
+            exit 1
+          fi
+          echo "Argo CD application apps is Synced & Healthy."
 
       - name: Create/Update Keycloak Ingress (public)
         env:
@@ -122,18 +181,55 @@ jobs:
             | kubectl apply -f -
           kubectl -n "$NAMESPACE" get ingress rws-keycloak-public -o wide
 
-      - name: Smoke-test endpoints
+      - name: Verify ingress hosts
+        env:
+          NAMESPACE: ${{ inputs.NAMESPACE_IAM }}
         shell: bash
         run: |
-          set +e
+          set -euo pipefail
+          MIDPOINT_HOST=$(kubectl -n "$NAMESPACE" get ingress midpoint -o jsonpath='{.spec.rules[0].host}' || true)
+          KEYCLOAK_HOST=$(kubectl -n "$NAMESPACE" get ingress rws-keycloak-public -o jsonpath='{.spec.rules[0].host}' || true)
+          echo "midPoint ingress host: ${MIDPOINT_HOST:-<missing>}"
+          echo "Keycloak ingress host: ${KEYCLOAK_HOST:-<missing>}"
+          if [ "${MIDPOINT_HOST:-}" != "$MP_HOST" ]; then
+            echo "ERROR: midPoint ingress host mismatch (expected $MP_HOST)."
+            kubectl -n "$NAMESPACE" get ingress midpoint -o yaml || true
+            exit 1
+          fi
+          if [ "${KEYCLOAK_HOST:-}" != "$KC_HOST" ]; then
+            echo "ERROR: Keycloak ingress host mismatch (expected $KC_HOST)."
+            kubectl -n "$NAMESPACE" get ingress rws-keycloak-public -o yaml || true
+            exit 1
+          fi
+          echo "Ingress hosts match expected nip.io values."
+
+      - name: Smoke-test endpoints
+        env:
+          NAMESPACE: ${{ inputs.NAMESPACE_IAM }}
+        shell: bash
+        run: |
+          set -euo pipefail
           echo "Keycloak:  http://${KC_HOST}"
           echo "midPoint:  http://${MP_HOST}/midpoint"
+          success=false
           for i in {1..10}; do
             echo "HTTP HEAD try $i ..."
-            (curl -sS -I --max-time 5 "http://${KC_HOST}" | head -n 1 &&              curl -sS -I --max-time 5 "http://${MP_HOST}/midpoint" | head -n 1) && break
+            KC_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "http://${KC_HOST}" || echo "000")
+            MP_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "http://${MP_HOST}/midpoint" || echo "000")
+            echo "Keycloak status: ${KC_STATUS}, midPoint status: ${MP_STATUS}"
+            if [[ "${KC_STATUS}" =~ ^(200|301|302|401|403)$ ]] && [[ "${MP_STATUS}" =~ ^(200|301|302|401|403)$ ]]; then
+              success=true
+              break
+            fi
             sleep 5
           done
-          true
+          if [ "$success" = false ]; then
+            echo "ERROR: Endpoints are not reachable after multiple attempts."
+            kubectl -n "$NAMESPACE" get ingress midpoint -o wide || true
+            kubectl -n "$NAMESPACE" get ingress rws-keycloak-public -o wide || true
+            exit 1
+          fi
+          echo "Endpoints returned healthy HTTP status codes."
 
       - name: Summary
         shell: bash
