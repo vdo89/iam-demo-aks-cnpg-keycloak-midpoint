@@ -1571,6 +1571,62 @@ jobs:
             fi
           done
 
+      - name: Grant Keycloak operator access to IAM namespace
+        shell: bash
+        env:
+          IAM_NAMESPACE: ${{ inputs.NAMESPACE_IAM }}
+        run: |
+          set -euo pipefail
+
+          target_ns="${IAM_NAMESPACE}"
+          if [ -z "${target_ns}" ]; then
+            echo "IAM_NAMESPACE input must not be empty"
+            exit 1
+          fi
+
+          operator_namespace=""
+          for candidate in keycloak keycloak-system default; do
+            if kubectl -n "${candidate}" get deployment keycloak-operator >/dev/null 2>&1; then
+              operator_namespace="${candidate}"
+              break
+            fi
+          done
+
+          if [ -z "${operator_namespace}" ]; then
+            echo "Unable to determine the namespace where keycloak-operator is running"
+            kubectl get deployments -A || true
+            exit 1
+          fi
+
+          if [ "${target_ns}" = "${operator_namespace}" ]; then
+            echo "Keycloak operator already runs in namespace ${target_ns}; no cross-namespace RBAC changes required."
+          else
+            operator_service_account="keycloak-operator"
+            echo "Ensuring service account ${operator_namespace}/${operator_service_account} can manage Keycloak resources in namespace ${target_ns}"
+
+            ensure_cluster_role_binding() {
+              local binding_name="$1"
+              local cluster_role="$2"
+
+              if ! kubectl get clusterrole "${cluster_role}" >/dev/null 2>&1; then
+                echo "ClusterRole ${cluster_role} not found; cannot create RoleBinding ${binding_name}"
+                return 1
+              fi
+
+              echo "Applying RoleBinding ${binding_name} -> ClusterRole ${cluster_role} in namespace ${target_ns}"
+              kubectl -n "${target_ns}" create rolebinding "${binding_name}" \
+                --clusterrole="${cluster_role}" \
+                --serviceaccount="${operator_namespace}:${operator_service_account}" \
+                --dry-run=client -o yaml | kubectl apply -f -
+            }
+
+            ensure_cluster_role_binding "keycloak-operator-controller-${target_ns}" "keycloakcontroller-cluster-role"
+            ensure_cluster_role_binding "keycloak-operator-realm-${target_ns}" "keycloakrealmimportcontroller-cluster-role"
+            ensure_cluster_role_binding "keycloak-operator-view-${target_ns}" "view"
+
+            echo "Confirmed Keycloak operator RBAC for namespace ${target_ns}"
+          fi
+
       - name: Configure Keycloak operator watch namespaces
         shell: bash
         env:
