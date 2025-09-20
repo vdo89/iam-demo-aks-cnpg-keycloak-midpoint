@@ -17,7 +17,11 @@ spec:
   # and will crash if we request it, so we enable the health endpoints via
   # KC_HEALTH_ENABLED instead.
   features:
-    enabled: []
+    # The operator still injects the deprecated "health" feature when no explicit
+    # list is provided. Keycloak 26 removed that toggle, so selecting any valid
+    # feature forces the operator to stop requesting "health".
+    enabled:
+      - token-exchange
   db:
     vendor: postgres
     url: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/keycloak?sslmode=disable
