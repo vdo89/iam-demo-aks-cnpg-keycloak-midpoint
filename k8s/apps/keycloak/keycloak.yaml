@@ -6,6 +6,7 @@ metadata:
 spec:
   image: quay.io/keycloak/keycloak:26.0
   instances: 1
+  startOptimized: false
   env:
     - name: KC_DB_URL
       value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/keycloak?sslmode=disable

@@ -123,6 +123,11 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     clears `spec.realm`, so Argo CD ignores differences on that path to avoid endless resyncs. When you change the realm
     payload, bump `metadata.annotations.iam.demo/realm-config-version` so Argo CD reapplies the manifest and Keycloak
     performs a fresh import.
+  - `startOptimized` is explicitly disabled so the container re-runs `kc.sh build` with the database and health check
+    settings every time the pod starts. Keycloak 26 exits early with `The following build time options have values that
+    differ...` when the optimized image still carries the default `kc.db=dev-file`/`kc.health-enabled=false` values from
+    the upstream image, so letting the runtime build step execute avoids the crash loop without having to maintain a
+    pre-built custom image.
   - Keycloak enables the CLI flag `health-enabled=true` so the readiness endpoints are exposed for the operator's probes.
     Keycloak 26 automatically rebuilds the optimized image when runtime options change, and the legacy `auto-build`
     configuration knob was removed upstream. Leaving the old `kc.auto-build=true` entry forces the operator to render the
