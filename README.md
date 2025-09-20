@@ -129,15 +129,15 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     the upstream image, so letting the runtime build step execute avoids the crash loop without having to maintain a
     pre-built custom image.
   - Keycloak enables the CLI flag `health-enabled=true` so the readiness endpoints are exposed for the operator's probes.
-    Keycloak 26.0.8 removed the legacy `health` feature toggle, so the manifest now sets `KC_HEALTH_ENABLED=true`
-    directly instead of relying on `spec.features.enabled`. Leaving the old flag in place makes the container exit with
-    `health is an unrecognized feature`, which surfaces as a CrashLoopBackOff in Argo CD. The current Keycloak Operator
-    release still injects `health` into `KC_FEATURES` whenever the list is empty, so the manifest pins
-    `spec.features.enabled` (and the raw `KC_FEATURES` environment variable) to a harmless feature (`token-exchange`)
-    to force the operator to stop requesting the removed flag. Setting `spec.features.disabled` to `health` still makes
-    the operator render the removed flag, so the disabled list stays empty and the manifest relies solely on the explicit
-    enabled entry. If you upgrade the image again and the health endpoints disappear, review the upstream release notes
-    for the replacement environment variable or CLI flag before adjusting the feature list.
+    Keycloak 26.0.8 removed the legacy `health` feature toggle, so the manifest now wires the option through
+    `spec.additionalOptions` instead of relying on environment variables or the operator's default feature set.
+    Leaving the old flag in place makes the container exit with `health is an unrecognized feature`, which surfaces as
+    a CrashLoopBackOff in Argo CD. The current Keycloak Operator release still injects `health` whenever the feature list
+    is empty, so the manifest pins `spec.features.enabled` and the explicit `features` additional option to a harmless
+    entry (`token-exchange`) to force the operator to stop requesting the removed flag. Setting `spec.features.disabled`
+    to `health` still makes the operator render the removed toggle, so the disabled list stays empty and the manifest
+    relies solely on the explicit enabled entry. If you upgrade the image again and the health endpoints disappear,
+    review the upstream release notes for the replacement configuration knob before adjusting the feature list.
 
   - The manifest pins Keycloak to **26.0.8** because 26.0.0 fails to start once build-time options such as `kc.db`
     or `kc.health-enabled` diverge from what was baked into the optimized image, which is exactly the case for this
@@ -147,10 +147,10 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     configuration knob was removed upstream. Leaving the old `kc.auto-build=true` entry forces the operator to render the
     invalid `--kc.auto-build` flag which causes the pod to exit immediately, so the manifest purposely omits that option.
   - The PostgreSQL connection now uses an explicit JDBC URL with `sslmode=disable` so Keycloak skips TLS validation against
-    CloudNativePG's self-signed server certificate. The value is injected via `KC_DB_URL` in addition to the CRD field so the
-    exact JDBC string (including the query parameters) always reaches the container even if the operator rewrites the
-    database options. Without this override the startup probe repeatedly fails with `connection refused`, the pod restarts,
-    and the application never reaches Healthy.
+    CloudNativePG's self-signed server certificate. The value is expressed both in the CRD's database section and via
+    `spec.additionalOptions` to guarantee the exact JDBC string (including the query parameters) always reaches the
+    container even if the operator rewrites the database options. Without this override the startup probe repeatedly fails
+    with `connection refused`, the pod restarts, and the application never reaches Healthy.
 
 - **midPoint config**: `k8s/apps/midpoint/deployment.yaml` + `k8s/apps/midpoint/config.xml`
   - The deployment constrains the JVM heap (`MP_MEM_INIT=768M`, `MP_MEM_MAX=1536M`) to keep resource usage predictable.
