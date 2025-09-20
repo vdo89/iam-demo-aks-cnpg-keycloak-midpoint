@@ -221,15 +221,24 @@ jobs:
           lb = json.loads(lb_raw)
           rules = lb.get("loadBalancingRules") or []
           target_backend_names = []
-          
+          target_rule_names = []
+          rule_to_backend = {}
+
           frontend_suffix = f"/frontendipconfigurations/{frontend_name}".lower()
-          
+
           for rule in rules:
               frontend_id = (rule.get("frontendIPConfiguration") or {}).get("id", "")
               backend_id = (rule.get("backendAddressPool") or {}).get("id")
               if frontend_id.lower().endswith(frontend_suffix) and backend_id:
-                  target_backend_names.append(backend_id.split('/')[-1])
-          
+                  backend_name = backend_id.split('/')[-1]
+                  if backend_name:
+                      target_backend_names.append(backend_name)
+                  rule_name = rule.get("name")
+                  if rule_name:
+                      target_rule_names.append(rule_name)
+                      if backend_name:
+                          rule_to_backend.setdefault(rule_name, backend_name)
+
           if not target_backend_names:
               # Fallback to all pools that currently reference any backend configs.
               for pool in lb.get("backendAddressPools") or []:
@@ -237,20 +246,45 @@ jobs:
                       name = pool.get("name")
                       if name:
                           target_backend_names.append(name)
-          
+
           target_backend_names = sorted(set(target_backend_names))
-          
+
+          if target_backend_names:
+              backend_name_set = set(target_backend_names)
+              for rule in rules:
+                  backend_id = (rule.get("backendAddressPool") or {}).get("id")
+                  if not backend_id:
+                      continue
+                  backend_name = backend_id.split('/')[-1]
+                  if not backend_name or backend_name not in backend_name_set:
+                      continue
+                  rule_name = rule.get("name")
+                  if rule_name:
+                      target_rule_names.append(rule_name)
+                      if backend_name:
+                          rule_to_backend.setdefault(rule_name, backend_name)
+
+          target_rule_names = sorted(set(target_rule_names))
+
           if not target_backend_names:
               print("Unable to identify backend pools associated with the ingress frontend", file=sys.stderr)
               sys.exit(1)
-          
+
+          if not target_rule_names:
+              print("Unable to identify load balancing rules associated with the ingress frontend", file=sys.stderr)
+              sys.exit(1)
+
           if github_env:
               with open(github_env, "a", encoding="utf-8") as env_file:
                   env_file.write(f"LB_NAME={lb_name}\n")
                   env_file.write(f"LB_FRONTEND_NAME={frontend_name}\n")
                   env_file.write("LB_TARGET_POOLS=" + " ".join(target_backend_names) + "\n")
-          
+                  env_file.write("LB_TARGET_RULES=" + " ".join(target_rule_names) + "\n")
+                  if rule_to_backend:
+                      env_file.write("LB_RULE_POOL_MAP=" + json.dumps(rule_to_backend, sort_keys=True) + "\n")
+
           print("Target backend pools:", ", ".join(target_backend_names))
+          print("Target load balancing rules:", ", ".join(target_rule_names))
           
           summary = []
           for pool in lb.get("backendAddressPools") or []:
@@ -271,7 +305,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -z "${NODE_RESOURCE_GROUP:-}" ] || [ -z "${LB_NAME:-}" ] || [ -z "${LB_TARGET_POOLS:-}" ]; then
+          if [ -z "${NODE_RESOURCE_GROUP:-}" ] || [ -z "${LB_NAME:-}" ] || [ -z "${LB_TARGET_POOLS:-}" ] || [ -z "${LB_TARGET_RULES:-}" ]; then
             echo "Missing load balancer context; ensure previous step succeeded." >&2
             exit 1
           fi
@@ -282,80 +316,174 @@ jobs:
           import subprocess
           import sys
           import time
-          
+
           node_rg = os.environ.get("NODE_RESOURCE_GROUP", "").strip()
           lb_name = os.environ.get("LB_NAME", "").strip()
           pools = os.environ.get("LB_TARGET_POOLS", "").split()
+          rules = os.environ.get("LB_TARGET_RULES", "").split()
           external_ip = os.environ.get("EXTERNAL_IP", "").strip()
-          
-          if not node_rg or not lb_name or not pools:
+          rule_pool_map_raw = os.environ.get("LB_RULE_POOL_MAP", "").strip()
+
+          if not node_rg or not lb_name or not pools or not rules:
               print("Load balancer context is incomplete", file=sys.stderr)
               sys.exit(1)
-          
+
+          rule_pool_map = {}
+          if rule_pool_map_raw:
+              try:
+                  rule_pool_map = json.loads(rule_pool_map_raw)
+              except json.JSONDecodeError:
+                  print("Warning: unable to parse LB_RULE_POOL_MAP; continuing without pool map", file=sys.stderr)
+
+          subscription = os.environ.get("AZURE_SUBSCRIPTION_ID", "").strip()
+          if not subscription:
+              try:
+                  subscription = subprocess.check_output([
+                      "az",
+                      "account",
+                      "show",
+                      "--query",
+                      "id",
+                      "-o",
+                      "tsv",
+                  ], text=True).strip()
+              except subprocess.CalledProcessError as exc:
+                  print(f"Failed to determine Azure subscription ID: {exc}", file=sys.stderr)
+                  stderr = getattr(exc, "stderr", None)
+                  stdout = getattr(exc, "output", None) or getattr(exc, "stdout", None)
+                  if stderr:
+                      print(stderr)
+                  elif stdout:
+                      print(stdout)
+                  sys.exit(1)
+
+          if not subscription:
+              print("Azure subscription ID is unavailable", file=sys.stderr)
+              sys.exit(1)
+
+          api_version = "2024-05-01"
+
+          def build_rule_label(rule: str) -> str:
+              pool_name = rule_pool_map.get(rule)
+              if pool_name:
+                  return f"{rule} (pool {pool_name})"
+              return rule
+
+          def extract_nic_label(resource_id: str) -> str:
+              if not resource_id:
+                  return ""
+              parts = [segment for segment in resource_id.split('/') if segment]
+              nic_name = ""
+              ipconfig_name = ""
+              try:
+                  nic_index = parts.index("networkInterfaces")
+                  nic_name = parts[nic_index + 1]
+              except (ValueError, IndexError):
+                  nic_name = ""
+              try:
+                  ipconfig_index = parts.index("ipConfigurations")
+                  ipconfig_name = parts[ipconfig_index + 1]
+              except (ValueError, IndexError):
+                  ipconfig_name = ""
+              if nic_name and ipconfig_name:
+                  return f"{nic_name}/{ipconfig_name}"
+              return nic_name or ipconfig_name
+
+          def query_rule_health(rule: str):
+              url = (
+                  f"https://management.azure.com/subscriptions/{subscription}/"
+                  f"resourceGroups/{node_rg}/providers/Microsoft.Network/loadBalancers/{lb_name}/"
+                  f"loadBalancingRules/{rule}/health?api-version={api_version}"
+              )
+              try:
+                  result = subprocess.run(
+                      [
+                          "az",
+                          "rest",
+                          "--method",
+                          "post",
+                          "--url",
+                          url,
+                          "--only-show-errors",
+                          "--output",
+                          "json",
+                      ],
+                      check=True,
+                      capture_output=True,
+                      text=True,
+                  )
+              except subprocess.CalledProcessError as exc:
+                  print(f"  Failed to query health for rule {rule}: {exc}", file=sys.stderr)
+                  if exc.stderr:
+                      print(exc.stderr)
+                  elif exc.stdout:
+                      print(exc.stdout)
+                  return None
+
+              output = (result.stdout or "").strip()
+              if not output:
+                  return {}
+
+              try:
+                  return json.loads(output)
+              except json.JSONDecodeError:
+                  print(f"  Received malformed JSON when querying rule {rule}", file=sys.stderr)
+                  print(output)
+                  return None
+
           max_attempts = 20
           sleep_seconds = 15
-          
-          def format_backend(entry_name, backend):
-              props = backend.get("properties") or {}
-              ip = props.get("privateIPAddress") or props.get("privateIpAddress") or backend.get("ipAddress")
-              health = backend.get("healthStatus") or props.get("healthStatus")
-              return entry_name or "", ip or "<unknown>", health or "<unknown>"
-          
+
           for attempt in range(1, max_attempts + 1):
-              print(f"Checking load balancer backend health for {external_ip or '<unknown IP>'} (attempt {attempt}/{max_attempts})...")
+              print(
+                  f"Checking load balancer backend health for {external_ip or '<unknown IP>'} "
+                  f"(attempt {attempt}/{max_attempts})..."
+              )
               any_up = False
-          
-              for pool in pools:
-                  try:
-                      output = subprocess.check_output([
-                          "az",
-                          "network",
-                          "lb",
-                          "address-pool",
-                          "show-health",
-                          "--resource-group",
-                          node_rg,
-                          "--lb-name",
-                          lb_name,
-                          "--name",
-                          pool,
-                          "-o",
-                          "json",
-                      ], text=True)
-                  except subprocess.CalledProcessError as exc:
-                      print(f"  Failed to query health for pool {pool}: {exc}", file=sys.stderr)
-                      stderr = exc.output or getattr(exc, "stderr", "")
-                      if stderr:
-                          print(stderr)
+
+              for rule in rules:
+                  rule_label = build_rule_label(rule)
+                  display_label = f"Rule {rule_label}"
+                  data = query_rule_health(rule)
+                  if data is None:
                       continue
-          
-                  try:
-                      data = json.loads(output)
-                  except json.JSONDecodeError:
-                      print(f"  Received malformed JSON when querying pool {pool}", file=sys.stderr)
-                      print(output)
-                      continue
-          
-                  backend_entries = data.get("backendAddressPools") or []
+
+                  backend_entries = data.get("loadBalancerBackendAddresses") or []
+                  up_count = data.get("up")
+                  down_count = data.get("down")
+
                   if not backend_entries:
-                      print(f"  Pool {pool}: no backend IP configurations reported yet")
+                      if up_count is None and down_count is None:
+                          print(f"  {display_label}: no backend addresses reported yet")
+                      else:
+                          print(
+                              f"  {display_label}: up={up_count or 0} down={down_count or 0} "
+                              "(no backend addresses reported yet)"
+                          )
                       continue
-          
-                  for entry in backend_entries:
-                      entry_name = entry.get("name") or pool
-                      for backend in entry.get("backendIpConfigurations") or []:
-                          label, ip, health = format_backend(entry_name, backend)
-                          tag = label
-                          if ip and ip != "<unknown>":
-                              tag = f"{label} ({ip})" if label else ip
-                          print(f"  Pool {tag}: health={health}")
-                          if health and health.lower() == "up":
-                              any_up = True
-          
+
+                  for backend in backend_entries:
+                      ip = backend.get("ipAddress") or "<unknown>"
+                      state = backend.get("state") or "<unknown>"
+                      reason = backend.get("reason")
+                      nic_label = extract_nic_label(backend.get("networkInterfaceIPConfigurationId") or "")
+
+                      backend_label = ip
+                      if nic_label:
+                          backend_label = f"{backend_label} [{nic_label}]"
+
+                      message = f"  {display_label}: backend {backend_label} state={state}"
+                      if reason:
+                          message += f" (reason: {reason})"
+                      print(message)
+
+                      if state and state.lower() == "up":
+                          any_up = True
+
               if any_up:
                   print("Azure reports at least one backend as healthy.")
                   break
-          
+
               if attempt == max_attempts:
                   print("Azure never reported healthy backends within the allotted time", file=sys.stderr)
                   try:
@@ -380,7 +508,7 @@ jobs:
                       if exc.output:
                           print(exc.output)
                   sys.exit(1)
-          
+
               time.sleep(sleep_seconds)
           PY
 
@@ -461,66 +589,158 @@ jobs:
               kubectl -n ingress-nginx get pods -l app.kubernetes.io/component=controller -o wide || true
               kubectl -n ingress-nginx get endpoints ingress-nginx-controller -o yaml || true
               kubectl -n "$NAMESPACE" get ingress midpoint rws-keycloak-public -o wide || true
-              if [ -n "${NODE_RESOURCE_GROUP:-}" ] && [ -n "${LB_NAME:-}" ] && [ -n "${LB_TARGET_POOLS:-}" ]; then
+              if [ -n "${NODE_RESOURCE_GROUP:-}" ] && [ -n "${LB_NAME:-}" ] && [ -n "${LB_TARGET_POOLS:-}" ] && [ -n "${LB_TARGET_RULES:-}" ]; then
                 echo "Azure load balancer backend health (final observation):"
                 python3 <<'PY'
           import json
           import os
           import subprocess
           import sys
-          
+
           node_rg = os.environ.get("NODE_RESOURCE_GROUP", "").strip()
           lb_name = os.environ.get("LB_NAME", "").strip()
           pools = os.environ.get("LB_TARGET_POOLS", "").split()
-          
-          if node_rg and lb_name and pools:
-              for pool in pools:
-                  try:
-                      output = subprocess.check_output([
-                          "az",
-                          "network",
-                          "lb",
-                          "address-pool",
-                          "show-health",
-                          "--resource-group",
-                          node_rg,
-                          "--lb-name",
-                          lb_name,
-                          "--name",
-                          pool,
-                          "-o",
-                          "json",
-                      ], text=True)
-                  except subprocess.CalledProcessError as exc:
-                      print(f"Failed to query health for pool {pool}: {exc}", file=sys.stderr)
-                      if exc.output:
-                          print(exc.output)
-                      continue
-          
-                  try:
-                      data = json.loads(output)
-                  except json.JSONDecodeError:
-                      print(f"Unexpected JSON for pool {pool}:")
-                      print(output)
-                      continue
-          
-                  print(f"Pool {pool} health report:")
-                  backend_entries = data.get("backendAddressPools") or []
-                  if not backend_entries:
-                      print("  <no backend IP configurations>")
-                      continue
-                  for entry in backend_entries:
-                      entry_name = entry.get("name") or pool
-                      for backend in entry.get("backendIpConfigurations") or []:
-                          props = backend.get("properties") or {}
-                          ip = props.get("privateIPAddress") or props.get("privateIpAddress") or backend.get("ipAddress")
-                          health = backend.get("healthStatus") or props.get("healthStatus")
-                          label = entry_name
-                          if ip:
-                              label = f"{label} ({ip})" if label else ip
-                          print(f"  {label}: {health or '<unknown>'}")
-          else:
+          rules = os.environ.get("LB_TARGET_RULES", "").split()
+          rule_pool_map_raw = os.environ.get("LB_RULE_POOL_MAP", "").strip()
+
+          if not (node_rg and lb_name and pools and rules):
               print("Load balancer context missing; skipping Azure health dump.")
+              sys.exit(0)
+
+          rule_pool_map = {}
+          if rule_pool_map_raw:
+              try:
+                  rule_pool_map = json.loads(rule_pool_map_raw)
+              except json.JSONDecodeError:
+                  print("Warning: unable to parse LB_RULE_POOL_MAP; continuing without pool map", file=sys.stderr)
+
+          subscription = os.environ.get("AZURE_SUBSCRIPTION_ID", "").strip()
+          if not subscription:
+              try:
+                  subscription = subprocess.check_output([
+                      "az",
+                      "account",
+                      "show",
+                      "--query",
+                      "id",
+                      "-o",
+                      "tsv",
+                  ], text=True).strip()
+              except subprocess.CalledProcessError as exc:
+                  print(f"Failed to determine Azure subscription ID: {exc}", file=sys.stderr)
+                  stderr = getattr(exc, "stderr", None)
+                  stdout = getattr(exc, "output", None) or getattr(exc, "stdout", None)
+                  if stderr:
+                      print(stderr)
+                  elif stdout:
+                      print(stdout)
+                  sys.exit(0)
+
+          if not subscription:
+              print("Azure subscription ID is unavailable; skipping health dump.", file=sys.stderr)
+              sys.exit(0)
+
+          api_version = "2024-05-01"
+
+          def build_rule_label(rule: str) -> str:
+              pool_name = rule_pool_map.get(rule)
+              if pool_name:
+                  return f"{rule} (pool {pool_name})"
+              return rule
+
+          def extract_nic_label(resource_id: str) -> str:
+              if not resource_id:
+                  return ""
+              parts = [segment for segment in resource_id.split('/') if segment]
+              nic_name = ""
+              ipconfig_name = ""
+              try:
+                  nic_index = parts.index("networkInterfaces")
+                  nic_name = parts[nic_index + 1]
+              except (ValueError, IndexError):
+                  nic_name = ""
+              try:
+                  ipconfig_index = parts.index("ipConfigurations")
+                  ipconfig_name = parts[ipconfig_index + 1]
+              except (ValueError, IndexError):
+                  ipconfig_name = ""
+              if nic_name and ipconfig_name:
+                  return f"{nic_name}/{ipconfig_name}"
+              return nic_name or ipconfig_name
+
+          def query_rule_health(rule: str):
+              url = (
+                  f"https://management.azure.com/subscriptions/{subscription}/"
+                  f"resourceGroups/{node_rg}/providers/Microsoft.Network/loadBalancers/{lb_name}/"
+                  f"loadBalancingRules/{rule}/health?api-version={api_version}"
+              )
+              try:
+                  result = subprocess.run(
+                      [
+                          "az",
+                          "rest",
+                          "--method",
+                          "post",
+                          "--url",
+                          url,
+                          "--only-show-errors",
+                          "--output",
+                          "json",
+                      ],
+                      check=True,
+                      capture_output=True,
+                      text=True,
+                  )
+              except subprocess.CalledProcessError as exc:
+                  print(f"Failed to query health for rule {rule}: {exc}", file=sys.stderr)
+                  if exc.stderr:
+                      print(exc.stderr)
+                  elif exc.stdout:
+                      print(exc.stdout)
+                  return None
+
+              output = (result.stdout or "").strip()
+              if not output:
+                  return {}
+
+              try:
+                  return json.loads(output)
+              except json.JSONDecodeError:
+                  print(f"Unexpected JSON for rule {rule}:")
+                  print(output)
+                  return None
+
+          for rule in rules:
+              rule_label = build_rule_label(rule)
+              display_label = f"Rule {rule_label}"
+              data = query_rule_health(rule)
+              if data is None:
+                  continue
+
+              backend_entries = data.get("loadBalancerBackendAddresses") or []
+              up_count = data.get("up")
+              down_count = data.get("down")
+
+              print(f"{display_label} summary: up={up_count or 0}, down={down_count or 0}")
+
+              if not backend_entries:
+                  print("  <no backend addresses>")
+                  continue
+
+              for backend in backend_entries:
+                  ip = backend.get("ipAddress") or "<unknown>"
+                  state = backend.get("state") or "<unknown>"
+                  reason = backend.get("reason")
+                  nic_label = extract_nic_label(backend.get("networkInterfaceIPConfigurationId") or "")
+
+                  backend_label = ip
+                  if nic_label:
+                      backend_label = f"{backend_label} [{nic_label}]"
+
+                  message = f"  {backend_label}: state={state}"
+                  if reason:
+                      message += f" (reason: {reason})"
+                  print(message)
           PY
                 if [ -n "${NODE_RESOURCE_GROUP:-}" ] && [ -n "${EXTERNAL_IP:-}" ]; then
                   echo "Azure public IP resource details:"
