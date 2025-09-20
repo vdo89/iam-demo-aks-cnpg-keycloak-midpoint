@@ -84,6 +84,305 @@ jobs:
           echo "Keycloak host: $KC_HOST"
           echo "midPoint host: $MP_HOST"
 
+      - name: Wait for ingress-nginx controller availability
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Waiting for ingress-nginx controller deployment to become available..."
+          kubectl -n ingress-nginx rollout status deploy/ingress-nginx-controller --timeout=600s
+
+      - name: Identify Azure load balancer for ingress-nginx
+        shell: bash
+        env:
+          RESOURCE_GROUP: ${{ inputs.RESOURCE_GROUP }}
+          AKS_NAME: ${{ inputs.AKS_NAME }}
+        run: |
+          set -euo pipefail
+
+          if ! command -v az >/dev/null 2>&1; then
+            echo "Azure CLI not found on runner" >&2
+            exit 1
+          fi
+
+          echo "Discovering AKS node resource group..."
+          NODE_RG=$(az aks show -g "$RESOURCE_GROUP" -n "$AKS_NAME" --query nodeResourceGroup -o tsv)
+          if [ -z "${NODE_RG:-}" ]; then
+            echo "ERROR: Unable to determine AKS node resource group." >&2
+            exit 1
+          fi
+          echo "NODE_RESOURCE_GROUP=${NODE_RG}" | tee -a "$GITHUB_ENV"
+
+          python3 <<'PY'
+import json
+import os
+import subprocess
+import sys
+
+external_ip = os.environ.get("EXTERNAL_IP", "").strip()
+node_rg = os.environ.get("NODE_RESOURCE_GROUP", "").strip()
+github_env = os.environ.get("GITHUB_ENV")
+
+if not external_ip:
+    print("External IP not available in environment", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    pip_raw = subprocess.check_output([
+        "az",
+        "network",
+        "public-ip",
+        "list",
+        "--resource-group",
+        node_rg,
+        "--query",
+        f"[?ipAddress=='{external_ip}']",
+        "-o",
+        "json",
+    ], text=True)
+except subprocess.CalledProcessError as exc:
+    print("Failed to list Azure public IPs:", exc, file=sys.stderr)
+    sys.exit(1)
+
+try:
+    pip_list = json.loads(pip_raw)
+except json.JSONDecodeError:
+    print("Unable to parse Azure public IP list", file=sys.stderr)
+    print(pip_raw)
+    sys.exit(1)
+
+if not pip_list:
+    print(f"No public IP resource in {node_rg!r} matches {external_ip}", file=sys.stderr)
+    try:
+        inventory = subprocess.check_output([
+            "az",
+            "network",
+            "public-ip",
+            "list",
+            "--resource-group",
+            node_rg,
+            "--query",
+            "[].{name:name, ip:ipAddress, state:provisioningState}",
+            "-o",
+            "tsv",
+        ], text=True)
+        print("Existing public IPs (name\tip\tstate):")
+        print(inventory.strip() or "<none>")
+    except subprocess.CalledProcessError as exc:
+        print("Additionally failed to enumerate all public IPs:", exc, file=sys.stderr)
+    sys.exit(1)
+
+pip_entry = pip_list[0]
+ip_config = pip_entry.get("ipConfiguration")
+if isinstance(ip_config, dict):
+    ip_config_ids = [ip_config.get("id")]
+elif isinstance(ip_config, list):
+    ip_config_ids = [item.get("id") for item in ip_config if isinstance(item, dict)]
+else:
+    ip_config_ids = []
+
+ip_config_ids = [item for item in ip_config_ids if item]
+if not ip_config_ids:
+    print("The public IP is not attached to a load balancer frontend yet", file=sys.stderr)
+    sys.exit(1)
+
+ip_config_id = ip_config_ids[0]
+parts = [segment for segment in ip_config_id.split('/') if segment]
+
+try:
+    lb_index = parts.index("loadBalancers")
+    frontend_index = parts.index("frontendIPConfigurations")
+except ValueError:
+    print(f"Unexpected ipConfiguration id format: {ip_config_id}", file=sys.stderr)
+    sys.exit(1)
+
+lb_name = parts[lb_index + 1]
+frontend_name = parts[frontend_index + 1]
+
+print(f"Resolved load balancer: {lb_name} (frontend {frontend_name})")
+
+try:
+    lb_raw = subprocess.check_output([
+        "az",
+        "network",
+        "lb",
+        "show",
+        "--resource-group",
+        node_rg,
+        "--name",
+        lb_name,
+        "-o",
+        "json",
+    ], text=True)
+except subprocess.CalledProcessError as exc:
+    print("Failed to retrieve load balancer details:", exc, file=sys.stderr)
+    sys.exit(1)
+
+lb = json.loads(lb_raw)
+rules = lb.get("loadBalancingRules") or []
+target_backend_names = []
+
+frontend_suffix = f"/frontendipconfigurations/{frontend_name}".lower()
+
+for rule in rules:
+    frontend_id = (rule.get("frontendIPConfiguration") or {}).get("id", "")
+    backend_id = (rule.get("backendAddressPool") or {}).get("id")
+    if frontend_id.lower().endswith(frontend_suffix) and backend_id:
+        target_backend_names.append(backend_id.split('/')[-1])
+
+if not target_backend_names:
+    # Fallback to all pools that currently reference any backend configs.
+    for pool in lb.get("backendAddressPools") or []:
+        if pool.get("backendIpConfigurations"):
+            name = pool.get("name")
+            if name:
+                target_backend_names.append(name)
+
+target_backend_names = sorted(set(target_backend_names))
+
+if not target_backend_names:
+    print("Unable to identify backend pools associated with the ingress frontend", file=sys.stderr)
+    sys.exit(1)
+
+if github_env:
+    with open(github_env, "a", encoding="utf-8") as env_file:
+        env_file.write(f"LB_NAME={lb_name}\n")
+        env_file.write(f"LB_FRONTEND_NAME={frontend_name}\n")
+        env_file.write("LB_TARGET_POOLS=" + " ".join(target_backend_names) + "\n")
+
+print("Target backend pools:", ", ".join(target_backend_names))
+
+summary = []
+for pool in lb.get("backendAddressPools") or []:
+    name = pool.get("name") or "<unnamed>"
+    count = len(pool.get("backendIpConfigurations") or [])
+    summary.append((name, count))
+
+if summary:
+    print("Backend pool membership:")
+    for name, count in summary:
+        print(f"  {name}: {count} backend IP configuration(s)")
+else:
+    print("No backend pools reported in load balancer resource")
+PY
+
+      - name: Wait for Azure load balancer backends to become healthy
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${NODE_RESOURCE_GROUP:-}" ] || [ -z "${LB_NAME:-}" ] || [ -z "${LB_TARGET_POOLS:-}" ]; then
+            echo "Missing load balancer context; ensure previous step succeeded." >&2
+            exit 1
+          fi
+
+          python3 <<'PY'
+import json
+import os
+import subprocess
+import sys
+import time
+
+node_rg = os.environ.get("NODE_RESOURCE_GROUP", "").strip()
+lb_name = os.environ.get("LB_NAME", "").strip()
+pools = os.environ.get("LB_TARGET_POOLS", "").split()
+external_ip = os.environ.get("EXTERNAL_IP", "").strip()
+
+if not node_rg or not lb_name or not pools:
+    print("Load balancer context is incomplete", file=sys.stderr)
+    sys.exit(1)
+
+max_attempts = 20
+sleep_seconds = 15
+
+def format_backend(entry_name, backend):
+    props = backend.get("properties") or {}
+    ip = props.get("privateIPAddress") or props.get("privateIpAddress") or backend.get("ipAddress")
+    health = backend.get("healthStatus") or props.get("healthStatus")
+    return entry_name or "", ip or "<unknown>", health or "<unknown>"
+
+for attempt in range(1, max_attempts + 1):
+    print(f"Checking load balancer backend health for {external_ip or '<unknown IP>'} (attempt {attempt}/{max_attempts})...")
+    any_up = False
+
+    for pool in pools:
+        try:
+            output = subprocess.check_output([
+                "az",
+                "network",
+                "lb",
+                "address-pool",
+                "show-health",
+                "--resource-group",
+                node_rg,
+                "--lb-name",
+                lb_name,
+                "--name",
+                pool,
+                "-o",
+                "json",
+            ], text=True)
+        except subprocess.CalledProcessError as exc:
+            print(f"  Failed to query health for pool {pool}: {exc}", file=sys.stderr)
+            stderr = exc.output or getattr(exc, "stderr", "")
+            if stderr:
+                print(stderr)
+            continue
+
+        try:
+            data = json.loads(output)
+        except json.JSONDecodeError:
+            print(f"  Received malformed JSON when querying pool {pool}", file=sys.stderr)
+            print(output)
+            continue
+
+        backend_entries = data.get("backendAddressPools") or []
+        if not backend_entries:
+            print(f"  Pool {pool}: no backend IP configurations reported yet")
+            continue
+
+        for entry in backend_entries:
+            entry_name = entry.get("name") or pool
+            for backend in entry.get("backendIpConfigurations") or []:
+                label, ip, health = format_backend(entry_name, backend)
+                tag = label
+                if ip and ip != "<unknown>":
+                    tag = f"{label} ({ip})" if label else ip
+                print(f"  Pool {tag}: health={health}")
+                if health and health.lower() == "up":
+                    any_up = True
+
+    if any_up:
+        print("Azure reports at least one backend as healthy.")
+        break
+
+    if attempt == max_attempts:
+        print("Azure never reported healthy backends within the allotted time", file=sys.stderr)
+        try:
+            summary = subprocess.check_output([
+                "az",
+                "network",
+                "lb",
+                "show",
+                "--resource-group",
+                node_rg,
+                "--name",
+                lb_name,
+                "--query",
+                "{name:name, provisioningState:provisioningState, frontend: frontendIPConfigurations[].{name:name, provisioningState:provisioningState, publicIpId:publicIpAddress.id}, backendPools: backendAddressPools[].{name:name, backendCount:length(backendIpConfigurations)}}",
+                "-o",
+                "json",
+            ], text=True)
+            print("Load balancer summary:")
+            print(summary)
+        except subprocess.CalledProcessError as exc:
+            print(f"Failed to retrieve load balancer summary: {exc}", file=sys.stderr)
+            if exc.output:
+                print(exc.output)
+        sys.exit(1)
+
+    time.sleep(sleep_seconds)
+PY
+
       - name: Patch/Create midPoint Ingress
         env:
           NAMESPACE: ${{ inputs.NAMESPACE_IAM }}
@@ -145,8 +444,8 @@ jobs:
           set -euo pipefail
           echo "Keycloak:  http://${KC_HOST}"
           echo "midPoint:  http://${MP_HOST}/midpoint"
-          attempts=12
-          sleep_seconds=10
+          attempts=18
+          sleep_seconds=15
           for i in $(seq 1 "$attempts"); do
             echo "HTTP HEAD try ${i}/${attempts} ..."
             if curl -sS -I --fail --max-time 10 "http://${KC_HOST}" | head -n 1; then
@@ -158,7 +457,77 @@ jobs:
             if [ "$i" -eq "$attempts" ]; then
               echo "ERROR: Endpoints did not respond successfully after ${attempts} attempts." >&2
               kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide || true
+              kubectl -n ingress-nginx get pods -l app.kubernetes.io/component=controller -o wide || true
+              kubectl -n ingress-nginx get endpoints ingress-nginx-controller -o yaml || true
               kubectl -n "$NAMESPACE" get ingress midpoint rws-keycloak-public -o wide || true
+              if [ -n "${NODE_RESOURCE_GROUP:-}" ] && [ -n "${LB_NAME:-}" ] && [ -n "${LB_TARGET_POOLS:-}" ]; then
+                echo "Azure load balancer backend health (final observation):"
+                python3 <<'PY'
+import json
+import os
+import subprocess
+import sys
+
+node_rg = os.environ.get("NODE_RESOURCE_GROUP", "").strip()
+lb_name = os.environ.get("LB_NAME", "").strip()
+pools = os.environ.get("LB_TARGET_POOLS", "").split()
+
+if node_rg and lb_name and pools:
+    for pool in pools:
+        try:
+            output = subprocess.check_output([
+                "az",
+                "network",
+                "lb",
+                "address-pool",
+                "show-health",
+                "--resource-group",
+                node_rg,
+                "--lb-name",
+                lb_name,
+                "--name",
+                pool,
+                "-o",
+                "json",
+            ], text=True)
+        except subprocess.CalledProcessError as exc:
+            print(f"Failed to query health for pool {pool}: {exc}", file=sys.stderr)
+            if exc.output:
+                print(exc.output)
+            continue
+
+        try:
+            data = json.loads(output)
+        except json.JSONDecodeError:
+            print(f"Unexpected JSON for pool {pool}:")
+            print(output)
+            continue
+
+        print(f"Pool {pool} health report:")
+        backend_entries = data.get("backendAddressPools") or []
+        if not backend_entries:
+            print("  <no backend IP configurations>")
+            continue
+        for entry in backend_entries:
+            entry_name = entry.get("name") or pool
+            for backend in entry.get("backendIpConfigurations") or []:
+                props = backend.get("properties") or {}
+                ip = props.get("privateIPAddress") or props.get("privateIpAddress") or backend.get("ipAddress")
+                health = backend.get("healthStatus") or props.get("healthStatus")
+                label = entry_name
+                if ip:
+                    label = f"{label} ({ip})" if label else ip
+                print(f"  {label}: {health or '<unknown>'}")
+else:
+    print("Load balancer context missing; skipping Azure health dump.")
+PY
+                if [ -n "${NODE_RESOURCE_GROUP:-}" ] && [ -n "${EXTERNAL_IP:-}" ]; then
+                  echo "Azure public IP resource details:"
+                  az network public-ip list \
+                    --resource-group "$NODE_RESOURCE_GROUP" \
+                    --query "[?ipAddress=='${EXTERNAL_IP}'].{name:name, ip:ipAddress, sku:sku.name, provisioningState:provisioningState}" \
+                    -o table || true
+                fi
               exit 1
             fi
             sleep "$sleep_seconds"
