@@ -128,6 +128,9 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     exposed for the operator's probes). Without the auto-build property the pod can crash-loop after password rotations or
     image upgrades because the runtime options would not match the persisted build-time configuration, and without the
     health flag the operator's probes would never succeed.
+  - The PostgreSQL connection now uses an explicit JDBC URL with `sslmode=disable` so Keycloak skips TLS validation against
+    CloudNativePG's self-signed server certificate. Without this override the startup probe repeatedly fails with
+    `connection refused`, the pod restarts, and the application never reaches Healthy.
 
 - **midPoint config**: `k8s/apps/midpoint/deployment.yaml` + `k8s/apps/midpoint/config.xml`
   - The deployment constrains the JVM heap (`MP_MEM_INIT=768M`, `MP_MEM_MAX=1536M`) to keep resource usage predictable.
