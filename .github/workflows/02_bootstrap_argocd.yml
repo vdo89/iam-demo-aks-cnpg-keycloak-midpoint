@@ -1654,20 +1654,10 @@ jobs:
             watch_namespaces="${watch_namespaces},${operator_namespace}"
           fi
 
-          watch_namespaces="$(python3 - "$watch_namespaces" <<'PY'
-import sys
-
-raw = sys.argv[1]
-parts = [part.strip() for part in raw.split(',') if part.strip()]
-seen = set()
-ordered = []
-for part in parts:
-    if part not in seen:
-        seen.add(part)
-        ordered.append(part)
-print(','.join(ordered))
-PY
-)"
+          watch_namespaces=$( \
+            python3 -c 'import sys; parts = [p.strip() for p in sys.argv[1].split(",") if p.strip()]; print(",".join(dict.fromkeys(parts)))' \
+              "$watch_namespaces" \
+          )
 
           if [ -z "${watch_namespaces}" ]; then
             echo "Computed watch namespace list is empty; refusing to update keycloak-operator configuration."
@@ -1677,12 +1667,12 @@ PY
           canonicalize_csv() {
             local raw="$1"
             python3 - "$raw" <<'PY'
-import sys
+          import sys
 
-raw = sys.argv[1]
-parts = sorted({part.strip() for part in raw.split(',') if part.strip()})
-print(','.join(parts))
-PY
+          raw = sys.argv[1]
+          parts = sorted({part.strip() for part in raw.split(',') if part.strip()})
+          print(','.join(parts))
+          PY
           }
 
           get_env_value() {
