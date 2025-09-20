@@ -4,6 +4,11 @@ metadata:
   name: rws-keycloak
   namespace: iam
 spec:
+  additionalOptions:
+    - name: kc.auto-build
+      value: "true"
+    - name: kc.health-enabled
+      value: "true"
   image: quay.io/keycloak/keycloak:26.0
   instances: 1
   db:
@@ -19,6 +24,9 @@ spec:
       key: password
   http:
     httpEnabled: true
+  features:
+    enabled:
+      - health
   hostname:
     strict: false
   ingress:
