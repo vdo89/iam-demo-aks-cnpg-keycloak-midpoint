@@ -1802,7 +1802,235 @@ jobs:
           diagnostics_dumped=0
           last_tracked_resource_summary=""
           last_ignored_resource_summary=""
+          declare -A ignored_resource_success_counts=()
+          declare -A ignored_resource_last_state=()
+          ignored_resources_header_printed=0
+          ignored_resources_all_confirmed_once=0
+          ignored_resource_required_confirmations=3
           apps_namespace="${{ inputs.NAMESPACE_IAM }}"
+
+          get_resource_type_for_kind() {
+            local kind="$1"
+            case "${kind}" in
+              Keycloak)
+                printf '%s\n' "keycloaks.k8s.keycloak.org"
+                ;;
+              KeycloakRealmImport)
+                printf '%s\n' "keycloakrealmimports.k8s.keycloak.org"
+                ;;
+              Application)
+                printf '%s\n' "applications.argoproj.io"
+                ;;
+              CustomResourceDefinition)
+                printf '%s\n' "customresourcedefinition.apiextensions.k8s.io"
+                ;;
+              *)
+                printf '%s\n' "${kind,,}"
+                ;;
+            esac
+          }
+
+          is_cluster_scoped_kind() {
+            local kind="$1"
+            case "${kind}" in
+              Namespace|ClusterRole|ClusterRoleBinding|CustomResourceDefinition|MutatingWebhookConfiguration|ValidatingWebhookConfiguration|StorageClass|PriorityClass)
+                return 0
+                ;;
+              *)
+                return 1
+                ;;
+            esac
+          }
+
+          check_ignored_resource_ready() {
+            local kind="$1"
+            local identifier="$2"
+            local result_var_name="$3"
+            local namespace=""
+            local name="${identifier}"
+
+            if [[ "${identifier}" == */* ]]; then
+              namespace="${identifier%%/*}"
+              name="${identifier##*/}"
+            fi
+
+            if is_cluster_scoped_kind "${kind}"; then
+              namespace=""
+            elif [ -z "${namespace}" ]; then
+              printf -v "${result_var_name}" 'namespace not reported yet'
+              return 1
+            fi
+
+            local resource_type
+            resource_type=$(get_resource_type_for_kind "${kind}")
+
+            local kubectl_cmd=(kubectl)
+            if [ -n "${namespace}" ]; then
+              kubectl_cmd+=(-n "${namespace}")
+            fi
+            kubectl_cmd+=("get" "${resource_type}" "${name}" -o json)
+
+            local resource_json=""
+            if ! resource_json=$("${kubectl_cmd[@]}" 2>/dev/null); then
+              printf -v "${result_var_name}" 'resource not found via kubectl yet'
+              return 1
+            fi
+
+            local readiness_output=""
+            if ! readiness_output=$(
+              READINESS_KIND="${kind}" RESOURCE_JSON="${resource_json}" python3 - <<'PYTHON'
+import json
+import os
+import sys
+
+raw = os.environ.get("RESOURCE_JSON", "")
+if not raw:
+    print("pending")
+    print("no resource data available")
+    sys.exit(0)
+
+try:
+    data = json.loads(raw)
+except json.JSONDecodeError:
+    print("pending")
+    print("unable to parse resource json")
+    sys.exit(0)
+
+kind = os.environ.get("READINESS_KIND", "")
+
+simple_kinds = {
+    "ConfigMap",
+    "Secret",
+    "ServiceAccount",
+    "Role",
+    "RoleBinding",
+    "ClusterRole",
+    "ClusterRoleBinding",
+    "Namespace",
+}
+
+state = "pending"
+message = ""
+
+if kind in simple_kinds:
+    state = "ready"
+    message = "resource exists"
+else:
+    status = data.get("status") or {}
+    conditions = status.get("conditions") or []
+    ready_condition = None
+    pending_condition = None
+
+    for cond in conditions:
+        cond_status = str(cond.get("status", "")).lower()
+        cond_type = str(cond.get("type", "")).lower()
+        if cond_status == "true" and cond_type in {
+            "ready",
+            "available",
+            "healthy",
+            "succeeded",
+            "completed",
+            "complete",
+            "success",
+            "synced",
+        }:
+            ready_condition = cond
+            break
+        if pending_condition is None and cond_status in {"false", "unknown"}:
+            pending_condition = cond
+
+    if ready_condition:
+        state = "ready"
+        parts = []
+        cond_type = ready_condition.get("type")
+        cond_status = ready_condition.get("status")
+        if cond_type and cond_status is not None:
+            parts.append(f"{cond_type}={cond_status}")
+        if ready_condition.get("message"):
+            parts.append(str(ready_condition["message"]))
+        elif ready_condition.get("reason"):
+            parts.append(str(ready_condition["reason"]))
+        message = "; ".join([p for p in parts if p])
+    else:
+        if not pending_condition and conditions:
+            pending_condition = conditions[0]
+        if pending_condition:
+            state = "pending"
+            parts = []
+            cond_type = pending_condition.get("type")
+            cond_status = pending_condition.get("status")
+            if cond_type and cond_status is not None:
+                parts.append(f"{cond_type}={cond_status}")
+            if pending_condition.get("message"):
+                parts.append(str(pending_condition["message"]))
+            elif pending_condition.get("reason"):
+                parts.append(str(pending_condition["reason"]))
+            message = "; ".join([p for p in parts if p])
+        else:
+            replicas = status.get("replicas")
+            ready_replicas = status.get("readyReplicas")
+            if isinstance(replicas, int) and replicas > 0 and isinstance(ready_replicas, int):
+                if ready_replicas >= replicas:
+                    state = "ready"
+                else:
+                    state = "pending"
+                message = f"readyReplicas={ready_replicas}/{replicas}"
+            elif status.get("succeeded") is not None:
+                succeeded = status.get("succeeded") or 0
+                completions = status.get("completions") or 0
+                if completions and succeeded >= completions:
+                    state = "ready"
+                elif succeeded > 0 and not completions:
+                    state = "ready"
+                else:
+                    state = "pending"
+                message = f"succeeded={succeeded}/{completions or '?'}"
+            elif status.get("phase"):
+                phase = str(status.get("phase"))
+                phase_lower = phase.lower()
+                if phase_lower in {"running", "active", "succeeded", "bound", "completed", "complete"}:
+                    state = "ready"
+                elif phase_lower in {"failed", "error"}:
+                    state = "failed"
+                else:
+                    state = "pending"
+                message = f"phase={phase}"
+            else:
+                state = "ready"
+                message = "resource exists"
+
+if not message:
+    message = "resource exists" if state == "ready" else ""
+
+print(state)
+print(message)
+PYTHON
+            ); then
+              printf -v "${result_var_name}" 'failed to evaluate resource readiness'
+              return 1
+            fi
+
+            local readiness_state=""
+            local readiness_message=""
+            IFS=$'\n' read -r readiness_state readiness_message <<<"${readiness_output}"
+            readiness_state="${readiness_state:-}"
+            readiness_message="${readiness_message:-}"
+
+            if [ "${readiness_state}" = "ready" ]; then
+              if [ -n "${readiness_message}" ]; then
+                printf -v "${result_var_name}" '%s' "${readiness_message}"
+              else
+                printf -v "${result_var_name}" 'resource appears ready'
+              fi
+              return 0
+            fi
+
+            if [ -z "${readiness_message}" ]; then
+              readiness_message='waiting for controller to report readiness'
+            fi
+            printf -v "${result_var_name}" '%s' "${readiness_message}"
+            return 1
+          }
           for attempt in $(seq 1 90); do
             app_json=""
             if ! app_json=$(kubectl -n argocd get application apps -o json 2>/dev/null); then
@@ -1878,31 +2106,112 @@ jobs:
               last_tracked_resource_summary=""
             fi
 
+            ignored_resources_fully_validated=1
             if [ -n "${ignored_resources_summary}" ]; then
-              if [ "${ignored_resources_summary}" != "${last_ignored_resource_summary}" ]; then
-                echo "Argo CD did not report health status for the following synced resources (treating them as healthy):"
-                while IFS=$'\t' read -r ignored_kind ignored_identifier; do
-                  [ -z "${ignored_kind}" ] && continue
-                  echo "  - ${ignored_kind} ${ignored_identifier}"
-                done <<<"${ignored_resources_summary}"
-                last_ignored_resource_summary="${ignored_resources_summary}"
+              ignored_resources_fully_validated=0
+              if [ "${ignored_resources_header_printed}" -eq 0 ]; then
+                echo "Argo CD did not report health status for the following synced resources. Verifying readiness before proceeding:"
+                ignored_resources_header_printed=1
               fi
+
+              declare -A current_ignored_keys=()
+              all_ignored_confirmed=1
+
+              while IFS=$'\t' read -r ignored_kind ignored_identifier; do
+                [ -z "${ignored_kind}" ] && continue
+
+                key="${ignored_kind}|${ignored_identifier}"
+                current_ignored_keys["$key"]=1
+
+                status_message=""
+                if check_ignored_resource_ready "${ignored_kind}" "${ignored_identifier}" status_message; then
+                  consecutive_successes=${ignored_resource_success_counts["$key"]:-0}
+                  consecutive_successes=$((consecutive_successes + 1))
+                  ignored_resource_success_counts["$key"]=${consecutive_successes}
+
+                  if [ -n "${status_message}" ]; then
+                    ready_descriptor="${status_message}"
+                  else
+                    ready_descriptor="confirmed via kubectl"
+                  fi
+
+                  if [ "${consecutive_successes}" -ge "${ignored_resource_required_confirmations}" ]; then
+                    log_state="ready (${ready_descriptor})"
+                  else
+                    all_ignored_confirmed=0
+                    log_state="observed ready (${consecutive_successes}/${ignored_resource_required_confirmations})"
+                    if [ -n "${status_message}" ]; then
+                      log_state="${log_state} - ${status_message}"
+                    fi
+                  fi
+                else
+                  ignored_resource_success_counts["$key"]=0
+                  all_ignored_confirmed=0
+                  if [ -n "${status_message}" ]; then
+                    log_state="waiting (${status_message})"
+                  else
+                    log_state="waiting for resource to appear in kubectl"
+                  fi
+                fi
+
+                previous_state=${ignored_resource_last_state["$key"]-}
+                if [ "${previous_state}" != "${log_state}" ]; then
+                  echo "  - ${ignored_kind} ${ignored_identifier}: ${log_state}"
+                  ignored_resource_last_state["$key"]="${log_state}"
+                fi
+              done <<<"${ignored_resources_summary}"
+
+              for existing_key in "${!ignored_resource_success_counts[@]}"; do
+                if [ -z "${current_ignored_keys["$existing_key"]-}" ]; then
+                  unset "ignored_resource_success_counts[$existing_key]"
+                  unset "ignored_resource_last_state[$existing_key]"
+                fi
+              done
+
+              if [ "${all_ignored_confirmed}" -eq 1 ]; then
+                ignored_resources_fully_validated=1
+                if [ "${ignored_resources_all_confirmed_once}" -eq 0 ]; then
+                  echo "All resources without Argo CD health status have been observed ready via kubectl."
+                  ignored_resources_all_confirmed_once=1
+                fi
+              else
+                ignored_resources_all_confirmed_once=0
+              fi
+
+              last_ignored_resource_summary="${ignored_resources_summary}"
             else
+              if [ "${ignored_resources_header_printed}" -eq 1 ]; then
+                echo "All resources now report Argo CD health status."
+              fi
+              ignored_resources_header_printed=0
+              ignored_resources_all_confirmed_once=0
+              ignored_resources_fully_validated=1
               last_ignored_resource_summary=""
+
+              if [ "${#ignored_resource_success_counts[@]}" -gt 0 ]; then
+                for existing_key in "${!ignored_resource_success_counts[@]}"; do
+                  unset "ignored_resource_success_counts[$existing_key]"
+                done
+              fi
+              if [ "${#ignored_resource_last_state[@]}" -gt 0 ]; then
+                for existing_key in "${!ignored_resource_last_state[@]}"; do
+                  unset "ignored_resource_last_state[$existing_key]"
+                done
+              fi
             fi
 
             if [ "${sync_status}" = "Synced" ]; then
-              if [ "${health_status}" = "Healthy" ]; then
+              if [ "${health_status}" = "Healthy" ] && [ "${ignored_resources_fully_validated}" -eq 1 ]; then
                 echo "apps application is synced and healthy"
                 kubectl -n argocd get application apps
                 exit 0
               fi
-              if [ "${health_status}" = "Unknown" ] && [ "${operation_phase}" = "Succeeded" ]; then
+              if [ "${health_status}" = "Unknown" ] && [ "${operation_phase}" = "Succeeded" ] && [ "${ignored_resources_fully_validated}" -eq 1 ]; then
                 echo "apps application is synced; health reported as Unknown but last operation succeeded. Proceeding."
                 kubectl -n argocd get application apps
                 exit 0
               fi
-              if [ "${operation_phase}" = "Succeeded" ] && [ -z "${tracked_resources_summary}" ]; then
+              if [ "${operation_phase}" = "Succeeded" ] && [ -z "${tracked_resources_summary}" ] && [ "${ignored_resources_fully_validated}" -eq 1 ]; then
                 echo "All tracked resources report Healthy but Argo CD application health is ${health_status:-<unknown>}. Proceeding."
                 kubectl -n argocd get application apps
                 exit 0

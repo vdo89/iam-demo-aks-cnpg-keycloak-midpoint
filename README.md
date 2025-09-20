@@ -123,9 +123,10 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     clears `spec.realm`, so Argo CD ignores differences on that path to avoid endless resyncs. When you change the realm
     payload, bump `metadata.annotations.iam.demo/realm-config-version` so Argo CD reapplies the manifest and Keycloak
     performs a fresh import.
-  - Keycloak now sets `kc.auto-build=true` so the server automatically rebuilds its optimized configuration whenever database
-    or health-check options change. Without this flag the pod can crash-loop after password rotations or image upgrades because
-    the runtime options would not match the persisted build-time configuration.
+  - Keycloak now enables `--auto-build` so the server automatically rebuilds its optimized configuration whenever database or
+    health-check options change, and explicitly keeps `--health-enabled=true` so the operator's probes continue to succeed after
+    the rebuild. Without these flags the pod can crash-loop after password rotations or image upgrades because the runtime
+    options would not match the persisted build-time configuration and the health endpoints would remain disabled.
 
 - **midPoint config**: `k8s/apps/midpoint/deployment.yaml` + `k8s/apps/midpoint/config.xml`
   - The deployment constrains the JVM heap (`MP_MEM_INIT=768M`, `MP_MEM_MAX=1536M`) to keep resource usage predictable.
