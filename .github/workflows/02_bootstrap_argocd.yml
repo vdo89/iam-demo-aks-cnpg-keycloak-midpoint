@@ -2049,6 +2049,117 @@ jobs:
           fi
           exit 1
 
+      - name: Wait for Keycloak service endpoints
+        shell: bash
+        env:
+          IAM_NAMESPACE: ${{ inputs.NAMESPACE_IAM }}
+        run: |
+          set -euo pipefail
+
+          ns="${IAM_NAMESPACE}"
+          if [ -z "${ns}" ]; then
+            echo "IAM_NAMESPACE input must not be empty"
+            exit 1
+          fi
+
+          echo "Waiting for Keycloak service in namespace ${ns}"
+          service_name=""
+          service_candidates=(rws-keycloak-service rws-keycloak)
+          for attempt in $(seq 1 60); do
+            for candidate in "${service_candidates[@]}"; do
+              if kubectl -n "${ns}" get svc "${candidate}" >/dev/null 2>&1; then
+                service_name="${candidate}"
+                break
+              fi
+            done
+            if [ -n "${service_name}" ]; then
+              echo "Keycloak service ${service_name} detected"
+              break
+            fi
+            echo "Keycloak service not created yet (attempt ${attempt}/60)"
+            sleep 10
+          done
+
+          if [ -z "${service_name}" ]; then
+            echo "Timed out waiting for Keycloak service in namespace ${ns}" >&2
+            kubectl -n "${ns}" get keycloaks.k8s.keycloak.org rws-keycloak -o yaml || true
+            kubectl -n "${ns}" get keycloakrealmimports.k8s.keycloak.org rws-realm-import -o yaml || true
+            kubectl -n "${ns}" get pods -l app.kubernetes.io/instance=rws-keycloak -o wide || true
+            kubectl -n "${ns}" get events --sort-by=.metadata.creationTimestamp | tail -n 50 || true
+            exit 1
+          fi
+
+          echo "Ensuring Keycloak service ${service_name} publishes ready endpoints"
+
+          ready_from_endpoints=""
+          ready_from_slices=""
+          not_ready_from_endpoints=""
+          not_ready_from_slices=""
+
+          collect_service_status() {
+            ready_from_endpoints=""
+            ready_from_slices=""
+            not_ready_from_endpoints=""
+            not_ready_from_slices=""
+
+            if endpoints_json=$(kubectl -n "${ns}" get endpoints "${service_name}" -o json 2>/dev/null); then
+              ready_from_endpoints=$(jq -r '[.subsets[]? | .addresses[]? | .ip] | join(" ")' <<<"${endpoints_json}" 2>/dev/null || true)
+              not_ready_from_endpoints=$(jq -r '[.subsets[]? | .notReadyAddresses[]? | .ip] | join(" ")' <<<"${endpoints_json}" 2>/dev/null || true)
+            fi
+
+            if endpointslices_json=$(kubectl -n "${ns}" get endpointslices.discovery.k8s.io -l kubernetes.io/service-name="${service_name}" -o json 2>/dev/null); then
+              ready_from_slices=$(jq -r '[.items[]? | .endpoints[]? | select(.conditions.ready == true) | .addresses[]?] | join(" ")' <<<"${endpointslices_json}" 2>/dev/null || true)
+              not_ready_from_slices=$(jq -r '[.items[]? | .endpoints[]? | select(.conditions.ready != true) | .addresses[]?] | join(" ")' <<<"${endpointslices_json}" 2>/dev/null || true)
+            fi
+          }
+
+          log_service_status() {
+            echo "Keycloak service ready IPs (Endpoints): ${ready_from_endpoints:-<none>}"
+            echo "Keycloak service notReady IPs (Endpoints): ${not_ready_from_endpoints:-<none>}"
+            echo "Keycloak service ready IPs (EndpointSlices): ${ready_from_slices:-<none>}"
+            echo "Keycloak service notReady IPs (EndpointSlices): ${not_ready_from_slices:-<none>}"
+          }
+
+          consecutive_ready=0
+          ready_confirmed=0
+
+          for attempt in $(seq 1 45); do
+            collect_service_status
+            log_service_status
+
+            if [ -n "${ready_from_endpoints}" ] || [ -n "${ready_from_slices}" ]; then
+              consecutive_ready=$((consecutive_ready + 1))
+              echo "Ready endpoints observed for Keycloak service (confirmation ${consecutive_ready}/3)"
+              if [ "${consecutive_ready}" -ge 3 ]; then
+                ready_confirmed=1
+                echo "Keycloak service ${service_name} endpoints appear stable"
+                break
+              fi
+              sleep 5
+              continue
+            fi
+
+            echo "Keycloak service ${service_name} endpoints not ready yet (attempt ${attempt}/45)"
+            consecutive_ready=0
+            sleep 10
+          done
+
+          if [ "${ready_confirmed}" -ne 1 ]; then
+            echo "Timed out waiting for Keycloak service ${service_name} to expose ready endpoints" >&2
+            log_service_status
+            kubectl -n "${ns}" get pods -l app.kubernetes.io/instance=rws-keycloak -o wide || true
+            if pods=$(kubectl -n "${ns}" get pods -l app.kubernetes.io/instance=rws-keycloak -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); then
+              for pod in ${pods}; do
+                echo "---- Logs from pod ${pod} ----"
+                kubectl -n "${ns}" logs "${pod}" --tail=40 || true
+              done
+            fi
+            kubectl -n "${ns}" describe keycloaks.k8s.keycloak.org rws-keycloak || true
+            exit 1
+          fi
+
+          echo "Keycloak service ${service_name} is publishing ready endpoints"
+
       - name: Show ingress endpoints (if available)
         shell: bash
         run: |
@@ -2056,15 +2167,25 @@ jobs:
           echo "Ingress-NGINX service:"
           kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide || true
           echo "Keycloak service:"
-          if keycloak_svc_output=$(kubectl -n ${{ inputs.NAMESPACE_IAM }} get svc rws-keycloak -o wide 2>&1); then
-            printf '%s\n' "${keycloak_svc_output}"
-          elif keycloak_svc_output=$(kubectl -n ${{ inputs.NAMESPACE_IAM }} get svc rws-keycloak-service -o wide 2>&1); then
-            echo "Service 'rws-keycloak' not found; showing 'rws-keycloak-service' instead."
-            printf '%s\n' "${keycloak_svc_output}"
-          else
-            printf '%s\n' "${keycloak_svc_output}"
-            echo "Service rws-keycloak/rws-keycloak-service not found; listing all services in namespace ${{ inputs.NAMESPACE_IAM }} for troubleshooting."
-            kubectl -n ${{ inputs.NAMESPACE_IAM }} get svc -o wide || true
-          fi
+          {
+            tmpfile=$(mktemp)
+            trap 'rm -f "${tmpfile}"' EXIT
+
+            service_name=""
+            for candidate in rws-keycloak-service rws-keycloak; do
+              if kubectl -n ${{ inputs.NAMESPACE_IAM }} get svc "${candidate}" -o wide >"${tmpfile}" 2>/dev/null; then
+                service_name="${candidate}"
+                break
+              fi
+            done
+
+            if [ -n "${service_name}" ]; then
+              echo "(${service_name})"
+              cat "${tmpfile}"
+            else
+              echo "Service rws-keycloak-service or rws-keycloak not found even after wait step; listing services in namespace ${{ inputs.NAMESPACE_IAM }}."
+              kubectl -n ${{ inputs.NAMESPACE_IAM }} get svc -o wide || true
+            fi
+          }
           echo "midPoint service:"
           kubectl -n ${{ inputs.NAMESPACE_IAM }} get svc midpoint -o wide || true
