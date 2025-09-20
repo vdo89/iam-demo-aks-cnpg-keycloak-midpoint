@@ -131,12 +131,13 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
   - Keycloak enables the CLI flag `health-enabled=true` so the readiness endpoints are exposed for the operator's probes.
     Keycloak 26.0.8 removed the legacy `health` feature toggle, so the manifest now sets `KC_HEALTH_ENABLED=true`
     directly instead of relying on `spec.features.enabled`. Leaving the old flag in place makes the container exit with
-    `health is an unrecognized feature`, which surfaces as a CrashLoopBackOff in Argo CD. The Keycloak Operator still
-    defaults to enabling the obsolete `health` feature even when the enabled list is empty, so the manifest explicitly
-    sets `spec.features.enabled: []` **and** `spec.features.disabled: ["health"]` to override that default and keep
-    `KC_FEATURES` empty. If you upgrade the image again and the health endpoints disappear, review the upstream release
-    notes for the replacement environment variable or CLI flag before reintroducing a features list.
-    The manifest pins Keycloak to **26.0.8** because 26.0.0 fails to start once build-time options such as `kc.db`
+    `health is an unrecognized feature`, which surfaces as a CrashLoopBackOff in Argo CD. The current Keycloak Operator
+    release still injects `health` into `KC_FEATURES` whenever the list is empty, so the manifest pins
+    `spec.features.enabled` to a harmless feature (`token-exchange`) to force the operator to stop requesting the
+    removed flag. If you upgrade the image again and the health endpoints disappear, review the upstream release notes
+    for the replacement environment variable or CLI flag before adjusting the feature list.
+
+  - The manifest pins Keycloak to **26.0.8** because 26.0.0 fails to start once build-time options such as `kc.db`
     or `kc.health-enabled` diverge from what was baked into the optimized image, which is exactly the case for this
     deployment. The regression was fixed upstream (Keycloak issue #33902) and shipping the patched image ensures the
     StatefulSet does not get stuck in a CrashLoopBackOff when we reconcile the database and health settings.
