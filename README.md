@@ -129,6 +129,11 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     the upstream image, so letting the runtime build step execute avoids the crash loop without having to maintain a
     pre-built custom image.
   - Keycloak enables the CLI flag `health-enabled=true` so the readiness endpoints are exposed for the operator's probes.
+    Keycloak 26.0.8 removed the legacy `health` feature toggle, so the manifest now sets `KC_HEALTH_ENABLED=true`
+    directly instead of relying on `spec.features.enabled`. Leaving the old flag in place makes the container exit with
+    `health is an unrecognized feature`, which surfaces as a CrashLoopBackOff in Argo CD. If you upgrade the image again
+    and the health endpoints disappear, review the upstream release notes for the replacement environment variable or
+    CLI flag before reintroducing a features list.
     The manifest pins Keycloak to **26.0.8** because 26.0.0 fails to start once build-time options such as `kc.db`
     or `kc.health-enabled` diverge from what was baked into the optimized image, which is exactly the case for this
     deployment. The regression was fixed upstream (Keycloak issue #33902) and shipping the patched image ensures the
