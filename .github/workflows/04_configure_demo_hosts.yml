@@ -73,9 +73,11 @@ jobs:
             kubectl -n ingress-nginx get svc ingress-nginx-controller -o yaml || true
             exit 1
           fi
+          KC_HOST="kc.${EXTERNAL_IP}.nip.io"
+          MP_HOST="mp.${EXTERNAL_IP}.nip.io"
           echo "EXTERNAL_IP=$EXTERNAL_IP" | tee -a $GITHUB_ENV
-          echo "KC_HOST=kc.${EXTERNAL_IP}.nip.io" | tee -a $GITHUB_ENV
-          echo "MP_HOST=mp.${EXTERNAL_IP}.nip.io" | tee -a $GITHUB_ENV
+          echo "KC_HOST=${KC_HOST}" | tee -a $GITHUB_ENV
+          echo "MP_HOST=${MP_HOST}" | tee -a $GITHUB_ENV
           echo "keycloak_url=http://kc.${EXTERNAL_IP}.nip.io" >> $GITHUB_OUTPUT
           echo "midpoint_url=http://mp.${EXTERNAL_IP}.nip.io/midpoint" >> $GITHUB_OUTPUT
           echo "Resolved EXTERNAL_IP: $EXTERNAL_IP"
