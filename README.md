@@ -123,12 +123,15 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     clears `spec.realm`, so Argo CD ignores differences on that path to avoid endless resyncs. When you change the realm
     payload, bump `metadata.annotations.iam.demo/realm-config-version` so Argo CD reapplies the manifest and Keycloak
     performs a fresh import.
-  - Keycloak enables the `health` feature through `.spec.features.enabled` so the operator's readiness probes expose the
-    management endpoints without relying on legacy CLI flags. Using the older `health-enabled` CLI option left the
-    optimized build in an inconsistent state, so Keycloak 26 exited with code 2 and the pod crash-looped even though the
-    probes kept retrying. Keycloak 26 automatically rebuilds the optimized image when feature toggles change, and the
-    legacy `kc.auto-build` flag was removed upstream. Leaving the old option in place forces the operator to render an
-    invalid `--kc.auto-build` argument that makes the pod exit immediately, so the manifest purposely omits it.
+  - `startOptimized` is explicitly disabled so the container re-runs `kc.sh build` with the database and health check
+    settings every time the pod starts. Keycloak 26 exits early with `The following build time options have values that
+    differ...` when the optimized image still carries the default `kc.db=dev-file`/`kc.health-enabled=false` values from
+    the upstream image, so letting the runtime build step execute avoids the crash loop without having to maintain a
+    pre-built custom image.
+  - Keycloak enables the CLI flag `health-enabled=true` so the readiness endpoints are exposed for the operator's probes.
+    Keycloak 26 automatically rebuilds the optimized image when runtime options change, and the legacy `auto-build`
+    configuration knob was removed upstream. Leaving the old `kc.auto-build=true` entry forces the operator to render the
+    invalid `--kc.auto-build` flag which causes the pod to exit immediately, so the manifest purposely omits that option.
   - The PostgreSQL connection now uses an explicit JDBC URL with `sslmode=disable` so Keycloak skips TLS validation against
     CloudNativePG's self-signed server certificate. The value is injected via `KC_DB_URL` in addition to the CRD field so the
     exact JDBC string (including the query parameters) always reaches the container even if the operator rewrites the
