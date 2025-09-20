@@ -1635,7 +1635,7 @@ jobs:
           set -euo pipefail
 
           operator_namespace=""
-          for ns in keycloak keycloak-system default; do
+          for ns in keycloak keycloak-system default "${IAM_NAMESPACE}"; do
             if kubectl -n "${ns}" get deployment keycloak-operator >/dev/null 2>&1; then
               operator_namespace="${ns}"
               break
@@ -1686,11 +1686,14 @@ jobs:
           desired_canonical="$(canonicalize_csv "${watch_namespaces}")"
           current_namespaces_raw="$(get_env_value "QUARKUS_OPERATOR_SDK_NAMESPACES")"
           current_generate_raw="$(get_env_value "QUARKUS_OPERATOR_SDK_GENERATE_WITH_WATCHED_NAMESPACES")"
+          current_watch_namespace_raw="$(get_env_value "WATCH_NAMESPACE")"
           current_namespaces_canonical="$(canonicalize_csv "${current_namespaces_raw}")"
           current_generate_canonical="$(canonicalize_csv "${current_generate_raw}")"
+          current_watch_namespace_canonical="$(canonicalize_csv "${current_watch_namespace_raw}")"
 
           if [ "${current_namespaces_canonical}" = "${desired_canonical}" ] && \
-             [ "${current_generate_canonical}" = "${desired_canonical}" ]; then
+             [ "${current_generate_canonical}" = "${desired_canonical}" ] && \
+             [ "${current_watch_namespace_canonical}" = "${desired_canonical}" ]; then
             echo "Keycloak operator already configured to watch namespaces: ${current_namespaces_raw:-<unset>}"
             exit 0
           fi
@@ -1699,6 +1702,7 @@ jobs:
           kubectl -n "${operator_namespace}" set env deployment/keycloak-operator \
             QUARKUS_OPERATOR_SDK_NAMESPACES="${watch_namespaces}" \
             QUARKUS_OPERATOR_SDK_GENERATE_WITH_WATCHED_NAMESPACES="${watch_namespaces}" \
+            WATCH_NAMESPACE="${watch_namespaces}" \
             --overwrite
 
           wait_for_rollout() {
@@ -1712,6 +1716,15 @@ jobs:
 
           if wait_for_rollout 300s; then
             echo "keycloak-operator deployment rollout completed successfully."
+            kubectl -n "${operator_namespace}" get deployment keycloak-operator -o json \
+              | jq -r '
+                  .spec.template.spec.containers[]
+                  | select(.name == "keycloak-operator")
+                  | (.env // [])
+                  | map(.name + "=" + (.value // ""))
+                  | sort
+                  | .[]
+                '
             exit 0
           fi
 
@@ -2048,6 +2061,115 @@ jobs:
             kubectl -n "${apps_namespace}" get events --sort-by=.metadata.creationTimestamp | tail -n 50 || true
           fi
           exit 1
+
+      - name: Wait for Keycloak statefulset and service readiness
+        shell: bash
+        env:
+          IAM_NAMESPACE: ${{ inputs.NAMESPACE_IAM }}
+        run: |
+          set -euo pipefail
+
+          ns="${IAM_NAMESPACE}"
+          keycloak_name="rws-keycloak"
+          service_name="${keycloak_name}-service"
+
+          echo "Ensuring Keycloak custom resource ${ns}/${keycloak_name} exists"
+          if ! kubectl -n "${ns}" get keycloaks.k8s.keycloak.org "${keycloak_name}" >/dev/null 2>&1; then
+            echo "ERROR: Keycloak resource ${ns}/${keycloak_name} not found"
+            kubectl -n "${ns}" get keycloaks.k8s.keycloak.org || true
+            exit 1
+          fi
+
+          operator_namespace=""
+          for candidate in keycloak keycloak-system default "${ns}"; do
+            if kubectl -n "${candidate}" get deployment keycloak-operator >/dev/null 2>&1; then
+              operator_namespace="${candidate}"
+              break
+            fi
+          done
+
+          echo "Waiting for Keycloak StatefulSet ${ns}/${keycloak_name} to report ready replicas"
+          statefulset_ready=0
+          for attempt in $(seq 1 60); do
+            if kubectl -n "${ns}" get statefulset "${keycloak_name}" >/dev/null 2>&1; then
+              desired=$(kubectl -n "${ns}" get statefulset "${keycloak_name}" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "1")
+              ready=$(kubectl -n "${ns}" get statefulset "${keycloak_name}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+              desired=${desired:-1}
+              ready=${ready:-0}
+              echo "StatefulSet readiness attempt ${attempt}/60: ready=${ready}/${desired}"
+              if [ "${ready}" -ge 1 ]; then
+                statefulset_ready=1
+                break
+              fi
+            else
+              echo "StatefulSet ${keycloak_name} not created yet (attempt ${attempt}/60)"
+            fi
+            sleep 10
+          done
+
+          if [ "${statefulset_ready}" -ne 1 ]; then
+            echo "Timed out waiting for Keycloak StatefulSet to become ready"
+            kubectl -n "${ns}" get statefulset "${keycloak_name}" -o yaml || true
+            kubectl -n "${ns}" get pods -l app=keycloak -o wide || true
+            kubectl -n "${ns}" describe statefulset "${keycloak_name}" || true
+            if [ -n "${operator_namespace}" ]; then
+              echo "Recent keycloak-operator logs from namespace ${operator_namespace}:"
+              kubectl -n "${operator_namespace}" logs deployment/keycloak-operator --tail=200 || true
+            fi
+            exit 1
+          fi
+
+          echo "Waiting for service ${ns}/${service_name} to publish ready endpoints"
+          service_ready=0
+          consecutive_ready=0
+          for attempt in $(seq 1 60); do
+            if ! kubectl -n "${ns}" get service "${service_name}" >/dev/null 2>&1; then
+              echo "Service ${service_name} not found yet (attempt ${attempt}/60)"
+              consecutive_ready=0
+              sleep 5
+              continue
+            fi
+
+            ready_from_endpoints=""
+            ready_from_slices=""
+
+            if endpoints_json=$(kubectl -n "${ns}" get endpoints "${service_name}" -o json 2>/dev/null); then
+              ready_from_endpoints=$(jq -r '[.subsets[]? | .addresses[]? | .ip] | join(" ")' <<<"${endpoints_json}" 2>/dev/null || true)
+            fi
+
+            if endpointslices_json=$(kubectl -n "${ns}" get endpointslices.discovery.k8s.io -l kubernetes.io/service-name="${service_name}" -o json 2>/dev/null); then
+              ready_from_slices=$(jq -r '[.items[]? | .endpoints[]? | select(.conditions.ready == true) | .addresses[]?] | join(" ")' <<<"${endpointslices_json}" 2>/dev/null || true)
+            fi
+
+            if [ -n "${ready_from_endpoints}" ] || [ -n "${ready_from_slices}" ]; then
+              consecutive_ready=$((consecutive_ready + 1))
+              if [ "${consecutive_ready}" -ge 3 ]; then
+                echo "Service ${service_name} has ready endpoints: ${ready_from_endpoints:-${ready_from_slices}}"
+                service_ready=1
+                break
+              fi
+              echo "Ready endpoints observed for ${service_name}; confirming stability (${consecutive_ready}/3)"
+              sleep 5
+              continue
+            fi
+
+            echo "Service ${service_name} endpoints not ready yet (attempt ${attempt}/60)"
+            consecutive_ready=0
+            sleep 10
+          done
+
+          if [ "${service_ready}" -ne 1 ]; then
+            echo "Timed out waiting for service ${service_name} to publish ready endpoints"
+            kubectl -n "${ns}" get service "${service_name}" -o yaml || true
+            kubectl -n "${ns}" get endpoints "${service_name}" -o yaml || true
+            kubectl -n "${ns}" get endpointslices.discovery.k8s.io -l kubernetes.io/service-name="${service_name}" -o yaml || true
+            kubectl -n "${ns}" get pods -l app=keycloak -o wide || true
+            if [ -n "${operator_namespace}" ]; then
+              echo "Recent keycloak-operator logs from namespace ${operator_namespace}:"
+              kubectl -n "${operator_namespace}" logs deployment/keycloak-operator --tail=200 || true
+            fi
+            exit 1
+          fi
 
       - name: Show ingress endpoints (if available)
         shell: bash
