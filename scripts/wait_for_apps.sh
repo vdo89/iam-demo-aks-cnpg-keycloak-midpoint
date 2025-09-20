@@ -27,6 +27,7 @@ last_tracked_resource_summary=""
 last_ignored_resource_summary=""
 ignored_resources_first_observed=""
 ignored_diagnostics_dumped=0
+last_crashloop_summary=""
 apps_namespace="${IAM_NAMESPACE:-}"
 for attempt in $(seq 1 90); do
   app_json=""
@@ -316,6 +317,90 @@ for attempt in $(seq 1 90); do
     fi
 
     diagnostics_dumped=1
+  fi
+
+  if [ -n "${apps_namespace}" ] && kubectl get ns "${apps_namespace}" >/dev/null 2>&1; then
+    pods_json="$(kubectl -n "${apps_namespace}" get pods -o json 2>/dev/null || true)"
+    if [ -n "${pods_json}" ]; then
+      crashloop_json="$(jq -c '
+        def crash_state($state):
+          if ($state | type) != "object" then
+            {reason: "", message: "", phase: ""}
+          elif $state.waiting? then
+            {reason: ($state.waiting.reason // ""), message: ($state.waiting.message // ""), phase: "waiting"}
+          elif $state.terminated? then
+            {reason: ($state.terminated.reason // ""), message: ($state.terminated.message // ""), phase: "terminated"}
+          else
+            {reason: "", message: "", phase: ""}
+          end;
+
+        def reason_matches($reason):
+          ($reason != "") and ((["CrashLoopBackOff","Error","ImagePullBackOff","CreateContainerConfigError","ContainerCannotRun"] | index($reason)) != null);
+
+        [
+          .items[] as $pod |
+          (
+            (
+              [($pod.status.initContainerStatuses // [])[] |
+                (crash_state(.state // {}) as $state |
+                 select(reason_matches($state.reason)) |
+                 [
+                   $pod.metadata.name,
+                   "init",
+                   .name,
+                   (.restartCount // 0),
+                   $state.reason,
+                   $state.message
+                 ])]
+            ) +
+            (
+              [($pod.status.containerStatuses // [])[] |
+                (crash_state(.state // {}) as $state |
+                 select(reason_matches($state.reason)) |
+                 [
+                   $pod.metadata.name,
+                   "app",
+                   .name,
+                   (.restartCount // 0),
+                   $state.reason,
+                   $state.message
+                 ])]
+            )
+          )
+        ] | add // []
+      ' <<<"${pods_json}" 2>/dev/null || true)"
+
+      if [ -n "${crashloop_json}" ] && [ "${crashloop_json}" != "[]" ]; then
+        crashloop_signature="$(jq -r '.[] | [.[0], .[1], .[2], .[4]] | @tsv' <<<"${crashloop_json}" | sort -u)"
+        if [ "${crashloop_signature}" != "${last_crashloop_summary}" ]; then
+          echo "Detected pods with CrashLoopBackOff or related failure states in namespace ${apps_namespace}; collecting diagnostics."
+          crashloop_data="$(jq -r '.[] | @tsv' <<<"${crashloop_json}")"
+          declare -A described_pods=()
+          while IFS=$'\t' read -r pod_name container_scope container_name restart_count failure_reason failure_message; do
+            [ -n "${pod_name}" ] || continue
+            if [ -z "${described_pods["${pod_name}"]+x}" ]; then
+              echo "---- kubectl describe pod ${apps_namespace}/${pod_name} ----"
+              kubectl -n "${apps_namespace}" describe pod "${pod_name}" || true
+              described_pods["${pod_name}"]=1
+            fi
+            if [ -n "${failure_message}" ]; then
+              echo "Pod ${pod_name} ${container_scope} container ${container_name} is in state ${failure_reason}: ${failure_message}"
+            else
+              echo "Pod ${pod_name} ${container_scope} container ${container_name} is in state ${failure_reason}"
+            fi
+            echo "---- Last 40 log lines from ${container_scope} container ${container_name} in pod ${apps_namespace}/${pod_name} ----"
+            kubectl -n "${apps_namespace}" logs "${pod_name}" --container "${container_name}" --tail=40 || true
+            if [[ "${restart_count}" =~ ^[0-9]+$ ]] && [ "${restart_count}" -gt 0 ]; then
+              echo "---- Previous 40 log lines from ${container_scope} container ${container_name} in pod ${apps_namespace}/${pod_name} ----"
+              kubectl -n "${apps_namespace}" logs "${pod_name}" --container "${container_name}" --previous --tail=40 || true
+            fi
+          done <<<"${crashloop_data}"
+          last_crashloop_summary="${crashloop_signature}"
+        fi
+      else
+        last_crashloop_summary=""
+      fi
+    fi
   fi
 
   sleep 10
