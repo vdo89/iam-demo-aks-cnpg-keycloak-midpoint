@@ -1,0 +1,76 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keycloak-db-bootstrap
+  namespace: {{NAMESPACE}}
+  labels:
+    app.kubernetes.io/name: keycloak-db-bootstrap
+    app.kubernetes.io/component: database-bootstrap
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: keycloak-db-bootstrap
+        app.kubernetes.io/component: database-bootstrap
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: psql
+          image: ghcr.io/cloudnative-pg/postgresql:16.4
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cnpg-superuser
+                  key: password
+            - name: KEYCLOAK_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-db-app
+                  key: username
+            - name: KEYCLOAK_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-db-app
+                  key: password
+            - name: DB_HOST
+              value: iam-db-rw.{{NAMESPACE}}.svc.cluster.local
+          command:
+            - bash
+            - -lc
+            - |
+              set -euo pipefail
+
+              kc_user_sql=${KEYCLOAK_DB_USER//\'/\'\'}
+              kc_password_sql=${KEYCLOAK_DB_PASSWORD//\'/\'\'}
+
+              echo "Ensuring role '${KEYCLOAK_DB_USER}' exists with login access"
+              psql -h "${DB_HOST}" -U postgres -v ON_ERROR_STOP=1 <<SQL
+              DO \$\$
+              DECLARE
+                role_name text := '${kc_user_sql}';
+                role_password text := '${kc_password_sql}';
+              BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) THEN
+                  EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L', role_name, role_password);
+                ELSE
+                  EXECUTE format('ALTER ROLE %I PASSWORD %L', role_name, role_password);
+                  EXECUTE format('ALTER ROLE %I LOGIN', role_name);
+                END IF;
+              END
+              \$\$;
+              SQL
+
+              kc_user_identifier=${KEYCLOAK_DB_USER//\"/\"\"}
+
+              echo "Ensuring database 'keycloak' exists and is owned by '${KEYCLOAK_DB_USER}'"
+              db_exists=$(psql -h "${DB_HOST}" -U postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'keycloak'")
+              if [[ -z "${db_exists// }" ]]; then
+                echo "Creating database 'keycloak'"
+                psql -h "${DB_HOST}" -U postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"keycloak\" OWNER \"${kc_user_identifier}\""
+              else
+                echo "Database 'keycloak' already exists; ensuring ownership"
+                psql -h "${DB_HOST}" -U postgres -v ON_ERROR_STOP=1 -c "ALTER DATABASE \"keycloak\" OWNER TO \"${kc_user_identifier}\""
+              fi

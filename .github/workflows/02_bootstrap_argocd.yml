@@ -1498,38 +1498,50 @@ jobs:
 
           echo "iam-db-rw endpoints: ${endpoints}"
 
-          job_name="midpoint-db-bootstrap"
-          kubectl -n "${ns}" delete job "${job_name}" --ignore-not-found
+          run_bootstrap_job() {
+            local job_name="$1"
+            local template_path="$2"
+            local description="$3"
 
-          manifest="$(mktemp)"
-          cleanup_manifest() {
-            rm -f "${manifest}"
-          }
-          trap cleanup_manifest EXIT
+            echo "Starting ${description} job (${job_name}) in namespace ${ns}"
+            kubectl -n "${ns}" delete job "${job_name}" --ignore-not-found
 
-          if ! sed "s#{{NAMESPACE}}#${ns}#g" k8s/apps/cnpg/midpoint-db-bootstrap-job.yaml >"${manifest}"; then
-            echo "Failed to render midpoint database bootstrap Job manifest"
-            exit 1
-          fi
+            local manifest
+            manifest="$(mktemp)"
+            trap 'rm -f "${manifest}"' RETURN
 
-          if grep -q '{{NAMESPACE}}' "${manifest}"; then
-            echo "Namespace placeholder substitution failed for midpoint database bootstrap Job manifest"
-            cat "${manifest}"
-            exit 1
-          fi
+            if ! sed "s#{{NAMESPACE}}#${ns}#g" "${template_path}" >"${manifest}"; then
+              echo "Failed to render manifest ${template_path} for job ${job_name}"
+              rm -f "${manifest}"
+              exit 1
+            fi
 
-          kubectl apply -f "${manifest}"
+            if grep -q '{{NAMESPACE}}' "${manifest}"; then
+              echo "Namespace placeholder substitution failed for job ${job_name} manifest"
+              cat "${manifest}"
+              rm -f "${manifest}"
+              exit 1
+            fi
 
-          if ! kubectl -n "${ns}" wait --for=condition=Complete job/"${job_name}" --timeout=240s; then
-            echo "midPoint database bootstrap job did not complete successfully"
+            kubectl apply -f "${manifest}"
+
+            if ! kubectl -n "${ns}" wait --for=condition=Complete job/"${job_name}" --timeout=240s; then
+              echo "${description} job ${job_name} did not complete successfully"
+              kubectl -n "${ns}" logs job/"${job_name}" || true
+              kubectl -n "${ns}" describe job "${job_name}" || true
+              kubectl -n "${ns}" get pods -l job-name="${job_name}" -o wide || true
+              rm -f "${manifest}"
+              exit 1
+            fi
+
             kubectl -n "${ns}" logs job/"${job_name}" || true
-            kubectl -n "${ns}" describe job "${job_name}" || true
-            kubectl -n "${ns}" get pods -l job-name="${job_name}" -o wide || true
-            exit 1
-          fi
+            kubectl -n "${ns}" delete job "${job_name}" --ignore-not-found
+            rm -f "${manifest}"
+            trap - RETURN
+          }
 
-          kubectl -n "${ns}" logs job/"${job_name}" || true
-          kubectl -n "${ns}" delete job "${job_name}" --ignore-not-found
+          run_bootstrap_job "keycloak-db-bootstrap" "k8s/apps/cnpg/keycloak-db-bootstrap-job.yaml" "Keycloak database bootstrap"
+          run_bootstrap_job "midpoint-db-bootstrap" "k8s/apps/cnpg/midpoint-db-bootstrap-job.yaml" "midPoint database bootstrap"
 
           kubectl -n "${ns}" wait cluster/iam-db --for=condition=Ready --timeout=600s || true
 
