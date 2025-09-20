@@ -18,7 +18,7 @@ on:
       KEYCLOAK_SERVICE_NAME:
         description: 'Keycloak Service name (check kubectl -n <ns> get svc)'
         required: true
-        default: 'rws-keycloak'
+        default: 'rws-keycloak-service'
       KEYCLOAK_SERVICE_PORT:
         description: 'Keycloak Service port (8080 for httpEnabled=true)'
         required: true
@@ -90,6 +90,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if ! kubectl -n "$NAMESPACE" get svc midpoint >/dev/null 2>&1; then
+            echo "ERROR: Service midpoint not found in namespace ${NAMESPACE}."
+            kubectl -n "$NAMESPACE" get svc || true
+            exit 1
+          fi
           if kubectl -n "$NAMESPACE" get ingress midpoint >/dev/null 2>&1; then
             echo "Reconciling existing midPoint Ingress host -> ${MP_HOST}"
           else
@@ -112,6 +117,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if ! kubectl -n "$NAMESPACE" get svc "$SVC" >/dev/null 2>&1; then
+            echo "ERROR: Service ${SVC} not found in namespace ${NAMESPACE}."
+            kubectl -n "$NAMESPACE" get svc || true
+            exit 1
+          fi
+          if ! kubectl -n "$NAMESPACE" get svc "$SVC" -o jsonpath='{range .spec.ports[*]}{.port}{"\n"}{end}' | grep -qx "$PORT"; then
+            echo "ERROR: Service ${SVC} does not expose port ${PORT}."
+            kubectl -n "$NAMESPACE" get svc "$SVC" -o yaml || true
+            exit 1
+          fi
           echo "Reconciling Keycloak public Ingress for host ${KC_HOST} -> ${SVC}:${PORT}"
           kubectl -n "$NAMESPACE" create ingress rws-keycloak-public \
             --class=nginx \
@@ -123,17 +138,31 @@ jobs:
           kubectl -n "$NAMESPACE" get ingress rws-keycloak-public -o wide
 
       - name: Smoke-test endpoints
+        env:
+          NAMESPACE: ${{ inputs.NAMESPACE_IAM }}
         shell: bash
         run: |
-          set +e
+          set -euo pipefail
           echo "Keycloak:  http://${KC_HOST}"
           echo "midPoint:  http://${MP_HOST}/midpoint"
-          for i in {1..10}; do
-            echo "HTTP HEAD try $i ..."
-            (curl -sS -I --max-time 5 "http://${KC_HOST}" | head -n 1 &&              curl -sS -I --max-time 5 "http://${MP_HOST}/midpoint" | head -n 1) && break
-            sleep 5
+          attempts=12
+          sleep_seconds=10
+          for i in $(seq 1 "$attempts"); do
+            echo "HTTP HEAD try ${i}/${attempts} ..."
+            if curl -sS -I --fail --max-time 10 "http://${KC_HOST}" | head -n 1; then
+              if curl -sS -I --fail --max-time 10 "http://${MP_HOST}/midpoint" | head -n 1; then
+                echo "Endpoints responded successfully."
+                break
+              fi
+            fi
+            if [ "$i" -eq "$attempts" ]; then
+              echo "ERROR: Endpoints did not respond successfully after ${attempts} attempts." >&2
+              kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide || true
+              kubectl -n "$NAMESPACE" get ingress midpoint rws-keycloak-public -o wide || true
+              exit 1
+            fi
+            sleep "$sleep_seconds"
           done
-          true
 
       - name: Summary
         shell: bash
