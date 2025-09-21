@@ -27,6 +27,38 @@ require_cmd curl
 require_cmd jq
 require_cmd python3
 
+apply_ingress() {
+  local label="$1"
+  local name="$2"
+  local host="$3"
+  local service_name="$4"
+  local service_port="$5"
+
+  log "Reconciling ${label} ingress (host ${host})..."
+  cat <<EOF | kubectl apply -f -
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ${name}
+  namespace: ${NAMESPACE}
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "16m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: ${host}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ${service_name}
+                port:
+                  number: ${service_port}
+EOF
+}
+
 resolve_ingress_ip() {
   local attempt max_attempts sleep_seconds
   local ip=""
@@ -146,54 +178,8 @@ wait_for_midpoint() {
 }
 
 apply_ingresses() {
-  log "Reconciling Keycloak ingress (host ${KC_HOST})..."
-  cat <<EOF | kubectl apply -f -
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: rws-keycloak-public
-  namespace: ${NAMESPACE}
-  annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: "16m"
-spec:
-  ingressClassName: nginx
-  rules:
-    - host: ${KC_HOST}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: ${KEYCLOAK_SERVICE_NAME}
-                port:
-                  number: ${KEYCLOAK_SERVICE_PORT}
-EOF
-
-  log "Reconciling midPoint ingress (host ${MP_HOST})..."
-  cat <<EOF | kubectl apply -f -
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: ${MIDPOINT_SERVICE_NAME}
-  namespace: ${NAMESPACE}
-  annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: "16m"
-spec:
-  ingressClassName: nginx
-  rules:
-    - host: ${MP_HOST}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: ${MIDPOINT_SERVICE_NAME}
-                port:
-                  number: ${MIDPOINT_SERVICE_PORT}
-EOF
-
+  apply_ingress "Keycloak" "rws-keycloak-public" "${KC_HOST}" "${KEYCLOAK_SERVICE_NAME}" "${KEYCLOAK_SERVICE_PORT}"
+  apply_ingress "midPoint" "${MIDPOINT_SERVICE_NAME}" "${MP_HOST}" "${MIDPOINT_SERVICE_NAME}" "${MIDPOINT_SERVICE_PORT}"
   kubectl -n "${NAMESPACE}" get ingress ${MIDPOINT_SERVICE_NAME} rws-keycloak-public -o wide || true
 }
 
@@ -221,24 +207,28 @@ smoke_test() {
   local attempts=6
   local sleep_seconds=20
   local i
+  local prefix
+  local keycloak_path
+  local mp_path
 
-  local -a keycloak_urls=(
-    "http://${KC_HOST}"
-    "http://${KC_HOST}/realms/rws/.well-known/openid-configuration"
-    "http://${KC_HOST}/realms/rws"
-    "http://${KC_HOST}/realms/master/.well-known/openid-configuration"
-    "http://${KC_HOST}/realms/master"
-    "http://${KC_HOST}/auth/realms/rws/.well-known/openid-configuration"
-    "http://${KC_HOST}/auth/realms/rws"
-    "http://${KC_HOST}/auth/realms/master/.well-known/openid-configuration"
-    "http://${KC_HOST}/auth/realms/master"
+  local -a keycloak_urls=("http://${KC_HOST}")
+  local -a keycloak_paths=(
+    "/realms/rws/.well-known/openid-configuration"
+    "/realms/rws"
+    "/realms/master/.well-known/openid-configuration"
+    "/realms/master"
   )
 
-  local -a midpoint_urls=(
-    "http://${MP_HOST}/midpoint/"
-    "http://${MP_HOST}/midpoint"
-    "http://${MP_HOST}"
-  )
+  for prefix in "" "/auth"; do
+    for keycloak_path in "${keycloak_paths[@]}"; do
+      keycloak_urls+=("http://${KC_HOST}${prefix}${keycloak_path}")
+    done
+  done
+
+  local -a midpoint_urls=()
+  for mp_path in "/midpoint/" "/midpoint" ""; do
+    midpoint_urls+=("http://${MP_HOST}${mp_path}")
+  done
 
   for i in $(seq 1 "${attempts}"); do
     log "HTTP availability check ${i}/${attempts}..."

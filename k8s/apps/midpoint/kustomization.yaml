@@ -13,3 +13,18 @@ configMapGenerator:
       - config.xml
     options:
       disableNameSuffixHash: true
+  - name: midpoint-env
+    literals:
+      - MP_NO_ENV_COMPAT=1
+      - MP_UNSET_midpoint_repository_database=1
+      - MP_UNSET_midpoint_repository_jdbcUrl=1
+      - MP_UNSET_midpoint_repository_hibernateHbm2ddl=1
+      - MP_UNSET_midpoint_repository_initializationFailTimeout=1
+      - MP_UNSET_midpoint_repository_missingSchemaAction=1
+      - MP_UNSET_midpoint_repository_upgradeableSchemaAction=1
+      - MP_UNSET_midpoint_repository_jdbcUsername=1
+      - MP_UNSET_midpoint_repository_jdbcPassword=1
+      - MP_UNSET_midpoint_repository_username=1
+      - MP_UNSET_midpoint_repository_password=1
+    options:
+      disableNameSuffixHash: true
