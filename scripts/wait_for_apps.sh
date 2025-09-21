@@ -3,18 +3,19 @@ set -euo pipefail
 
 IAM_NAMESPACE="${IAM_NAMESPACE:-}"
 
-split_resource_identifier() {
-  local identifier="$1"
-  local ns_var="$2"
-  local name_var="$3"
+print_tracked_resources() {
+  local resources_json="$1"
+  jq -r '
+    .[]
+    | "  - \(.kind) \(.identifier): "
+      + (if .health == "" then "Unknown" else .health end)
+      + (if .message != "" then " (\(.message))" else "" end)
+  ' <<<"${resources_json}"
+}
 
-  if [[ "${identifier}" == */* ]]; then
-    printf -v "${ns_var}" '%s' "${identifier%%/*}"
-    printf -v "${name_var}" '%s' "${identifier##*/}"
-  else
-    printf -v "${ns_var}" '%s' ""
-    printf -v "${name_var}" '%s' "${identifier}"
-  fi
+print_ignored_resources() {
+  local resources_json="$1"
+  jq -r '.[] | "  - \(.kind) \(.identifier)"' <<<"${resources_json}"
 }
 
 dump_resource_yaml() {
@@ -118,9 +119,9 @@ fi
 
 echo "Waiting for Argo CD application 'apps' to report Synced/Healthy status"
 diagnostics_dumped=0
-last_tracked_resource_summary=""
-last_ignored_resource_summary=""
-ignored_resources_first_observed=""
+last_tracked_resources_json="[]"
+last_ignored_resources_json="[]"
+ignored_resources_first_observed=0
 ignored_diagnostics_dumped=0
 last_crashloop_summary=""
 apps_namespace="${IAM_NAMESPACE:-}"
@@ -135,104 +136,74 @@ for attempt in $(seq 1 90); do
   sync_status=$(jq -r '.status.sync.status // ""' <<<"${app_json}")
   health_status=$(jq -r '.status.health.status // ""' <<<"${app_json}")
   operation_phase=$(jq -r '.status.operationState.phase // ""' <<<"${app_json}")
-  tracked_resources_summary=$(jq -r '
-    (
-      [
-        .status.resources[]?
-        | {
-            sync: (.status // ""),
-            health: (.health.status // ""),
-            kind: (.kind // "Unknown"),
-            namespace: (.namespace // ""),
-            name: (.name // ""),
-            message: (.health.message // "")
-          }
-        | select((.sync != "Synced") or (.health != "" and .health != "Healthy"))
-        | [
-            (if .health == "" then "Unknown" else .health end),
-            .kind,
-            (if .namespace != "" then (.namespace + "/" + .name) else .name end),
-            .message
-          ]
-        | @tsv
-      ]
-      | unique
-    )
-    | join("\n")
+  tracked_resources_json=$(jq -c '
+    [
+      .status.resources[]?
+      | select((.status // "") != "Synced"
+               or (((.health.status // "") != "") and (.health.status // "") != "Healthy"))
+      | {
+          kind: (.kind // "Unknown"),
+          namespace: (.namespace // ""),
+          name: (.name // ""),
+          identifier: (if (.namespace // "") != "" then (.namespace + "/" + .name) else .name end),
+          health: (.health.status // ""),
+          message: (.health.message // "")
+        }
+    ]
   ' <<<"${app_json}")
 
-  ignored_resources_summary=$(jq -r '
-    (
-      [
-        .status.resources[]?
-        | select((.status // "") == "Synced" and (.health.status // "") == "")
-        | [
-            (.kind // "Unknown"),
-            (if .namespace then (.namespace + "/" + .name) else .name end)
-          ]
-        | @tsv
-      ]
-      | unique
-    )
-    | join("\n")
+  ignored_resources_json=$(jq -c '
+    [
+      .status.resources[]?
+      | select((.status // "") == "Synced" and (.health.status // "") == "")
+      | {
+          kind: (.kind // "Unknown"),
+          namespace: (.namespace // ""),
+          name: (.name // ""),
+          identifier: (if (.namespace // "") != "" then (.namespace + "/" + .name) else .name end)
+        }
+    ]
   ' <<<"${app_json}")
 
   echo "apps status: sync=${sync_status:-<unknown>} health=${health_status:-<unknown>} operation=${operation_phase:-<unknown>} (attempt ${attempt}/90)"
 
-  if [ -n "${tracked_resources_summary}" ]; then
-    if [ "${tracked_resources_summary}" != "${last_tracked_resource_summary}" ]; then
+  if [[ "${tracked_resources_json}" != "${last_tracked_resources_json}" ]]; then
+    if [[ "${tracked_resources_json}" != "[]" ]]; then
       echo "Resources still progressing or unhealthy:"
-      while IFS=$'\t' read -r res_health res_kind res_identifier res_message; do
-        [ -z "${res_health}" ] && continue
-        if [ -n "${res_message}" ]; then
-          echo "  - ${res_kind} ${res_identifier}: ${res_health} (${res_message})"
-        else
-          echo "  - ${res_kind} ${res_identifier}: ${res_health}"
-        fi
-      done <<<"${tracked_resources_summary}"
-      last_tracked_resource_summary="${tracked_resources_summary}"
-    fi
-  else
-    if [ -n "${last_tracked_resource_summary}" ]; then
+      print_tracked_resources "${tracked_resources_json}"
+    elif [[ "${last_tracked_resources_json}" != "[]" ]]; then
       echo "All managed resources currently report Healthy."
     fi
-    last_tracked_resource_summary=""
+    last_tracked_resources_json="${tracked_resources_json}"
   fi
 
-  if [ -n "${ignored_resources_summary}" ]; then
-    if [ "${ignored_resources_summary}" != "${last_ignored_resource_summary}" ]; then
+  if [[ "${ignored_resources_json}" != "${last_ignored_resources_json}" ]]; then
+    if [[ "${ignored_resources_json}" != "[]" ]]; then
       echo "Argo CD has not reported health status for the following synced resources yet; continuing to wait for explicit health information:"
-      while IFS=$'\t' read -r ignored_kind ignored_identifier; do
-        [ -z "${ignored_kind}" ] && continue
-        echo "  - ${ignored_kind} ${ignored_identifier}"
-      done <<<"${ignored_resources_summary}"
-      last_ignored_resource_summary="${ignored_resources_summary}"
-      ignored_resources_first_observed="${attempt}"
+      print_ignored_resources "${ignored_resources_json}"
+      ignored_resources_first_observed=${attempt}
+      ignored_diagnostics_dumped=0
+    else
+      ignored_resources_first_observed=0
       ignored_diagnostics_dumped=0
     fi
+    last_ignored_resources_json="${ignored_resources_json}"
+  fi
 
-    if [ -z "${ignored_resources_first_observed}" ]; then
-      ignored_resources_first_observed="${attempt}"
+  if [[ "${ignored_resources_json}" != "[]" ]]; then
+    if (( ignored_resources_first_observed == 0 )); then
+      ignored_resources_first_observed=${attempt}
     fi
 
     observations=$((attempt - ignored_resources_first_observed + 1))
-    if [ "${ignored_diagnostics_dumped}" -eq 0 ] && [ "${observations}" -ge 6 ]; then
+    if (( ignored_diagnostics_dumped == 0 && observations >= 6 )); then
       echo "Collecting current state for resources still missing Argo CD health information:"
-      while IFS=$'\t' read -r ignored_kind ignored_identifier; do
-        [ -z "${ignored_kind}" ] && continue
-
-        ignored_namespace=""
-        ignored_name=""
-        split_resource_identifier "${ignored_identifier}" ignored_namespace ignored_name
-
+      while IFS=$'\t' read -r ignored_kind ignored_namespace ignored_name ignored_identifier; do
+        [[ -n "${ignored_kind}" ]] || continue
         dump_resource_yaml "${ignored_kind}" "${ignored_namespace}" "${ignored_name}"
-      done <<<"${ignored_resources_summary}"
+      done < <(jq -r '.[] | [.kind, .namespace, .name, .identifier] | @tsv' <<<"${ignored_resources_json}")
       ignored_diagnostics_dumped=1
     fi
-  else
-    last_ignored_resource_summary=""
-    ignored_resources_first_observed=""
-    ignored_diagnostics_dumped=0
   fi
 
   if [ "${sync_status}" = "Synced" ] && [ "${health_status}" = "Healthy" ]; then
@@ -251,14 +222,10 @@ for attempt in $(seq 1 90); do
     echo "apps application health is Degraded. Dumping application manifest for troubleshooting."
     kubectl -n argocd get application apps -o yaml || true
 
-    if [ -n "${tracked_resources_summary}" ]; then
+    if [[ "${tracked_resources_json}" != "[]" ]]; then
       echo "Collecting detailed status for non-healthy resources reported by Argo CD:"
-      while IFS=$'\t' read -r res_health res_kind res_identifier res_message; do
-        [ -z "${res_kind}" ] && continue
-
-        res_namespace=""
-        res_name=""
-        split_resource_identifier "${res_identifier}" res_namespace res_name
+      while IFS=$'\t' read -r res_kind res_namespace res_name res_identifier res_health res_message; do
+        [[ -n "${res_kind}" ]] || continue
 
         if [ -n "${res_message}" ]; then
           echo "Resource ${res_kind} ${res_identifier} reported ${res_health}: ${res_message}"
@@ -286,7 +253,7 @@ for attempt in $(seq 1 90); do
             dump_resource_yaml "${res_kind}" "${res_namespace}" "${res_name}"
             ;;
         esac
-      done <<<"${tracked_resources_summary}"
+      done < <(jq -r '.[] | [.kind, .namespace, .name, .identifier, (if .health == "" then "Unknown" else .health end), .message] | @tsv' <<<"${tracked_resources_json}")
     fi
 
     if kubectl get ns "${apps_namespace}" >/dev/null 2>&1; then
