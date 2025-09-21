@@ -1180,13 +1180,33 @@ jobs:
           fi
 
           echo "Reconciling Keycloak public Ingress for host ${KC_HOST} -> ${SVC}:${PORT}"
-          kubectl -n "$NAMESPACE" create ingress rws-keycloak-public \
-            --class=nginx \
-            --rule="${KC_HOST}/=${SVC}:${PORT}" \
-            --annotation=nginx.ingress.kubernetes.io/proxy-body-size=16m \
-            --dry-run=client \
-            -o yaml \
-            | kubectl apply -f -
+          # Render the manifest manually so we can force pathType=Prefix. The
+          # default ImplementationSpecific path rendered by `kubectl create
+          # ingress` matches only the exact "/" path on newer ingress-nginx
+          # releases, which breaks Keycloak realm endpoints such as
+          # /realms/<realm>/... when exposed via nip.io.
+          cat <<EOF | kubectl apply -f -
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rws-keycloak-public
+  namespace: ${NAMESPACE}
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 16m
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: ${KC_HOST}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ${SVC}
+                port:
+                  number: ${PORT}
+EOF
           kubectl -n "$NAMESPACE" get ingress rws-keycloak-public -o wide
 
       - name: Smoke-test endpoints
