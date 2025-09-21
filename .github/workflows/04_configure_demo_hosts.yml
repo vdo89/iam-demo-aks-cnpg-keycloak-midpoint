@@ -1089,13 +1089,29 @@ jobs:
           else
             echo "Creating midPoint Ingress with host ${MP_HOST}"
           fi
-          kubectl -n "$NAMESPACE" create ingress midpoint \
-            --class=nginx \
-            --rule="${MP_HOST}/=midpoint:8080" \
-            --annotation=nginx.ingress.kubernetes.io/proxy-body-size=16m \
-            --dry-run=client \
-            -o yaml \
-            | kubectl apply -f -
+          # Render the Ingress with pathType Prefix so nested routes like /midpoint remain routable.
+          kubectl apply -f - <<EOF
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: midpoint
+  namespace: ${NAMESPACE}
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 16m
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: ${MP_HOST}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: midpoint
+            port:
+              number: 8080
+EOF
           kubectl -n "$NAMESPACE" get ingress midpoint -o wide
 
       - name: Create/Update Keycloak Ingress (public)
@@ -1180,13 +1196,29 @@ jobs:
           fi
 
           echo "Reconciling Keycloak public Ingress for host ${KC_HOST} -> ${SVC}:${PORT}"
-          kubectl -n "$NAMESPACE" create ingress rws-keycloak-public \
-            --class=nginx \
-            --rule="${KC_HOST}/=${SVC}:${PORT}" \
-            --annotation=nginx.ingress.kubernetes.io/proxy-body-size=16m \
-            --dry-run=client \
-            -o yaml \
-            | kubectl apply -f -
+          # Render the Ingress with pathType Prefix so Keycloak subpaths like /realms/... resolve.
+          kubectl apply -f - <<EOF
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rws-keycloak-public
+  namespace: ${NAMESPACE}
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 16m
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: ${KC_HOST}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: ${SVC}
+            port:
+              number: ${PORT}
+EOF
           kubectl -n "$NAMESPACE" get ingress rws-keycloak-public -o wide
 
       - name: Smoke-test endpoints
