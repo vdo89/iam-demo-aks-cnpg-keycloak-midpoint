@@ -5,3 +5,7 @@ resources:
   - keycloak/rws-realm.yaml
   - keycloak/ingress.yaml
   - midpoint
+
+patchesStrategicMerge:
+  - keycloak/ingress-host-patch.yaml
+  - midpoint/ingress-host-patch.yaml

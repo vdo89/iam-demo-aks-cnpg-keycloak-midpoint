@@ -19,18 +19,6 @@ spec:
       namespace: iam
       jsonPointers:
         - /spec/realm
-    - group: networking.k8s.io
-      kind: Ingress
-      name: midpoint
-      namespace: iam
-      jsonPointers:
-        - /spec/rules/0/host
-    - group: networking.k8s.io
-      kind: Ingress
-      name: rws-keycloak-public
-      namespace: iam
-      jsonPointers:
-        - /spec/rules/0/host
   syncPolicy:
     automated:
       prune: true
