@@ -196,7 +196,7 @@ jobs:
               sys.exit(1)
           
           ip_config_id = ip_config_ids[0]
-          parts = [segment for segment in ip_config_id.split('/') if segment]
+          parts = [segment for segment in ip_config_id.split("/") if segment]
           
           try:
               lb_index = parts.index("loadBalancers")
