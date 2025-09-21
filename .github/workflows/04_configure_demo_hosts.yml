@@ -389,6 +389,161 @@ jobs:
                   return f"{nic_name}/{ipconfig_name}"
               return nic_name or ipconfig_name
 
+          def parse_count(value):
+              if isinstance(value, int):
+                  return value
+              if isinstance(value, str):
+                  stripped = value.strip()
+                  if stripped.isdigit():
+                      return int(stripped)
+              return None
+
+          def interpret_state(state: str) -> str:
+              if not state:
+                  return "unknown"
+              normalized = state.strip().lower()
+              if normalized in {"up", "healthy", "inservice", "succeeded", "success", "available", "ok"}:
+                  return "up"
+              if normalized in {"down", "unhealthy", "drain", "outofservice", "failed", "failure"}:
+                  return "down"
+              return "unknown"
+
+          def _get_first_string(source, keys):
+              for key in keys:
+                  value = source.get(key)
+                  if isinstance(value, str):
+                      stripped = value.strip()
+                      if stripped:
+                          return stripped
+              return ""
+
+          def normalise_backend_entry(entry):
+              if not isinstance(entry, dict):
+                  return None
+              aggregated = {
+                  "ip": "",
+                  "state": "",
+                  "reason": "",
+                  "nic_id": "",
+                  "pool_id": "",
+                  "name": entry.get("name") if isinstance(entry.get("name"), str) else "",
+              }
+              candidates = [entry]
+              props = entry.get("properties")
+              if isinstance(props, dict):
+                  candidates.append(props)
+              for candidate in candidates:
+                  aggregated["ip"] = aggregated["ip"] or _get_first_string(candidate, (
+                      "ipAddress",
+                      "ipaddress",
+                      "ip",
+                      "frontendIPAddress",
+                      "frontendIpAddress",
+                      "fqdn",
+                      "fullyQualifiedDomainName",
+                  ))
+                  aggregated["state"] = aggregated["state"] or _get_first_string(candidate, (
+                      "state",
+                      "status",
+                      "health",
+                      "healthStatus",
+                  ))
+                  aggregated["reason"] = aggregated["reason"] or _get_first_string(candidate, (
+                      "reason",
+                      "details",
+                      "detail",
+                      "description",
+                      "healthProbeStatus",
+                  ))
+                  aggregated["nic_id"] = aggregated["nic_id"] or _get_first_string(candidate, (
+                      "networkInterfaceIPConfigurationId",
+                      "backendIPConfigurationId",
+                  ))
+                  aggregated["pool_id"] = aggregated["pool_id"] or _get_first_string(candidate, (
+                      "backendAddressPoolId",
+                  ))
+                  backend_ip_config = candidate.get("backendIPConfiguration")
+                  if isinstance(backend_ip_config, dict) and not aggregated["nic_id"]:
+                      nic_value = backend_ip_config.get("id")
+                      if isinstance(nic_value, str) and nic_value.strip():
+                          aggregated["nic_id"] = nic_value.strip()
+                  backend_pool = candidate.get("backendAddressPool")
+                  if isinstance(backend_pool, dict) and not aggregated["pool_id"]:
+                      pool_value = backend_pool.get("id")
+                      if isinstance(pool_value, str) and pool_value.strip():
+                          aggregated["pool_id"] = pool_value.strip()
+              aggregated["state"] = aggregated["state"].strip()
+              if not aggregated["state"]:
+                  return None
+              if not aggregated["ip"] and not aggregated["nic_id"]:
+                  return None
+              return aggregated
+
+          def extract_backend_entries(data):
+              if data is None:
+                  return []
+              results = []
+              seen_entries = set()
+              seen_nodes = set()
+
+              def enqueue(value, stack):
+                  if isinstance(value, (dict, list)) and id(value) not in seen_nodes:
+                      stack.append(value)
+
+              stack = []
+              enqueue(data, stack)
+
+              while stack:
+                  node = stack.pop()
+                  node_id = id(node)
+                  if node_id in seen_nodes:
+                      continue
+                  seen_nodes.add(node_id)
+
+                  if isinstance(node, dict):
+                      entry = normalise_backend_entry(node)
+                      if entry:
+                          key = (
+                              entry.get("ip") or "",
+                              entry.get("nic_id") or "",
+                              entry.get("state") or "",
+                              entry.get("pool_id") or "",
+                          )
+                          if key not in seen_entries:
+                              seen_entries.add(key)
+                              results.append(entry)
+                      for key_name in (
+                          "loadBalancerBackendAddresses",
+                          "loadBalancerBackendAddressHealths",
+                          "backendAddressHealths",
+                          "backendAddresses",
+                          "value",
+                      ):
+                          enqueue(node.get(key_name), stack)
+                      enqueue(node.get("properties"), stack)
+                      for value in node.values():
+                          enqueue(value, stack)
+                  elif isinstance(node, list):
+                      for item in node:
+                          enqueue(item, stack)
+
+              return results
+
+          def summarise_states(entries):
+              summary = {"up": 0, "down": 0, "unknown": 0}
+              for entry in entries:
+                  category = interpret_state(entry.get("state"))
+                  summary[category] = summary.get(category, 0) + 1
+              return summary
+
+          def extract_pool_name(pool_id: str) -> str:
+              if not pool_id:
+                  return ""
+              parts = [segment for segment in pool_id.split('/') if segment]
+              if not parts:
+                  return ""
+              return parts[-1]
+
           def query_rule_health(rule: str):
               url = (
                   f"https://management.azure.com/subscriptions/{subscription}/"
@@ -448,37 +603,88 @@ jobs:
                   if data is None:
                       continue
 
-                  backend_entries = data.get("loadBalancerBackendAddresses") or []
-                  up_count = data.get("up")
-                  down_count = data.get("down")
+                  backend_entries = extract_backend_entries(data)
+                  summary_counts = summarise_states(backend_entries)
+
+                  up_count = parse_count(data.get("up"))
+                  down_count = parse_count(data.get("down"))
+                  unknown_count = parse_count(data.get("unknown"))
+
+                  if up_count is None:
+                      up_count = summary_counts["up"]
+                  if down_count is None:
+                      down_count = summary_counts["down"]
+                  if unknown_count is None:
+                      unknown_count = summary_counts.get("unknown", 0)
+
+                  status_text = ""
+                  for candidate_key in ("status", "provisioningState"):
+                      value = data.get(candidate_key)
+                      if isinstance(value, str) and value.strip():
+                          status_text = value.strip()
+                          break
+
+                  detail_text = ""
+                  for candidate_key in ("details", "detail", "message", "reason"):
+                      value = data.get(candidate_key)
+                      if isinstance(value, str) and value.strip():
+                          detail_text = value.strip()
+                          break
+
+                  rule_has_up = up_count > 0
 
                   if not backend_entries:
-                      if up_count is None and down_count is None:
-                          print(f"  {display_label}: no backend addresses reported yet")
+                      if up_count or down_count or unknown_count:
+                          summary = f"  {display_label}: up={up_count} down={down_count}"
+                          if unknown_count:
+                              summary += f" unknown={unknown_count}"
+                          summary += " (no backend addresses reported yet)"
+                          message_parts = [summary]
                       else:
-                          print(
-                              f"  {display_label}: up={up_count or 0} down={down_count or 0} "
-                              "(no backend addresses reported yet)"
-                          )
+                          message_parts = [f"  {display_label}: no backend addresses reported yet"]
+                      if status_text:
+                          message_parts.append(f"status={status_text}")
+                      if detail_text:
+                          message_parts.append(detail_text)
+                      print(" ".join(message_parts))
+                      if up_count:
+                          rule_has_up = True
+                      if rule_has_up:
+                          any_up = True
                       continue
 
-                  for backend in backend_entries:
-                      ip = backend.get("ipAddress") or "<unknown>"
-                      state = backend.get("state") or "<unknown>"
-                      reason = backend.get("reason")
-                      nic_label = extract_nic_label(backend.get("networkInterfaceIPConfigurationId") or "")
+                  summary_line = f"  {display_label}: up={up_count} down={down_count}"
+                  if unknown_count:
+                      summary_line += f" unknown={unknown_count}"
+                  if status_text:
+                      summary_line += f" status={status_text}"
+                  print(summary_line)
 
-                      backend_label = ip
+                  for entry in backend_entries:
+                      backend_label = entry.get("ip") or entry.get("name") or "<unknown>"
+                      nic_label = extract_nic_label(entry.get("nic_id", "")) or ""
                       if nic_label:
                           backend_label = f"{backend_label} [{nic_label}]"
+                      pool_name = extract_pool_name(entry.get("pool_id", "")) or ""
+                      state_text = entry.get("state") or "<unknown>"
+                      reason_text = entry.get("reason") or ""
+                      detail_components = []
+                      if pool_name:
+                          detail_components.append(f"pool {pool_name}")
+                      if reason_text:
+                          detail_components.append(f"reason: {reason_text}")
+                      detail_suffix = ""
+                      if detail_components:
+                          detail_suffix = " (" + ", ".join(detail_components) + ")"
+                      print(f"  {display_label}: backend {backend_label} state={state_text}{detail_suffix}")
+                      if interpret_state(state_text) == "up":
+                          rule_has_up = True
 
-                      message = f"  {display_label}: backend {backend_label} state={state}"
-                      if reason:
-                          message += f" (reason: {reason})"
-                      print(message)
+                  if summary_counts.get("up", 0) > 0:
+                      rule_has_up = True
 
-                      if state and state.lower() == "up":
-                          any_up = True
+                  if rule_has_up:
+                      any_up = True
 
               if any_up:
                   print("Azure reports at least one backend as healthy.")
@@ -536,12 +742,12 @@ jobs:
                                   if not isinstance(frontend, dict):
                                       return ""
                                   candidates = []
-                                  for key in ("publicIPAddress", "publicIpAddress"):
-                                      candidates.append(frontend.get(key))
+                                  for key_name in ("publicIPAddress", "publicIpAddress"):
+                                      candidates.append(frontend.get(key_name))
                                   props = frontend.get("properties")
                                   if isinstance(props, dict):
-                                      for key in ("publicIPAddress", "publicIpAddress"):
-                                          candidates.append(props.get(key))
+                                      for key_name in ("publicIPAddress", "publicIpAddress"):
+                                          candidates.append(props.get(key_name))
                                   for candidate in candidates:
                                       if isinstance(candidate, dict):
                                           value = candidate.get("id")
@@ -599,6 +805,7 @@ jobs:
 
               time.sleep(sleep_seconds)
           PY
+
 
       - name: Patch/Create midPoint Ingress
         env:
@@ -756,6 +963,161 @@ jobs:
                   return f"{nic_name}/{ipconfig_name}"
               return nic_name or ipconfig_name
 
+          def parse_count(value):
+              if isinstance(value, int):
+                  return value
+              if isinstance(value, str):
+                  stripped = value.strip()
+                  if stripped.isdigit():
+                      return int(stripped)
+              return None
+
+          def interpret_state(state: str) -> str:
+              if not state:
+                  return "unknown"
+              normalized = state.strip().lower()
+              if normalized in {"up", "healthy", "inservice", "succeeded", "success", "available", "ok"}:
+                  return "up"
+              if normalized in {"down", "unhealthy", "drain", "outofservice", "failed", "failure"}:
+                  return "down"
+              return "unknown"
+
+          def _get_first_string(source, keys):
+              for key in keys:
+                  value = source.get(key)
+                  if isinstance(value, str):
+                      stripped = value.strip()
+                      if stripped:
+                          return stripped
+              return ""
+
+          def normalise_backend_entry(entry):
+              if not isinstance(entry, dict):
+                  return None
+              aggregated = {
+                  "ip": "",
+                  "state": "",
+                  "reason": "",
+                  "nic_id": "",
+                  "pool_id": "",
+                  "name": entry.get("name") if isinstance(entry.get("name"), str) else "",
+              }
+              candidates = [entry]
+              props = entry.get("properties")
+              if isinstance(props, dict):
+                  candidates.append(props)
+              for candidate in candidates:
+                  aggregated["ip"] = aggregated["ip"] or _get_first_string(candidate, (
+                      "ipAddress",
+                      "ipaddress",
+                      "ip",
+                      "frontendIPAddress",
+                      "frontendIpAddress",
+                      "fqdn",
+                      "fullyQualifiedDomainName",
+                  ))
+                  aggregated["state"] = aggregated["state"] or _get_first_string(candidate, (
+                      "state",
+                      "status",
+                      "health",
+                      "healthStatus",
+                  ))
+                  aggregated["reason"] = aggregated["reason"] or _get_first_string(candidate, (
+                      "reason",
+                      "details",
+                      "detail",
+                      "description",
+                      "healthProbeStatus",
+                  ))
+                  aggregated["nic_id"] = aggregated["nic_id"] or _get_first_string(candidate, (
+                      "networkInterfaceIPConfigurationId",
+                      "backendIPConfigurationId",
+                  ))
+                  aggregated["pool_id"] = aggregated["pool_id"] or _get_first_string(candidate, (
+                      "backendAddressPoolId",
+                  ))
+                  backend_ip_config = candidate.get("backendIPConfiguration")
+                  if isinstance(backend_ip_config, dict) and not aggregated["nic_id"]:
+                      nic_value = backend_ip_config.get("id")
+                      if isinstance(nic_value, str) and nic_value.strip():
+                          aggregated["nic_id"] = nic_value.strip()
+                  backend_pool = candidate.get("backendAddressPool")
+                  if isinstance(backend_pool, dict) and not aggregated["pool_id"]:
+                      pool_value = backend_pool.get("id")
+                      if isinstance(pool_value, str) and pool_value.strip():
+                          aggregated["pool_id"] = pool_value.strip()
+              aggregated["state"] = aggregated["state"].strip()
+              if not aggregated["state"]:
+                  return None
+              if not aggregated["ip"] and not aggregated["nic_id"]:
+                  return None
+              return aggregated
+
+          def extract_backend_entries(data):
+              if data is None:
+                  return []
+              results = []
+              seen_entries = set()
+              seen_nodes = set()
+
+              def enqueue(value, stack):
+                  if isinstance(value, (dict, list)) and id(value) not in seen_nodes:
+                      stack.append(value)
+
+              stack = []
+              enqueue(data, stack)
+
+              while stack:
+                  node = stack.pop()
+                  node_id = id(node)
+                  if node_id in seen_nodes:
+                      continue
+                  seen_nodes.add(node_id)
+
+                  if isinstance(node, dict):
+                      entry = normalise_backend_entry(node)
+                      if entry:
+                          key = (
+                              entry.get("ip") or "",
+                              entry.get("nic_id") or "",
+                              entry.get("state") or "",
+                              entry.get("pool_id") or "",
+                          )
+                          if key not in seen_entries:
+                              seen_entries.add(key)
+                              results.append(entry)
+                      for key_name in (
+                          "loadBalancerBackendAddresses",
+                          "loadBalancerBackendAddressHealths",
+                          "backendAddressHealths",
+                          "backendAddresses",
+                          "value",
+                      ):
+                          enqueue(node.get(key_name), stack)
+                      enqueue(node.get("properties"), stack)
+                      for value in node.values():
+                          enqueue(value, stack)
+                  elif isinstance(node, list):
+                      for item in node:
+                          enqueue(item, stack)
+
+              return results
+
+          def summarise_states(entries):
+              summary = {"up": 0, "down": 0, "unknown": 0}
+              for entry in entries:
+                  category = interpret_state(entry.get("state"))
+                  summary[category] = summary.get(category, 0) + 1
+              return summary
+
+          def extract_pool_name(pool_id: str) -> str:
+              if not pool_id:
+                  return ""
+              parts = [segment for segment in pool_id.split('/') if segment]
+              if not parts:
+                  return ""
+              return parts[-1]
+
           def query_rule_health(rule: str):
               url = (
                   f"https://management.azure.com/subscriptions/{subscription}/"
@@ -805,31 +1167,67 @@ jobs:
               if data is None:
                   continue
 
-              backend_entries = data.get("loadBalancerBackendAddresses") or []
-              up_count = data.get("up")
-              down_count = data.get("down")
+              backend_entries = extract_backend_entries(data)
+              summary_counts = summarise_states(backend_entries)
 
-              print(f"{display_label} summary: up={up_count or 0}, down={down_count or 0}")
+              up_count = parse_count(data.get("up"))
+              down_count = parse_count(data.get("down"))
+              unknown_count = parse_count(data.get("unknown"))
+
+              if up_count is None:
+                  up_count = summary_counts["up"]
+              if down_count is None:
+                  down_count = summary_counts["down"]
+              if unknown_count is None:
+                  unknown_count = summary_counts.get("unknown", 0)
+
+              status_text = ""
+              for candidate_key in ("status", "provisioningState"):
+                  value = data.get(candidate_key)
+                  if isinstance(value, str) and value.strip():
+                      status_text = value.strip()
+                      break
+
+              detail_text = ""
+              for candidate_key in ("details", "detail", "message", "reason"):
+                  value = data.get(candidate_key)
+                  if isinstance(value, str) and value.strip():
+                      detail_text = value.strip()
+                      break
+
+              summary_line = f"{display_label} summary: up={up_count} down={down_count}"
+              if unknown_count:
+                  summary_line += f" unknown={unknown_count}"
+              if status_text:
+                  summary_line += f" status={status_text}"
+              print(summary_line)
+
+              if detail_text:
+                  print(f"  details: {detail_text}")
 
               if not backend_entries:
                   print("  <no backend addresses>")
                   continue
 
-              for backend in backend_entries:
-                  ip = backend.get("ipAddress") or "<unknown>"
-                  state = backend.get("state") or "<unknown>"
-                  reason = backend.get("reason")
-                  nic_label = extract_nic_label(backend.get("networkInterfaceIPConfigurationId") or "")
-
-                  backend_label = ip
+              for entry in backend_entries:
+                  backend_label = entry.get("ip") or entry.get("name") or "<unknown>"
+                  nic_label = extract_nic_label(entry.get("nic_id", "")) or ""
                   if nic_label:
                       backend_label = f"{backend_label} [{nic_label}]"
-
-                  message = f"  {backend_label}: state={state}"
-                  if reason:
-                      message += f" (reason: {reason})"
-                  print(message)
+                  pool_name = extract_pool_name(entry.get("pool_id", "")) or ""
+                  state_text = entry.get("state") or "<unknown>"
+                  reason_text = entry.get("reason") or ""
+                  detail_components = []
+                  if pool_name:
+                      detail_components.append(f"pool {pool_name}")
+                  if reason_text:
+                      detail_components.append(f"reason: {reason_text}")
+                  detail_suffix = ""
+                  if detail_components:
+                      detail_suffix = " (" + ", ".join(detail_components) + ")"
+                  print(f"  {backend_label}: state={state_text}{detail_suffix}")
           PY
+
                 if [ -n "${NODE_RESOURCE_GROUP:-}" ] && [ -n "${EXTERNAL_IP:-}" ]; then
                   echo "Azure public IP resource details:"
                   az network public-ip list \
