@@ -1124,25 +1124,25 @@ jobs:
           fi
           selector=$(
             SVC_JSON="${svc_json}" python3 -c '
-import json
-import os
+              import json
+              import os
 
-raw_json = os.environ.get("SVC_JSON", "").strip()
-if not raw_json:
-    raise SystemExit("Service JSON payload is empty")
+              raw_json = os.environ.get("SVC_JSON", "").strip()
+              if not raw_json:
+                  raise SystemExit("Service JSON payload is empty")
 
-svc = json.loads(raw_json)
-selector = svc.get("spec", {}).get("selector") or {}
-parts = []
-for key, value in selector.items():
-    if not key:
-        continue
-    value_str = "" if value is None else str(value)
-    if not value_str:
-        continue
-    parts.append(f"{key}={value_str}")
-print(",".join(parts))
-'
+              svc = json.loads(raw_json)
+              selector = svc.get("spec", {}).get("selector") or {}
+              parts = []
+              for key, value in selector.items():
+                  if not key:
+                      continue
+                  value_str = "" if value is None else str(value)
+                  if not value_str:
+                      continue
+                  parts.append(f"{key}={value_str}")
+              print(",".join(parts))
+            '
           )
           selector=$(tr -d '\r\n' <<<"${selector}")
           if [ -z "${selector}" ]; then
