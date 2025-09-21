@@ -1156,7 +1156,7 @@ jobs:
             return "${status}"
           }
 
-          attempts=18
+          attempts=3
           sleep_seconds=15
 
           keycloak_urls=(
