@@ -1159,10 +1159,21 @@ jobs:
           attempts=18
           sleep_seconds=15
 
+          # Depending on the Keycloak distribution/operator defaults the HTTP endpoints
+          # may be exposed directly at "/" or under the historical "/auth" context
+          # path. Try both the seeded "rws" realm and the built-in master realm so
+          # the smoke test succeeds regardless of which base path the controller
+          # currently advertises.
           keycloak_urls=(
             "http://${KC_HOST}"
-            "http://${KC_HOST}/realms/master"
+            "http://${KC_HOST}/realms/rws/.well-known/openid-configuration"
+            "http://${KC_HOST}/realms/rws"
             "http://${KC_HOST}/realms/master/.well-known/openid-configuration"
+            "http://${KC_HOST}/realms/master"
+            "http://${KC_HOST}/auth/realms/rws/.well-known/openid-configuration"
+            "http://${KC_HOST}/auth/realms/rws"
+            "http://${KC_HOST}/auth/realms/master/.well-known/openid-configuration"
+            "http://${KC_HOST}/auth/realms/master"
           )
 
           midpoint_urls=(
