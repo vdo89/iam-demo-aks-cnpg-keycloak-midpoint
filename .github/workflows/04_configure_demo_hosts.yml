@@ -1073,53 +1073,40 @@ jobs:
           PY
 
 
-      - name: Patch/Create midPoint Ingress
+      - name: Reconcile midPoint Ingress from template
         env:
           NAMESPACE: ${{ inputs.NAMESPACE_IAM }}
+          MP_HOST: ${{ env.MP_HOST }}
         shell: bash
         run: |
           set -euo pipefail
+
           if ! kubectl -n "$NAMESPACE" get svc midpoint >/dev/null 2>&1; then
             echo "ERROR: Service midpoint not found in namespace ${NAMESPACE}."
             kubectl -n "$NAMESPACE" get svc || true
             exit 1
           fi
+
+          if ! command -v envsubst >/dev/null 2>&1; then
+            echo "Installing gettext-base for envsubst"
+            sudo apt-get update >/dev/null
+            sudo apt-get install -y gettext-base >/dev/null
+          fi
+
+          : "${MP_HOST:?MP_HOST environment variable not set}"
+
+          export NAMESPACE
+          export MP_HOST
+          export MIDPOINT_SERVICE_NAME="midpoint"
+          export MIDPOINT_SERVICE_PORT="8080"
+
           if kubectl -n "$NAMESPACE" get ingress midpoint >/dev/null 2>&1; then
             echo "Reconciling existing midPoint Ingress host -> ${MP_HOST}"
           else
             echo "Creating midPoint Ingress with host ${MP_HOST}"
           fi
-          # Render the Ingress with pathType Prefix so nested routes like /midpoint remain routable.
-          python3 <<'PY' | kubectl apply -f -
-          import os
-          import textwrap
 
-          namespace = os.environ["NAMESPACE"]
-          mp_host = os.environ["MP_HOST"]
-          manifest = textwrap.dedent(f'''\
-          apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            name: midpoint
-            namespace: {namespace}
-            annotations:
-              nginx.ingress.kubernetes.io/proxy-body-size: 16m
-          spec:
-            ingressClassName: nginx
-            rules:
-            - host: {mp_host}
-              http:
-                paths:
-                - path: /
-                  pathType: Prefix
-                  backend:
-                    service:
-                      name: midpoint
-                      port:
-                        number: 8080
-          ''')
-          print(manifest, end="")
-          PY
+          envsubst < k8s/demo-hosts/midpoint-ingress.yaml | kubectl apply -f -
           kubectl -n "$NAMESPACE" get ingress midpoint -o wide
 
       - name: Create/Update Keycloak Ingress (public)
@@ -1127,25 +1114,30 @@ jobs:
           NAMESPACE: ${{ inputs.NAMESPACE_IAM }}
           SVC: ${{ inputs.KEYCLOAK_SERVICE_NAME }}
           PORT: ${{ inputs.KEYCLOAK_SERVICE_PORT }}
+          KC_HOST: ${{ env.KC_HOST }}
         shell: bash
         run: |
           set -euo pipefail
+
           if ! kubectl -n "$NAMESPACE" get svc "$SVC" >/dev/null 2>&1; then
             echo "ERROR: Service ${SVC} not found in namespace ${NAMESPACE}."
             kubectl -n "$NAMESPACE" get svc || true
             exit 1
           fi
+
           if ! kubectl -n "$NAMESPACE" get svc "$SVC" -o jsonpath='{range .spec.ports[*]}{.port}{"\n"}{end}' | grep -qx "$PORT"; then
             echo "ERROR: Service ${SVC} does not expose port ${PORT}."
             kubectl -n "$NAMESPACE" get svc "$SVC" -o yaml || true
             exit 1
           fi
+
           svc_json=$(kubectl -n "$NAMESPACE" get svc "$SVC" -o json)
           if [ -z "${svc_json}" ]; then
             echo "ERROR: Failed to fetch JSON description for service ${SVC}." >&2
             kubectl -n "$NAMESPACE" get svc "$SVC" -o yaml || true
             exit 1
           fi
+
           selector=$(
             SVC_JSON="${svc_json}" python3 <<'PY'
             import json
@@ -1203,40 +1195,21 @@ jobs:
             echo "KEYCLOAK_SELECTOR=${selector}" >>"${GITHUB_ENV}"
           fi
 
-          echo "Reconciling Keycloak public Ingress for host ${KC_HOST} -> ${SVC}:${PORT}"
-          # Render the Ingress with pathType Prefix so Keycloak subpaths like /realms/... resolve.
-          python3 <<'PY'
-          import os
-          import textwrap
+          if ! command -v envsubst >/dev/null 2>&1; then
+            echo "Installing gettext-base for envsubst"
+            sudo apt-get update >/dev/null
+            sudo apt-get install -y gettext-base >/dev/null
+          fi
 
-          namespace = os.environ["NAMESPACE"]
-          svc_name = os.environ["SVC"]
-          svc_port = os.environ["PORT"]
-          kc_host = os.environ["KC_HOST"]
-          manifest = textwrap.dedent(f'''\
-          apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            name: rws-keycloak-public
-            namespace: {namespace}
-            annotations:
-              nginx.ingress.kubernetes.io/proxy-body-size: 16m
-          spec:
-            ingressClassName: nginx
-            rules:
-            - host: {kc_host}
-              http:
-                paths:
-                - path: /
-                  pathType: Prefix
-                  backend:
-                    service:
-                      name: {svc_name}
-                      port:
-                        number: {svc_port}
-          ''')
-          print(manifest, end="")
-          PY | kubectl apply -f -
+          : "${KC_HOST:?KC_HOST environment variable not set}"
+
+          export NAMESPACE
+          export KC_HOST
+          export KEYCLOAK_SERVICE_NAME="$SVC"
+          export KEYCLOAK_SERVICE_PORT="$PORT"
+
+          echo "Reconciling Keycloak public Ingress for host ${KC_HOST} -> ${SVC}:${PORT}"
+          envsubst < k8s/demo-hosts/keycloak-ingress.yaml | kubectl apply -f -
           kubectl -n "$NAMESPACE" get ingress rws-keycloak-public -o wide
 
       - name: Smoke-test endpoints
