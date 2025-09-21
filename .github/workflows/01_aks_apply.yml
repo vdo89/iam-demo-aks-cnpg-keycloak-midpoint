@@ -494,7 +494,9 @@ jobs:
         if: inputs.TF_ACTION == 'apply'
         id: tfout
         working-directory: infra/azure/terraform
+        shell: bash
         run: |
+          set -euo pipefail
           echo "RG=$(terraform output -raw resource_group)" >> $GITHUB_OUTPUT
           echo "AKS=$(terraform output -raw aks_name)" >> $GITHUB_OUTPUT
           echo "SA=$(terraform output -raw storage_account_name)" >> $GITHUB_OUTPUT
@@ -502,7 +504,9 @@ jobs:
 
       - name: Show outputs
         if: inputs.TF_ACTION == 'apply'
+        shell: bash
         run: |
+          set -euo pipefail
           echo "Resource Group: ${{ steps.tfout.outputs.RG }}"
           echo "AKS: ${{ steps.tfout.outputs.AKS }}"
           echo "Storage Account: ${{ steps.tfout.outputs.SA }}"
