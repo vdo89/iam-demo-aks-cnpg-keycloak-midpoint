@@ -1122,27 +1122,24 @@ jobs:
             kubectl -n "$NAMESPACE" get svc "$SVC" -o yaml || true
             exit 1
           fi
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "ERROR: jq is required to compute the Keycloak selector." >&2
+            exit 1
+          fi
           selector=$(
-            SVC_JSON="${svc_json}" python3 -c '
-import json
-import os
-
-raw_json = os.environ.get("SVC_JSON", "").strip()
-if not raw_json:
-    raise SystemExit("Service JSON payload is empty")
-
-svc = json.loads(raw_json)
-selector = svc.get("spec", {}).get("selector") or {}
-parts = []
-for key, value in selector.items():
-    if not key:
-        continue
-    value_str = "" if value is None else str(value)
-    if not value_str:
-        continue
-    parts.append(f"{key}={value_str}")
-print(",".join(parts))
-'
+            kubectl -n "$NAMESPACE" get svc "$SVC" -o json |
+            jq -r '
+              (.spec.selector // {})
+              | to_entries
+              | map(
+                  select(
+                    (.key // "") != ""
+                    and (((.value // "") | tostring) | length) > 0
+                  )
+                )
+              | map("\(.key)=\(.value // "")")
+              | join(",")
+            '
           )
           selector=$(tr -d '\r\n' <<<"${selector}")
           if [ -z "${selector}" ]; then
