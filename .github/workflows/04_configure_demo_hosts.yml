@@ -428,6 +428,53 @@ jobs:
                   "pool_id": "",
                   "name": entry.get("name") if isinstance(entry.get("name"), str) else "",
               }
+
+              def _update_from_backend_address(source):
+                  if not isinstance(source, dict):
+                      return
+
+                  name_value = source.get("name")
+                  if isinstance(name_value, str) and name_value.strip():
+                      if not aggregated["name"]:
+                          aggregated["name"] = name_value.strip()
+
+                  aggregated["ip"] = aggregated["ip"] or _get_first_string(
+                      source,
+                      (
+                          "ipAddress",
+                          "ipaddress",
+                          "ip",
+                          "frontendIPAddress",
+                          "frontendIpAddress",
+                          "privateIPAddress",
+                          "privateIpAddress",
+                          "address",
+                      ),
+                  )
+
+                  aggregated["nic_id"] = aggregated["nic_id"] or _get_first_string(
+                      source,
+                      (
+                          "networkInterfaceIPConfigurationId",
+                          "networkInterfaceId",
+                          "ipConfigurationId",
+                          "resourceId",
+                      ),
+                  )
+
+                  aggregated["pool_id"] = aggregated["pool_id"] or _get_first_string(
+                      source,
+                      (
+                          "backendAddressPoolId",
+                          "backendPoolId",
+                          "poolId",
+                      ),
+                  )
+
+                  backend_address_props = source.get("properties")
+                  if isinstance(backend_address_props, dict):
+                      _update_from_backend_address(backend_address_props)
+
               candidates = [entry]
               props = entry.get("properties")
               if isinstance(props, dict):
@@ -441,12 +488,15 @@ jobs:
                       "frontendIpAddress",
                       "fqdn",
                       "fullyQualifiedDomainName",
+                      "privateIPAddress",
+                      "privateIpAddress",
                   ))
                   aggregated["state"] = aggregated["state"] or _get_first_string(candidate, (
                       "state",
                       "status",
                       "health",
                       "healthStatus",
+                      "healthState",
                   ))
                   aggregated["reason"] = aggregated["reason"] or _get_first_string(candidate, (
                       "reason",
@@ -472,10 +522,17 @@ jobs:
                       pool_value = backend_pool.get("id")
                       if isinstance(pool_value, str) and pool_value.strip():
                           aggregated["pool_id"] = pool_value.strip()
+                  backend_address = candidate.get("backendAddress")
+                  if isinstance(backend_address, dict):
+                      _update_from_backend_address(backend_address)
+                  backend_address_health = candidate.get("backendAddressHealth")
+                  if isinstance(backend_address_health, dict):
+                      _update_from_backend_address(backend_address_health)
               aggregated["state"] = aggregated["state"].strip()
               if not aggregated["state"]:
                   return None
-              if not aggregated["ip"] and not aggregated["nic_id"]:
+              aggregated["name"] = aggregated["name"].strip()
+              if not aggregated["ip"] and not aggregated["nic_id"] and not aggregated["name"]:
                   return None
               return aggregated
 
@@ -1002,6 +1059,53 @@ jobs:
                   "pool_id": "",
                   "name": entry.get("name") if isinstance(entry.get("name"), str) else "",
               }
+
+              def _update_from_backend_address(source):
+                  if not isinstance(source, dict):
+                      return
+
+                  name_value = source.get("name")
+                  if isinstance(name_value, str) and name_value.strip():
+                      if not aggregated["name"]:
+                          aggregated["name"] = name_value.strip()
+
+                  aggregated["ip"] = aggregated["ip"] or _get_first_string(
+                      source,
+                      (
+                          "ipAddress",
+                          "ipaddress",
+                          "ip",
+                          "frontendIPAddress",
+                          "frontendIpAddress",
+                          "privateIPAddress",
+                          "privateIpAddress",
+                          "address",
+                      ),
+                  )
+
+                  aggregated["nic_id"] = aggregated["nic_id"] or _get_first_string(
+                      source,
+                      (
+                          "networkInterfaceIPConfigurationId",
+                          "networkInterfaceId",
+                          "ipConfigurationId",
+                          "resourceId",
+                      ),
+                  )
+
+                  aggregated["pool_id"] = aggregated["pool_id"] or _get_first_string(
+                      source,
+                      (
+                          "backendAddressPoolId",
+                          "backendPoolId",
+                          "poolId",
+                      ),
+                  )
+
+                  backend_address_props = source.get("properties")
+                  if isinstance(backend_address_props, dict):
+                      _update_from_backend_address(backend_address_props)
+
               candidates = [entry]
               props = entry.get("properties")
               if isinstance(props, dict):
@@ -1015,12 +1119,15 @@ jobs:
                       "frontendIpAddress",
                       "fqdn",
                       "fullyQualifiedDomainName",
+                      "privateIPAddress",
+                      "privateIpAddress",
                   ))
                   aggregated["state"] = aggregated["state"] or _get_first_string(candidate, (
                       "state",
                       "status",
                       "health",
                       "healthStatus",
+                      "healthState",
                   ))
                   aggregated["reason"] = aggregated["reason"] or _get_first_string(candidate, (
                       "reason",
@@ -1046,10 +1153,17 @@ jobs:
                       pool_value = backend_pool.get("id")
                       if isinstance(pool_value, str) and pool_value.strip():
                           aggregated["pool_id"] = pool_value.strip()
+                  backend_address = candidate.get("backendAddress")
+                  if isinstance(backend_address, dict):
+                      _update_from_backend_address(backend_address)
+                  backend_address_health = candidate.get("backendAddressHealth")
+                  if isinstance(backend_address_health, dict):
+                      _update_from_backend_address(backend_address_health)
               aggregated["state"] = aggregated["state"].strip()
               if not aggregated["state"]:
                   return None
-              if not aggregated["ip"] and not aggregated["nic_id"]:
+              aggregated["name"] = aggregated["name"].strip()
+              if not aggregated["ip"] and not aggregated["nic_id"] and not aggregated["name"]:
                   return None
               return aggregated
 
