@@ -1128,24 +1128,62 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          : "${KC_HOST:?KC_HOST environment variable not set}"
+          : "${MP_HOST:?MP_HOST environment variable not set}"
+
           echo "Keycloak:  http://${KC_HOST}"
           echo "midPoint:  http://${MP_HOST}/midpoint"
+
+          check_endpoint() {
+            local label="$1"
+            shift
+            local url=""
+            local status=1
+            local curl_exit=0
+            for url in "$@"; do
+              [ -n "${url}" ] || continue
+              echo "  -> Probing ${label} via ${url}"
+              if curl -sS --fail --location --max-time 15 -o /dev/null -D - "${url}" | head -n 1; then
+                echo "  ${label} responded via ${url}"
+                status=0
+                break
+              else
+                curl_exit=$?
+                echo "  ${label} request to ${url} did not succeed (exit code ${curl_exit}); retrying..." >&2
+              fi
+            done
+            return "${status}"
+          }
+
           attempts=18
           sleep_seconds=15
-          for i in $(seq 1 "$attempts"); do
-            echo "HTTP HEAD try ${i}/${attempts} ..."
-            if curl -sS -I --fail --max-time 10 "http://${KC_HOST}" | head -n 1; then
-              if curl -sS -I --fail --max-time 10 "http://${MP_HOST}/midpoint" | head -n 1; then
-                echo "Endpoints responded successfully."
-                break
-              fi
+
+          keycloak_urls=(
+            "http://${KC_HOST}"
+            "http://${KC_HOST}/realms/master"
+            "http://${KC_HOST}/realms/master/.well-known/openid-configuration"
+          )
+
+          midpoint_urls=(
+            "http://${MP_HOST}/midpoint/"
+            "http://${MP_HOST}/midpoint"
+            "http://${MP_HOST}"
+          )
+
+          for i in $(seq 1 "${attempts}"); do
+            echo "HTTP availability try ${i}/${attempts} ..."
+            if check_endpoint "Keycloak" "${keycloak_urls[@]}" && \
+               check_endpoint "midPoint" "${midpoint_urls[@]}"; then
+              echo "Endpoints responded successfully."
+              break
             fi
-            if [ "$i" -eq "$attempts" ]; then
+            if [ "${i}" -eq "${attempts}" ]; then
               echo "ERROR: Endpoints did not respond successfully after ${attempts} attempts." >&2
               kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide || true
               kubectl -n ingress-nginx get pods -l app.kubernetes.io/component=controller -o wide || true
               kubectl -n ingress-nginx get endpoints ingress-nginx-controller -o yaml || true
-              kubectl -n "$NAMESPACE" get ingress midpoint rws-keycloak-public -o wide || true
+              kubectl -n "${NAMESPACE}" get ingress midpoint rws-keycloak-public -o wide || true
               if [ -n "${NODE_RESOURCE_GROUP:-}" ] && [ -n "${LB_NAME:-}" ] && [ -n "${LB_TARGET_POOLS:-}" ] && [ -n "${LB_TARGET_RULES:-}" ]; then
                 echo "Azure load balancer backend health (final observation):"
                 python3 <<'PY'
