@@ -5,4 +5,4 @@ metadata:
   namespace: iam
 spec:
   rules:
-    - host: mp.127.0.0.1.nip.io
+    - host: mp.132.220.29.66.nip.io
