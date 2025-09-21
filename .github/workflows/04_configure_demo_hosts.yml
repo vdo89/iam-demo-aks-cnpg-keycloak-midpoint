@@ -1116,23 +1116,33 @@ jobs:
             kubectl -n "$NAMESPACE" get svc "$SVC" -o yaml || true
             exit 1
           fi
-          selector=$(kubectl -n "$NAMESPACE" get svc "$SVC" -o json \
-            | python3 <<'PY'
-          import json
-          import sys
+          svc_json=$(kubectl -n "$NAMESPACE" get svc "$SVC" -o json)
+          if [ -z "${svc_json}" ]; then
+            echo "ERROR: Failed to fetch JSON description for service ${SVC}." >&2
+            kubectl -n "$NAMESPACE" get svc "$SVC" -o yaml || true
+            exit 1
+          fi
+          selector=$(
+            SVC_JSON="${svc_json}" python3 -c '
+import json
+import os
 
-          svc = json.load(sys.stdin)
-          selector = svc.get("spec", {}).get("selector") or {}
-          parts = []
-          for key, value in selector.items():
-              if not key:
-                  continue
-              value_str = "" if value is None else str(value)
-              if not value_str:
-                  continue
-              parts.append(f"{key}={value_str}")
-          print(",".join(parts))
-          PY
+raw_json = os.environ.get("SVC_JSON", "").strip()
+if not raw_json:
+    raise SystemExit("Service JSON payload is empty")
+
+svc = json.loads(raw_json)
+selector = svc.get("spec", {}).get("selector") or {}
+parts = []
+for key, value in selector.items():
+    if not key:
+        continue
+    value_str = "" if value is None else str(value)
+    if not value_str:
+        continue
+    parts.append(f"{key}={value_str}")
+print(",".join(parts))
+'
           )
           selector=$(tr -d '\r\n' <<<"${selector}")
           if [ -z "${selector}" ]; then
