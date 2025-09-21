@@ -1090,7 +1090,7 @@ jobs:
             echo "Creating midPoint Ingress with host ${MP_HOST}"
           fi
           # Render the Ingress with pathType Prefix so nested routes like /midpoint remain routable.
-          python3 <<'PY'
+          python3 <<'PY' | kubectl apply -f -
           import os
           import textwrap
 
@@ -1119,7 +1119,7 @@ jobs:
                         number: 8080
           ''')
           print(manifest, end="")
-          PY | kubectl apply -f -
+          PY
           kubectl -n "$NAMESPACE" get ingress midpoint -o wide
 
       - name: Create/Update Keycloak Ingress (public)
