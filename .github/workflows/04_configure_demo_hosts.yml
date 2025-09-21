@@ -1114,21 +1114,21 @@ jobs:
           fi
           selector=$(kubectl -n "$NAMESPACE" get svc "$SVC" -o json \
             | python3 <<'PY'
-import json
-import sys
+          import json
+          import sys
 
-svc = json.load(sys.stdin)
-selector = svc.get("spec", {}).get("selector") or {}
-parts = []
-for key, value in selector.items():
-    if not key:
-        continue
-    value_str = "" if value is None else str(value)
-    if not value_str:
-        continue
-    parts.append(f"{key}={value_str}")
-print(",".join(parts))
-PY
+          svc = json.load(sys.stdin)
+          selector = svc.get("spec", {}).get("selector") or {}
+          parts = []
+          for key, value in selector.items():
+              if not key:
+                  continue
+              value_str = "" if value is None else str(value)
+              if not value_str:
+                  continue
+              parts.append(f"{key}={value_str}")
+          print(",".join(parts))
+          PY
           )
           selector=$(tr -d '\r\n' <<<"${selector}")
           if [ -z "${selector}" ]; then
