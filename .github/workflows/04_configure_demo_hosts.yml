@@ -1375,16 +1375,16 @@ jobs:
                           return {}
 
                       if poll_status >= 400:
-                  if description:
-                      print(
-                          f"  Polling {description} failed with status {poll_status}",
-                          file=sys.stderr,
-                      )
-                  else:
-                      print(
-                          f"  Polling Azure operation failed with status {poll_status}",
-                          file=sys.stderr,
-                      )
+                          if description:
+                              print(
+                                  f"  Polling {description} failed with status {poll_status}",
+                                  file=sys.stderr,
+                              )
+                          else:
+                              print(
+                                  f"  Polling Azure operation failed with status {poll_status}",
+                                  file=sys.stderr,
+                              )
                           if poll_text:
                               print(poll_text, file=sys.stderr)
                           return None
