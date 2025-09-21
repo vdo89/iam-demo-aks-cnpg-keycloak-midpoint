@@ -1091,27 +1091,27 @@ jobs:
           fi
           # Render the Ingress with pathType Prefix so nested routes like /midpoint remain routable.
           kubectl apply -f - <<EOF
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: midpoint
-  namespace: ${NAMESPACE}
-  annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: 16m
-spec:
-  ingressClassName: nginx
-  rules:
-  - host: ${MP_HOST}
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
             name: midpoint
-            port:
-              number: 8080
-EOF
+            namespace: ${NAMESPACE}
+            annotations:
+              nginx.ingress.kubernetes.io/proxy-body-size: 16m
+          spec:
+            ingressClassName: nginx
+            rules:
+            - host: ${MP_HOST}
+              http:
+                paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: midpoint
+                      port:
+                        number: 8080
+          EOF
           kubectl -n "$NAMESPACE" get ingress midpoint -o wide
 
       - name: Create/Update Keycloak Ingress (public)
