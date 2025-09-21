@@ -1112,6 +1112,59 @@ jobs:
             kubectl -n "$NAMESPACE" get svc "$SVC" -o yaml || true
             exit 1
           fi
+          selector=$(kubectl -n "$NAMESPACE" get svc "$SVC" -o json \
+            | python3 <<'PY'
+import json
+import sys
+
+svc = json.load(sys.stdin)
+selector = svc.get("spec", {}).get("selector") or {}
+parts = []
+for key, value in selector.items():
+    if not key:
+        continue
+    value_str = "" if value is None else str(value)
+    if not value_str:
+        continue
+    parts.append(f"{key}={value_str}")
+print(",".join(parts))
+PY
+          )
+          selector=$(tr -d '\r\n' <<<"${selector}")
+          if [ -z "${selector}" ]; then
+            echo "ERROR: Service ${SVC} does not define a pod selector; cannot wait for Keycloak readiness." >&2
+            kubectl -n "$NAMESPACE" get svc "$SVC" -o yaml || true
+            exit 1
+          fi
+
+          echo "Keycloak service selector: ${selector}"
+          pods_detected=0
+          for attempt in $(seq 1 30); do
+            if kubectl -n "$NAMESPACE" get pods -l "$selector" --field-selector=status.phase!=Succeeded -o name 2>/dev/null | grep -q .; then
+              pods_detected=1
+              break
+            fi
+            echo "Waiting for Keycloak pods matching selector ${selector} (attempt ${attempt}/30); retrying in 10s..."
+            sleep 10
+          done
+
+          if [ "${pods_detected}" -ne 1 ]; then
+            echo "ERROR: Timed out waiting for Keycloak pods matching selector ${selector} to appear." >&2
+            kubectl -n "$NAMESPACE" get pods -l "$selector" -o wide || true
+            exit 1
+          fi
+
+          echo "Waiting for Keycloak pods to report Ready condition..."
+          if ! kubectl -n "$NAMESPACE" wait --for=condition=ready pod -l "$selector" --timeout=600s; then
+            echo "ERROR: Keycloak pods did not become Ready within 600 seconds." >&2
+            kubectl -n "$NAMESPACE" get pods -l "$selector" -o wide || true
+            exit 1
+          fi
+
+          if [ -n "${GITHUB_ENV:-}" ]; then
+            echo "KEYCLOAK_SELECTOR=${selector}" >>"${GITHUB_ENV}"
+          fi
+
           echo "Reconciling Keycloak public Ingress for host ${KC_HOST} -> ${SVC}:${PORT}"
           kubectl -n "$NAMESPACE" create ingress rws-keycloak-public \
             --class=nginx \
@@ -1156,8 +1209,8 @@ jobs:
             return "${status}"
           }
 
-          attempts=3
-          sleep_seconds=15
+          attempts=6
+          sleep_seconds=20
 
           # Depending on the Keycloak distribution/operator defaults the HTTP endpoints
           # may be exposed directly at "/" or under the historical "/auth" context
@@ -1195,6 +1248,9 @@ jobs:
               kubectl -n ingress-nginx get pods -l app.kubernetes.io/component=controller -o wide || true
               kubectl -n ingress-nginx get endpoints ingress-nginx-controller -o yaml || true
               kubectl -n "${NAMESPACE}" get ingress midpoint rws-keycloak-public -o wide || true
+              if [ -n "${KEYCLOAK_SELECTOR:-}" ]; then
+                kubectl -n "${NAMESPACE}" get pods -l "${KEYCLOAK_SELECTOR}" -o wide || true
+              fi
               if [ -n "${NODE_RESOURCE_GROUP:-}" ] && [ -n "${LB_NAME:-}" ] && [ -n "${LB_TARGET_POOLS:-}" ] && [ -n "${LB_TARGET_RULES:-}" ]; then
                 echo "Azure load balancer backend health (final observation):"
                 python3 <<'PY'
@@ -1806,8 +1862,11 @@ jobs:
                 fi
               fi
               exit 1
+            else
+              next_attempt=$((i + 1))
+              echo "Keycloak or midPoint endpoint not ready yet; sleeping ${sleep_seconds}s before retry ${next_attempt}."
+              sleep "${sleep_seconds}"
             fi
-            sleep "$sleep_seconds"
           done
 
       - name: Summary
