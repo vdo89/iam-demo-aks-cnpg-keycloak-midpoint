@@ -1128,18 +1128,65 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          http_probe() {
+            local url="$1"
+            local method="${2:-GET}"
+            local header_file
+            local status_line=""
+            local status_code=""
+            local curl_status=0
+
+            header_file="$(mktemp)"
+            if ! curl -sS -X "${method}" --max-time 10 -o /dev/null -D "${header_file}" "${url}"; then
+              curl_status=$?
+            fi
+
+            if [ -s "${header_file}" ]; then
+              status_line="$(head -n 1 "${header_file}" || true)"
+              if [ -n "${status_line}" ]; then
+                echo "${status_line}"
+                status_code="$(printf '%s\n' "${status_line}" | awk '{print $2}' || true)"
+              else
+                echo "Received empty HTTP status line from ${url}"
+              fi
+            else
+              echo "No HTTP response received from ${url}"
+            fi
+
+            rm -f "${header_file}"
+
+            if [ "${curl_status}" -ne 0 ]; then
+              echo "curl exited with status ${curl_status} for ${url}" >&2
+              return "${curl_status}"
+            fi
+
+            if [ -n "${status_code}" ] && [[ "${status_code}" =~ ^[0-9]+$ ]] && [ "${status_code}" -ge 200 ] && [ "${status_code}" -lt 400 ]; then
+              return 0
+            fi
+
+            return 1
+          }
+
           echo "Keycloak:  http://${KC_HOST}"
           echo "midPoint:  http://${MP_HOST}/midpoint"
           attempts=18
           sleep_seconds=15
+          kc_url="http://${KC_HOST}"
+          midpoint_candidates=("http://${MP_HOST}/midpoint/" "http://${MP_HOST}/midpoint")
           for i in $(seq 1 "$attempts"); do
-            echo "HTTP HEAD try ${i}/${attempts} ..."
-            if curl -sS -I --fail --max-time 10 "http://${KC_HOST}" | head -n 1; then
-              if curl -sS -I --fail --max-time 10 "http://${MP_HOST}/midpoint" | head -n 1; then
-                echo "Endpoints responded successfully."
-                break
-              fi
+            echo "HTTP GET try ${i}/${attempts} ..."
+            echo "  Probing Keycloak at ${kc_url}"
+            if http_probe "${kc_url}" "GET"; then
+              for midpoint_url in "${midpoint_candidates[@]}"; do
+                echo "  Probing midPoint at ${midpoint_url}"
+                if http_probe "${midpoint_url}" "GET"; then
+                  echo "Endpoints responded successfully (midPoint URL: ${midpoint_url})."
+                  break 2
+                fi
+              done
             fi
+
             if [ "$i" -eq "$attempts" ]; then
               echo "ERROR: Endpoints did not respond successfully after ${attempts} attempts." >&2
               kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide || true
