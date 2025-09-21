@@ -16,7 +16,15 @@ spec:
       releaseName: ingress-nginx
       values: |
         controller:
+          config:
+            server-snippet: |
+              location = /healthz {
+                access_log off;
+                return 200;
+              }
           service:
+            annotations:
+              service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: /healthz
             type: LoadBalancer
   syncPolicy:
     automated:
