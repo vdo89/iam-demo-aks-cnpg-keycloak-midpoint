@@ -113,7 +113,7 @@ jobs:
           echo "NODE_RESOURCE_GROUP=${NODE_RG}" | tee -a "$GITHUB_ENV"
           export NODE_RESOURCE_GROUP="${NODE_RG}"
 
-          python3 <<'PY'
+          python3 -c 'import textwrap; exec(textwrap.dedent("""
           import datetime
           import email.utils
           import json
@@ -300,14 +300,14 @@ jobs:
               name = pool.get("name") or "<unnamed>"
               count = len(pool.get("backendIpConfigurations") or [])
               summary.append((name, count))
-          
+
           if summary:
               print("Backend pool membership:")
               for name, count in summary:
                   print(f"  {name}: {count} backend IP configuration(s)")
           else:
               print("No backend pools reported in load balancer resource")
-          PY
+          """))'
 
       - name: Wait for Azure load balancer backends to become healthy
         shell: bash
@@ -319,7 +319,7 @@ jobs:
             exit 1
           fi
 
-          python3 <<'PY'
+          python3 -c 'import textwrap; exec(textwrap.dedent("""
           import datetime
           import email.utils
           import json
@@ -1070,7 +1070,7 @@ jobs:
                   sys.exit(1)
 
               time.sleep(sleep_seconds)
-          PY
+          """))'
 
 
       - name: Patch/Create midPoint Ingress
@@ -1090,18 +1090,23 @@ jobs:
             echo "Creating midPoint Ingress with host ${MP_HOST}"
           fi
           # Render the Ingress with pathType Prefix so nested routes like /midpoint remain routable.
-          kubectl apply -f - <<EOF
+          python3 -c 'import textwrap; exec(textwrap.dedent("""
+          import os
+
+          namespace = os.environ["NAMESPACE"]
+          mp_host = os.environ["MP_HOST"]
+          manifest = textwrap.dedent(f'''\
           apiVersion: networking.k8s.io/v1
           kind: Ingress
           metadata:
             name: midpoint
-            namespace: ${NAMESPACE}
+            namespace: {namespace}
             annotations:
               nginx.ingress.kubernetes.io/proxy-body-size: 16m
           spec:
             ingressClassName: nginx
             rules:
-            - host: ${MP_HOST}
+            - host: {mp_host}
               http:
                 paths:
                 - path: /
@@ -1111,7 +1116,9 @@ jobs:
                       name: midpoint
                       port:
                         number: 8080
-          EOF
+          ''')
+          print(manifest, end="")
+          """))' | kubectl apply -f -
           kubectl -n "$NAMESPACE" get ingress midpoint -o wide
 
       - name: Create/Update Keycloak Ingress (public)
@@ -1139,26 +1146,26 @@ jobs:
             exit 1
           fi
           selector=$(
-            SVC_JSON="${svc_json}" python3 <<'PY'
-          import json
-          import os
+            SVC_JSON="${svc_json}" python3 -c 'import textwrap; exec(textwrap.dedent("""
+            import json
+            import os
 
-          raw_json = os.environ.get("SVC_JSON", "").strip()
-          if not raw_json:
-              raise SystemExit("Service JSON payload is empty")
+            raw_json = os.environ.get("SVC_JSON", "").strip()
+            if not raw_json:
+                raise SystemExit("Service JSON payload is empty")
 
-          svc = json.loads(raw_json)
-          selector = svc.get("spec", {}).get("selector") or {}
-          parts = []
-          for key, value in selector.items():
-              if not key:
-                  continue
-              value_str = "" if value is None else str(value)
-              if not value_str:
-                  continue
-              parts.append(f"{key}={value_str}")
-          print(",".join(parts))
-          PY
+            svc = json.loads(raw_json)
+            selector = svc.get("spec", {}).get("selector") or {}
+            parts = []
+            for key, value in selector.items():
+                if not key:
+                    continue
+                value_str = "" if value is None else str(value)
+                if not value_str:
+                    continue
+                parts.append(f"{key}={value_str}")
+            print(",".join(parts))
+            """))'
           )
           selector=$(tr -d '\r\n' <<<"${selector}")
           if [ -z "${selector}" ]; then
@@ -1197,28 +1204,37 @@ jobs:
 
           echo "Reconciling Keycloak public Ingress for host ${KC_HOST} -> ${SVC}:${PORT}"
           # Render the Ingress with pathType Prefix so Keycloak subpaths like /realms/... resolve.
-          kubectl apply -f - <<EOF
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: rws-keycloak-public
-  namespace: ${NAMESPACE}
-  annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: 16m
-spec:
-  ingressClassName: nginx
-  rules:
-  - host: ${KC_HOST}
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: ${SVC}
-            port:
-              number: ${PORT}
-EOF
+          python3 -c 'import textwrap; exec(textwrap.dedent("""
+          import os
+
+          namespace = os.environ["NAMESPACE"]
+          svc_name = os.environ["SVC"]
+          svc_port = os.environ["PORT"]
+          kc_host = os.environ["KC_HOST"]
+          manifest = textwrap.dedent(f'''\
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: rws-keycloak-public
+            namespace: {namespace}
+            annotations:
+              nginx.ingress.kubernetes.io/proxy-body-size: 16m
+          spec:
+            ingressClassName: nginx
+            rules:
+            - host: {kc_host}
+              http:
+                paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: {svc_name}
+                      port:
+                        number: {svc_port}
+          ''')
+          print(manifest, end="")
+          """))' | kubectl apply -f -
           kubectl -n "$NAMESPACE" get ingress rws-keycloak-public -o wide
 
       - name: Smoke-test endpoints
@@ -1299,7 +1315,7 @@ EOF
               fi
               if [ -n "${NODE_RESOURCE_GROUP:-}" ] && [ -n "${LB_NAME:-}" ] && [ -n "${LB_TARGET_POOLS:-}" ] && [ -n "${LB_TARGET_RULES:-}" ]; then
                 echo "Azure load balancer backend health (final observation):"
-                python3 <<'PY'
+                python3 -c 'import textwrap; exec(textwrap.dedent("""
           import datetime
           import email.utils
           import json
@@ -1897,7 +1913,7 @@ EOF
                   if detail_components:
                       detail_suffix = " (" + ", ".join(detail_components) + ")"
                   print(f"  {backend_label}: state={state_text}{detail_suffix}")
-          PY
+          """))'
 
                 if [ -n "${NODE_RESOURCE_GROUP:-}" ] && [ -n "${EXTERNAL_IP:-}" ]; then
                   echo "Azure public IP resource details:"
