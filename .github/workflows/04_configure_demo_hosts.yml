@@ -149,12 +149,16 @@ jobs:
               print("Failed to list Azure public IPs:", exc, file=sys.stderr)
               sys.exit(1)
           
-          try:
-              pip_list = json.loads(pip_raw)
-          except json.JSONDecodeError:
-              print("Unable to parse Azure public IP list", file=sys.stderr)
-              print(pip_raw)
-              sys.exit(1)
+          pip_raw = (pip_raw or "").strip()
+          if not pip_raw or pip_raw.lower() == "null":
+              pip_list = []
+          else:
+              try:
+                  pip_list = json.loads(pip_raw)
+              except json.JSONDecodeError:
+                  print("Unable to parse Azure public IP list", file=sys.stderr)
+                  print(pip_raw)
+                  sys.exit(1)
           
           if not pip_list:
               print(f"No public IP resource in {node_rg!r} matches {external_ip}", file=sys.stderr)
