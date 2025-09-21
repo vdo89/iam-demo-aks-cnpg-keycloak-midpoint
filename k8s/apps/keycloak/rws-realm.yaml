@@ -3,7 +3,10 @@ kind: KeycloakRealmImport
 metadata:
   name: rws-realm-import
   namespace: iam
+  annotations:
+    iam.demo/realm-config-version: "1"
 spec:
+  keycloakCRName: rws-keycloak
   realm:
     id: rws
     realm: rws
