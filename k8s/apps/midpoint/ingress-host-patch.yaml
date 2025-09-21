@@ -1,0 +1,8 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: midpoint
+  namespace: iam
+spec:
+  rules:
+    - host: mp.127.0.0.1.nip.io

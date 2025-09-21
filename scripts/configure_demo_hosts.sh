@@ -21,6 +21,11 @@ KEYCLOAK_SERVICE_NAME="${KEYCLOAK_SERVICE_NAME:-rws-keycloak-service}"
 KEYCLOAK_SERVICE_PORT="${KEYCLOAK_SERVICE_PORT:-8080}"
 MIDPOINT_SERVICE_NAME="${MIDPOINT_SERVICE_NAME:-midpoint}"
 MIDPOINT_SERVICE_PORT="${MIDPOINT_SERVICE_PORT:-8080}"
+KEYCLOAK_INGRESS_NAME="${KEYCLOAK_INGRESS_NAME:-rws-keycloak-public}"
+MIDPOINT_INGRESS_NAME="${MIDPOINT_INGRESS_NAME:-midpoint}"
+PATCH_ROOT="${PATCH_ROOT:-k8s/apps}"
+KEYCLOAK_INGRESS_PATCH_FILE="${KEYCLOAK_INGRESS_PATCH_FILE:-${PATCH_ROOT}/keycloak/ingress-host-patch.yaml}"
+MIDPOINT_INGRESS_PATCH_FILE="${MIDPOINT_INGRESS_PATCH_FILE:-${PATCH_ROOT}/midpoint/ingress-host-patch.yaml}"
 
 require_cmd kubectl
 require_cmd curl
@@ -57,6 +62,31 @@ spec:
                 port:
                   number: ${service_port}
 EOF
+}
+
+write_ingress_patch() {
+  local label="$1"
+  local patch_file="$2"
+  local ingress_name="$3"
+  local host="$4"
+
+  log "Updating ${label} ingress patch at ${patch_file} with host ${host}..."
+  cat <<EOF >"${patch_file}"
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ${ingress_name}
+  namespace: ${NAMESPACE}
+spec:
+  rules:
+    - host: ${host}
+EOF
+  log "${label} ingress patch updated. Commit and push this change so Argo CD reconciles the ingress host."
+}
+
+update_gitops_manifests() {
+  write_ingress_patch "Keycloak" "${KEYCLOAK_INGRESS_PATCH_FILE}" "${KEYCLOAK_INGRESS_NAME}" "${KC_HOST}"
+  write_ingress_patch "midPoint" "${MIDPOINT_INGRESS_PATCH_FILE}" "${MIDPOINT_INGRESS_NAME}" "${MP_HOST}"
 }
 
 resolve_ingress_ip() {
@@ -178,9 +208,9 @@ wait_for_midpoint() {
 }
 
 apply_ingresses() {
-  apply_ingress "Keycloak" "rws-keycloak-public" "${KC_HOST}" "${KEYCLOAK_SERVICE_NAME}" "${KEYCLOAK_SERVICE_PORT}"
-  apply_ingress "midPoint" "${MIDPOINT_SERVICE_NAME}" "${MP_HOST}" "${MIDPOINT_SERVICE_NAME}" "${MIDPOINT_SERVICE_PORT}"
-  kubectl -n "${NAMESPACE}" get ingress ${MIDPOINT_SERVICE_NAME} rws-keycloak-public -o wide || true
+  apply_ingress "Keycloak" "${KEYCLOAK_INGRESS_NAME}" "${KC_HOST}" "${KEYCLOAK_SERVICE_NAME}" "${KEYCLOAK_SERVICE_PORT}"
+  apply_ingress "midPoint" "${MIDPOINT_INGRESS_NAME}" "${MP_HOST}" "${MIDPOINT_SERVICE_NAME}" "${MIDPOINT_SERVICE_PORT}"
+  kubectl -n "${NAMESPACE}" get ingress "${MIDPOINT_INGRESS_NAME}" "${KEYCLOAK_INGRESS_NAME}" -o wide || true
 }
 
 check_endpoint() {
@@ -242,7 +272,7 @@ smoke_test() {
       log "ERROR: Keycloak or midPoint endpoint did not become reachable." >&2
       kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide || true
       kubectl -n ingress-nginx get pods -l app.kubernetes.io/component=controller -o wide || true
-      kubectl -n "${NAMESPACE}" get ingress ${MIDPOINT_SERVICE_NAME} rws-keycloak-public -o wide || true
+      kubectl -n "${NAMESPACE}" get ingress "${MIDPOINT_INGRESS_NAME}" "${KEYCLOAK_INGRESS_NAME}" -o wide || true
       exit 1
     fi
 
@@ -253,6 +283,7 @@ smoke_test() {
 
 main() {
   resolve_ingress_ip
+  update_gitops_manifests
   wait_for_ingress_controller
   wait_for_keycloak
   wait_for_midpoint
