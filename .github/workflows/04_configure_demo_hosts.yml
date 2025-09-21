@@ -487,26 +487,114 @@ jobs:
               if attempt == max_attempts:
                   print("Azure never reported healthy backends within the allotted time", file=sys.stderr)
                   try:
-                      summary = subprocess.check_output([
-                          "az",
-                          "network",
-                          "lb",
-                          "show",
-                          "--resource-group",
-                          node_rg,
-                          "--name",
-                          lb_name,
-                          "--query",
-                          "{name:name, provisioningState:provisioningState, frontend: frontendIPConfigurations[].{name:name, provisioningState:provisioningState, publicIpId:publicIpAddress.id}, backendPools: backendAddressPools[].{name:name, backendCount:length(backendIpConfigurations)}}",
-                          "-o",
-                          "json",
-                      ], text=True)
-                      print("Load balancer summary:")
-                      print(summary)
+                      lb_raw = subprocess.check_output(
+                          [
+                              "az",
+                              "network",
+                              "lb",
+                              "show",
+                              "--resource-group",
+                              node_rg,
+                              "--name",
+                              lb_name,
+                              "-o",
+                              "json",
+                          ],
+                          text=True,
+                      )
                   except subprocess.CalledProcessError as exc:
                       print(f"Failed to retrieve load balancer summary: {exc}", file=sys.stderr)
-                      if exc.output:
-                          print(exc.output)
+                      stderr = getattr(exc, "stderr", None)
+                      stdout = getattr(exc, "output", None) or getattr(exc, "stdout", None)
+                      if stderr:
+                          print(stderr)
+                      elif stdout:
+                          print(stdout)
+                  else:
+                      try:
+                          lb_info = json.loads(lb_raw)
+                      except json.JSONDecodeError:
+                          print("Received malformed load balancer JSON:", file=sys.stderr)
+                          print(lb_raw)
+                      else:
+                          if not isinstance(lb_info, dict):
+                              print("Unexpected load balancer payload; expected an object.", file=sys.stderr)
+                          else:
+                              def _provisioning_state(resource):
+                                  if isinstance(resource, dict):
+                                      value = resource.get("provisioningState")
+                                      if isinstance(value, str):
+                                          return value
+                                      props = resource.get("properties")
+                                      if isinstance(props, dict):
+                                          value = props.get("provisioningState")
+                                          if isinstance(value, str):
+                                              return value
+                                  return ""
+
+                              def _public_ip_id(frontend):
+                                  if not isinstance(frontend, dict):
+                                      return ""
+                                  candidates = []
+                                  for key in ("publicIPAddress", "publicIpAddress"):
+                                      candidates.append(frontend.get(key))
+                                  props = frontend.get("properties")
+                                  if isinstance(props, dict):
+                                      for key in ("publicIPAddress", "publicIpAddress"):
+                                          candidates.append(props.get(key))
+                                  for candidate in candidates:
+                                      if isinstance(candidate, dict):
+                                          value = candidate.get("id")
+                                          if isinstance(value, str):
+                                              return value
+                                  return ""
+
+                              def _backend_configs(pool):
+                                  if not isinstance(pool, dict):
+                                      return []
+                                  candidates = [
+                                      pool.get("backendIpConfigurations"),
+                                      pool.get("backendIPConfigurations"),
+                                  ]
+                                  props = pool.get("properties")
+                                  if isinstance(props, dict):
+                                      candidates.append(props.get("backendIpConfigurations"))
+                                      candidates.append(props.get("backendIPConfigurations"))
+                                  for candidate in candidates:
+                                      if isinstance(candidate, list):
+                                          return candidate
+                                  return []
+
+                              frontends = []
+                              for frontend in lb_info.get("frontendIPConfigurations") or []:
+                                  name = frontend.get("name") if isinstance(frontend, dict) else None
+                                  frontends.append(
+                                      {
+                                          "name": name or "<unnamed>",
+                                          "provisioningState": _provisioning_state(frontend) or "",
+                                          "publicIpId": _public_ip_id(frontend) or "",
+                                      }
+                                  )
+
+                              backend_pools = []
+                              for pool in lb_info.get("backendAddressPools") or []:
+                                  name = pool.get("name") if isinstance(pool, dict) else None
+                                  backend_pools.append(
+                                      {
+                                          "name": name or "<unnamed>",
+                                          "backendCount": len(_backend_configs(pool)),
+                                      }
+                                  )
+
+                              summary = {
+                                  "name": lb_info.get("name"),
+                                  "provisioningState": _provisioning_state(lb_info),
+                                  "frontend": frontends,
+                                  "backendPools": backend_pools,
+                              }
+
+                              print("Load balancer summary:")
+                              print(json.dumps(summary, indent=2, sort_keys=True))
                   sys.exit(1)
 
               time.sleep(sleep_seconds)
