@@ -5,6 +5,7 @@ namespace: iam
 resources:
   - deployment.yaml
   - precreate.yaml
+  - ingress.yaml
 
 configMapGenerator:
   - name: midpoint-config

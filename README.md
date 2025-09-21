@@ -89,7 +89,17 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
 
 ---
 
-## 4) Demo – what to click
+## 4) Publish demo ingress hostnames
+
+1. Run workflow **`04_configure_demo_hosts.yml`**.
+2. The helper script (`scripts/configure_demo_hosts.sh`) discovers the `ingress-nginx` load balancer address,
+   waits for the Keycloak and midPoint services to expose ready pods, and applies the GitOps-managed ingress
+   manifests with `kc.<IP>.nip.io` and `mp.<IP>.nip.io` hosts. Argo CD ignores the ingress `spec.rules[0].host`
+   field so the workflow can patch the dynamic nip.io hostnames without triggering endless drift.
+
+---
+
+## 5) Demo – what to click
 
 - Get the external IP of **ingress-nginx** (the workflow prints it; or: `kubectl -n ingress-nginx get svc ingress-nginx-controller`).
 - Keycloak is exposed through the operator-managed service `rws-keycloak-service`; check it with `kubectl -n iam get svc rws-keycloak-service` if you need the cluster IP before Ingress is ready.
