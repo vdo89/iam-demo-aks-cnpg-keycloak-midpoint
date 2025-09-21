@@ -1750,6 +1750,7 @@ jobs:
                     --query "[?ipAddress=='${EXTERNAL_IP}'].{name:name, ip:ipAddress, sku:sku.name, provisioningState:provisioningState}" \
                     -o table || true
                 fi
+              fi
               exit 1
             fi
             sleep "$sleep_seconds"
