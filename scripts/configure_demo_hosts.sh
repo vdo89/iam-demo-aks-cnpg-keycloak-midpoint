@@ -270,7 +270,7 @@ main() {
   smoke_test
 
   log "✅ Configuration complete."
-  log "Keycloak URL: http://${KC_HOST}"
+  log "Keycloak URL: http://${KC_HOST}/auth"
   log "midPoint URL: http://${MP_HOST}/midpoint"
 }
 
