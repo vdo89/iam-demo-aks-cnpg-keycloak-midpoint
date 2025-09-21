@@ -3,6 +3,101 @@ set -euo pipefail
 
 IAM_NAMESPACE="${IAM_NAMESPACE:-}"
 
+split_resource_identifier() {
+  local identifier="$1"
+  local ns_var="$2"
+  local name_var="$3"
+
+  if [[ "${identifier}" == */* ]]; then
+    printf -v "${ns_var}" '%s' "${identifier%%/*}"
+    printf -v "${name_var}" '%s' "${identifier##*/}"
+  else
+    printf -v "${ns_var}" '%s' ""
+    printf -v "${name_var}" '%s' "${identifier}"
+  fi
+}
+
+dump_resource_yaml() {
+  local kind="$1"
+  local namespace="$2"
+  local name="$3"
+  local resource_name
+
+  case "${kind}" in
+    Keycloak)
+      resource_name="keycloaks.k8s.keycloak.org"
+      ;;
+    KeycloakRealmImport)
+      resource_name="keycloakrealmimports.k8s.keycloak.org"
+      ;;
+    *)
+      resource_name="${kind,,}"
+      ;;
+  esac
+
+  if [ -n "${namespace}" ]; then
+    echo "---- kubectl get ${kind} ${namespace}/${name} -o yaml ----"
+    kubectl -n "${namespace}" get "${resource_name}" "${name}" -o yaml || true
+  else
+    echo "---- kubectl get ${kind} ${name} -o yaml ----"
+    kubectl get "${resource_name}" "${name}" -o yaml || true
+  fi
+}
+
+log_container_tail() {
+  local namespace="$1"
+  local pod_name="$2"
+  local container_name="$3"
+  local container_scope="$4"
+  local restart_count="$5"
+
+  echo "---- Last 40 log lines from ${container_scope} container ${container_name} in pod ${namespace}/${pod_name} ----"
+  kubectl -n "${namespace}" logs "${pod_name}" --container "${container_name}" --tail=40 || true
+
+  if [[ "${restart_count}" =~ ^[0-9]+$ ]] && [ "${restart_count}" -gt 0 ]; then
+    echo "---- Previous 40 log lines from ${container_scope} container ${container_name} in pod ${namespace}/${pod_name} ----"
+    kubectl -n "${namespace}" logs "${pod_name}" --container "${container_name}" --previous --tail=40 || true
+  fi
+}
+
+describe_pod_with_logs() {
+  local namespace="$1"
+  local pod_name="$2"
+
+  if [ -z "${namespace}" ] || [ -z "${pod_name}" ]; then
+    return
+  fi
+
+  echo "---- kubectl describe pod ${namespace}/${pod_name} ----"
+  kubectl -n "${namespace}" describe pod "${pod_name}" || true
+
+  local pod_json
+  pod_json="$(kubectl -n "${namespace}" get pod "${pod_name}" -o json 2>/dev/null || true)"
+
+  if [ -n "${pod_json}" ]; then
+    local container_name restart_count
+    local -a init_containers=()
+    local -a app_containers=()
+
+    mapfile -t init_containers < <(jq -r '.spec.initContainers[]?.name' <<<"${pod_json}")
+    for container_name in "${init_containers[@]}"; do
+      restart_count="$(jq -r --arg name "${container_name}" '.status.initContainerStatuses[]? | select(.name==$name) | .restartCount // ""' <<<"${pod_json}")"
+      [[ "${restart_count}" =~ ^[0-9]+$ ]] || restart_count=0
+      log_container_tail "${namespace}" "${pod_name}" "${container_name}" init "${restart_count}"
+    done
+
+    mapfile -t app_containers < <(jq -r '.spec.containers[]?.name' <<<"${pod_json}")
+    for container_name in "${app_containers[@]}"; do
+      restart_count="$(jq -r --arg name "${container_name}" '.status.containerStatuses[]? | select(.name==$name) | .restartCount // ""' <<<"${pod_json}")"
+      [[ "${restart_count}" =~ ^[0-9]+$ ]] || restart_count=0
+      log_container_tail "${namespace}" "${pod_name}" "${container_name}" app "${restart_count}"
+    done
+  else
+    echo "---- Last 40 log lines from pod ${namespace}/${pod_name} ----"
+    kubectl -n "${namespace}" logs "${pod_name}" --tail=40 || true
+  fi
+}
+
 echo "Ensuring Argo CD application 'apps' has been created before monitoring status"
 app_found=0
 for attempt in $(seq 1 60); do
@@ -127,44 +222,10 @@ for attempt in $(seq 1 90); do
         [ -z "${ignored_kind}" ] && continue
 
         ignored_namespace=""
-        ignored_name="${ignored_identifier}"
-        if [[ "${ignored_identifier}" == */* ]]; then
-          ignored_namespace="${ignored_identifier%%/*}"
-          ignored_name="${ignored_identifier##*/}"
-        fi
+        ignored_name=""
+        split_resource_identifier "${ignored_identifier}" ignored_namespace ignored_name
 
-        case "${ignored_kind}" in
-          Keycloak)
-            if [ -n "${ignored_namespace}" ]; then
-              echo "---- kubectl get keycloaks.k8s.keycloak.org ${ignored_namespace}/${ignored_name} -o yaml ----"
-              kubectl -n "${ignored_namespace}" get keycloaks.k8s.keycloak.org "${ignored_name}" -o yaml || true
-            fi
-            ;;
-          KeycloakRealmImport)
-            if [ -n "${ignored_namespace}" ]; then
-              echo "---- kubectl get keycloakrealmimports.k8s.keycloak.org ${ignored_namespace}/${ignored_name} -o yaml ----"
-              kubectl -n "${ignored_namespace}" get keycloakrealmimports.k8s.keycloak.org "${ignored_name}" -o yaml || true
-            fi
-            ;;
-          Service|Ingress|ConfigMap|Secret)
-            if [ -n "${ignored_namespace}" ]; then
-              echo "---- kubectl get ${ignored_kind} ${ignored_namespace}/${ignored_name} -o yaml ----"
-              kubectl -n "${ignored_namespace}" get "${ignored_kind,,}" "${ignored_name}" -o yaml || true
-            else
-              echo "---- kubectl get ${ignored_kind} ${ignored_name} -o yaml ----"
-              kubectl get "${ignored_kind,,}" "${ignored_name}" -o yaml || true
-            fi
-            ;;
-          *)
-            if [ -n "${ignored_namespace}" ]; then
-              echo "---- kubectl get ${ignored_kind} ${ignored_namespace}/${ignored_name} -o yaml ----"
-              kubectl -n "${ignored_namespace}" get "${ignored_kind,,}" "${ignored_name}" -o yaml || true
-            else
-              echo "---- kubectl get ${ignored_kind} ${ignored_name} -o yaml ----"
-              kubectl get "${ignored_kind,,}" "${ignored_name}" -o yaml || true
-            fi
-            ;;
-        esac
+        dump_resource_yaml "${ignored_kind}" "${ignored_namespace}" "${ignored_name}"
       done <<<"${ignored_resources_summary}"
       ignored_diagnostics_dumped=1
     fi
@@ -196,17 +257,8 @@ for attempt in $(seq 1 90); do
         [ -z "${res_kind}" ] && continue
 
         res_namespace=""
-        res_name="${res_identifier}"
-        if [[ "${res_identifier}" == */* ]]; then
-          res_namespace="${res_identifier%%/*}"
-          res_name="${res_identifier##*/}"
-        fi
-
-        if [ -n "${res_namespace}" ]; then
-          target_namespace="${res_namespace}"
-        else
-          target_namespace=""
-        fi
+        res_name=""
+        split_resource_identifier "${res_identifier}" res_namespace res_name
 
         if [ -n "${res_message}" ]; then
           echo "Resource ${res_kind} ${res_identifier} reported ${res_health}: ${res_message}"
@@ -216,94 +268,22 @@ for attempt in $(seq 1 90); do
 
         case "${res_kind}" in
           Deployment)
-            if [ -n "${target_namespace}" ]; then
-              echo "---- kubectl describe deployment ${target_namespace}/${res_name} ----"
-              kubectl -n "${target_namespace}" describe deployment "${res_name}" || true
+            if [ -n "${res_namespace}" ]; then
+              echo "---- kubectl describe deployment ${res_namespace}/${res_name} ----"
+              kubectl -n "${res_namespace}" describe deployment "${res_name}" || true
             fi
             ;;
           StatefulSet)
-            if [ -n "${target_namespace}" ]; then
-              echo "---- kubectl describe statefulset ${target_namespace}/${res_name} ----"
-              kubectl -n "${target_namespace}" describe statefulset "${res_name}" || true
+            if [ -n "${res_namespace}" ]; then
+              echo "---- kubectl describe statefulset ${res_namespace}/${res_name} ----"
+              kubectl -n "${res_namespace}" describe statefulset "${res_name}" || true
             fi
             ;;
           Pod)
-            if [ -n "${target_namespace}" ]; then
-              echo "---- kubectl describe pod ${target_namespace}/${res_name} ----"
-              kubectl -n "${target_namespace}" describe pod "${res_name}" || true
-
-              pod_json="$(kubectl -n "${target_namespace}" get pod "${res_name}" -o json 2>/dev/null || true)"
-
-              if [ -n "${pod_json}" ]; then
-                mapfile -t init_containers < <(jq -r '.spec.initContainers[]?.name' <<<"${pod_json}")
-                mapfile -t app_containers < <(jq -r '.spec.containers[]?.name' <<<"${pod_json}")
-
-                print_logs_for_container() {
-                  local container_name="$1"
-                  local container_type="$2"  # init or app
-                  local restart_count
-
-                  if [ "${container_type}" = "init" ]; then
-                    restart_count="$(jq -r --arg name "${container_name}" '.status.initContainerStatuses[]? | select(.name==$name) | .restartCount' <<<"${pod_json}")"
-                  else
-                    restart_count="$(jq -r --arg name "${container_name}" '.status.containerStatuses[]? | select(.name==$name) | .restartCount' <<<"${pod_json}")"
-                  fi
-
-                  if [ -z "${restart_count}" ] || ! [[ "${restart_count}" =~ ^[0-9]+$ ]]; then
-                    restart_count=0
-                  fi
-
-                  echo "---- Last 40 log lines from ${container_type} container ${container_name} in pod ${target_namespace}/${res_name} ----"
-                  kubectl -n "${target_namespace}" logs "${res_name}" --container "${container_name}" --tail=40 || true
-
-                  if [ "${restart_count}" -gt 0 ]; then
-                    echo "---- Previous 40 log lines from ${container_type} container ${container_name} in pod ${target_namespace}/${res_name} ----"
-                    kubectl -n "${target_namespace}" logs "${res_name}" --container "${container_name}" --previous --tail=40 || true
-                  fi
-                }
-
-                for container_name in "${init_containers[@]}"; do
-                  print_logs_for_container "${container_name}" init
-                done
-
-                for container_name in "${app_containers[@]}"; do
-                  print_logs_for_container "${container_name}" app
-                done
-              else
-                echo "---- Last 40 log lines from pod ${target_namespace}/${res_name} ----"
-                kubectl -n "${target_namespace}" logs "${res_name}" --tail=40 || true
-              fi
-            fi
-            ;;
-          Service|Ingress|ConfigMap|Secret)
-            if [ -n "${target_namespace}" ]; then
-              echo "---- kubectl get ${res_kind} ${target_namespace}/${res_name} -o yaml ----"
-              kubectl -n "${target_namespace}" get "${res_kind,,}" "${res_name}" -o yaml || true
-            else
-              echo "---- kubectl get ${res_kind} ${res_name} -o yaml ----"
-              kubectl get "${res_kind,,}" "${res_name}" -o yaml || true
-            fi
-            ;;
-          Keycloak)
-            if [ -n "${target_namespace}" ]; then
-              echo "---- kubectl get keycloaks.k8s.keycloak.org ${target_namespace}/${res_name} -o yaml ----"
-              kubectl -n "${target_namespace}" get keycloaks.k8s.keycloak.org "${res_name}" -o yaml || true
-            fi
-            ;;
-          KeycloakRealmImport)
-            if [ -n "${target_namespace}" ]; then
-              echo "---- kubectl get keycloakrealmimports.k8s.keycloak.org ${target_namespace}/${res_name} -o yaml ----"
-              kubectl -n "${target_namespace}" get keycloakrealmimports.k8s.keycloak.org "${res_name}" -o yaml || true
-            fi
+            describe_pod_with_logs "${res_namespace}" "${res_name}"
             ;;
           *)
-            if [ -n "${target_namespace}" ]; then
-              echo "---- kubectl get ${res_kind} ${target_namespace}/${res_name} -o yaml ----"
-              kubectl -n "${target_namespace}" get "${res_kind,,}" "${res_name}" -o yaml || true
-            else
-              echo "---- kubectl get ${res_kind} ${res_name} -o yaml ----"
-              kubectl get "${res_kind,,}" "${res_name}" -o yaml || true
-            fi
+            dump_resource_yaml "${res_kind}" "${res_namespace}" "${res_name}"
             ;;
         esac
       done <<<"${tracked_resources_summary}"
@@ -388,12 +368,7 @@ for attempt in $(seq 1 90); do
             else
               echo "Pod ${pod_name} ${container_scope} container ${container_name} is in state ${failure_reason}"
             fi
-            echo "---- Last 40 log lines from ${container_scope} container ${container_name} in pod ${apps_namespace}/${pod_name} ----"
-            kubectl -n "${apps_namespace}" logs "${pod_name}" --container "${container_name}" --tail=40 || true
-            if [[ "${restart_count}" =~ ^[0-9]+$ ]] && [ "${restart_count}" -gt 0 ]; then
-              echo "---- Previous 40 log lines from ${container_scope} container ${container_name} in pod ${apps_namespace}/${pod_name} ----"
-              kubectl -n "${apps_namespace}" logs "${pod_name}" --container "${container_name}" --previous --tail=40 || true
-            fi
+            log_container_tail "${apps_namespace}" "${pod_name}" "${container_name}" "${container_scope}" "${restart_count}"
           done <<<"${crashloop_data}"
           last_crashloop_summary="${crashloop_signature}"
         fi
