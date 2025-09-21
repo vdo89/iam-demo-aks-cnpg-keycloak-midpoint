@@ -114,10 +114,15 @@ jobs:
           export NODE_RESOURCE_GROUP="${NODE_RG}"
 
           python3 <<'PY'
+          import datetime
+          import email.utils
           import json
           import os
           import subprocess
           import sys
+          import time
+          import urllib.error
+          import urllib.request
           
           external_ip = os.environ.get("EXTERNAL_IP", "").strip()
           node_rg = os.environ.get("NODE_RESOURCE_GROUP", "").strip()
@@ -311,11 +316,15 @@ jobs:
           fi
 
           python3 <<'PY'
+          import datetime
+          import email.utils
           import json
           import os
           import subprocess
           import sys
           import time
+          import urllib.error
+          import urllib.request
 
           node_rg = os.environ.get("NODE_RESOURCE_GROUP", "").strip()
           lb_name = os.environ.get("LB_NAME", "").strip()
@@ -362,6 +371,232 @@ jobs:
               sys.exit(1)
 
           api_version = "2024-05-01"
+
+          arm_resource = os.environ.get("ARM_RESOURCE", "").strip() or "https://management.azure.com/"
+          token_cache = {"token": "", "expiry": 0.0}
+
+          def _get_arm_token() -> str:
+              now = time.time()
+              cached_token = token_cache.get("token")
+              cached_expiry = token_cache.get("expiry") or 0.0
+              if cached_token and now < (cached_expiry - 60):
+                  return cached_token
+
+              try:
+                  raw_output = subprocess.check_output(
+                      [
+                          "az",
+                          "account",
+                          "get-access-token",
+                          "--resource",
+                          arm_resource,
+                          "--query",
+                          "{accessToken:accessToken, expiresOn:expiresOn}",
+                          "-o",
+                          "json",
+                      ],
+                      text=True,
+                  )
+              except subprocess.CalledProcessError as exc:
+                  print(f"  Failed to obtain Azure access token: {exc}", file=sys.stderr)
+                  stderr = getattr(exc, "stderr", None)
+                  stdout = getattr(exc, "output", None) or getattr(exc, "stdout", None)
+                  if stderr:
+                      print(stderr, file=sys.stderr)
+                  elif stdout:
+                      print(stdout, file=sys.stderr)
+                  return ""
+
+              token = ""
+              try:
+                  payload = json.loads(raw_output)
+              except json.JSONDecodeError:
+                  token = raw_output.strip()
+              else:
+                  token = (payload.get("accessToken") or "").strip()
+
+              if not token:
+                  print("  Received empty access token from Azure CLI.", file=sys.stderr)
+                  return ""
+
+              token_cache["token"] = token
+              token_cache["expiry"] = now + 2400.0
+              return token
+
+          def _parse_retry_after(value: str) -> float:
+              if not value:
+                  return 0.0
+              candidate = value.strip()
+              if not candidate:
+                  return 0.0
+              if candidate.isdigit():
+                  try:
+                      seconds = float(candidate)
+                  except ValueError:
+                      return 0.0
+                  return seconds if seconds > 0 else 0.0
+              try:
+                  parsed = email.utils.parsedate_to_datetime(candidate)
+              except (TypeError, ValueError):
+                  return 0.0
+              if parsed is None:
+                  return 0.0
+              if parsed.tzinfo is None:
+                  parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+              remaining = (
+                  parsed - datetime.datetime.now(datetime.timezone.utc)
+              ).total_seconds()
+              return remaining if remaining > 0 else 0.0
+
+          def _unwrap_operation_payload(payload):
+              if isinstance(payload, dict):
+                  status_value = payload.get("status")
+                  if (
+                      isinstance(status_value, str)
+                      and status_value.lower() in {"succeeded", "failed", "canceled", "cancelled"}
+                  ):
+                      props = payload.get("properties")
+                      if isinstance(props, dict):
+                          for key in ("output", "outputs", "result", "value"):
+                              if key in props and props[key] is not None:
+                                  return _unwrap_operation_payload(props[key])
+                          response = props.get("response")
+                          if isinstance(response, dict):
+                              body_payload = response.get("body")
+                              if body_payload is not None:
+                                  return _unwrap_operation_payload(body_payload)
+                  props_value = payload.get("properties")
+                  if isinstance(props_value, dict):
+                      nested = _unwrap_operation_payload(props_value)
+                      if nested is not None:
+                          return nested
+              return payload
+
+          def _invoke_arm_json(method: str, url: str, description: str):
+              method_upper = method.upper()
+
+              def _send(request_method: str, request_url: str):
+                  token = _get_arm_token()
+                  if not token:
+                      return 0, {}, None, ""
+
+                  request = urllib.request.Request(request_url, method=request_method)
+                  request.add_header("Authorization", f"Bearer {token}")
+
+                  if request_method in {"POST", "PUT", "PATCH"}:
+                      request.data = b""
+                      request.add_header("Content-Length", "0")
+
+                  try:
+                      with urllib.request.urlopen(request, timeout=60) as response:
+                          status_code = getattr(response, "status", response.getcode())
+                          headers = {k.lower(): v for k, v in response.headers.items()}
+                          body_bytes = response.read()
+                  except urllib.error.HTTPError as exc:
+                      status_code = exc.code
+                      headers = {k.lower(): v for k, v in exc.headers.items()} if exc.headers else {}
+                      body_bytes = exc.read()
+
+                  body_text = body_bytes.decode("utf-8", errors="replace") if body_bytes else ""
+                  payload = None
+                  if body_text:
+                      try:
+                          payload = json.loads(body_text)
+                      except json.JSONDecodeError:
+                          payload = None
+                  return status_code, headers, payload, body_text
+
+              status_code, headers, payload, raw_text = _send(method_upper, url)
+              if status_code in (200, 201):
+                  if isinstance(payload, dict):
+                      return _unwrap_operation_payload(payload)
+                  return payload
+
+              if status_code == 202:
+                  location = headers.get("location") or headers.get("operation-location")
+                  if not location:
+                      return _unwrap_operation_payload(payload) if isinstance(payload, dict) else payload
+
+                  wait_seconds = _parse_retry_after(headers.get("retry-after"))
+                  if wait_seconds <= 0:
+                      wait_seconds = 5.0
+
+                  last_payload = payload
+                  last_text = raw_text
+
+                  for poll_attempt in range(12):
+                      if poll_attempt or wait_seconds > 0:
+                          time.sleep(wait_seconds)
+
+                      poll_status, poll_headers, poll_payload, poll_text = _send("GET", location)
+                      if poll_status in (200, 201):
+                          if isinstance(poll_payload, dict):
+                              return _unwrap_operation_payload(poll_payload)
+                          return poll_payload
+
+                      if poll_status == 202:
+                          wait_seconds = (
+                              _parse_retry_after(poll_headers.get("retry-after"))
+                              or wait_seconds
+                              or 5.0
+                          )
+                          last_payload = poll_payload
+                          last_text = poll_text
+                          continue
+
+                      if poll_status == 204:
+                          return {}
+
+                      if poll_status >= 400:
+                          if description:
+                              print(
+                                  f"  Polling {description} failed with status {poll_status}",
+                                  file=sys.stderr,
+                              )
+                          else:
+                              print(
+                                  f"  Polling Azure operation failed with status {poll_status}",
+                                  file=sys.stderr,
+                              )
+                          if poll_text:
+                              print(poll_text, file=sys.stderr)
+                          return None
+
+                      last_payload = poll_payload
+                      last_text = poll_text
+
+                  if description:
+                      print(f"  Timed out waiting for {description}", file=sys.stderr)
+                  else:
+                      print("  Timed out waiting for Azure operation to complete", file=sys.stderr)
+
+                  if isinstance(last_payload, dict):
+                      return _unwrap_operation_payload(last_payload)
+                  if last_text:
+                      print(last_text, file=sys.stderr)
+                  return last_payload
+
+              if status_code == 204:
+                  return {}
+
+              if status_code >= 400:
+                  if description:
+                      print(
+                          f"  ARM request for {description} failed with status {status_code}",
+                          file=sys.stderr,
+                      )
+                  else:
+                      print(
+                          f"  ARM request failed with status {status_code}",
+                          file=sys.stderr,
+                      )
+                  if raw_text:
+                      print(raw_text, file=sys.stderr)
+                  return None
+
+              if isinstance(payload, dict):
+                  return _unwrap_operation_payload(payload)
+              return payload
 
           def build_rule_label(rule: str) -> str:
               pool_name = rule_pool_map.get(rule)
@@ -607,41 +842,11 @@ jobs:
                   f"resourceGroups/{node_rg}/providers/Microsoft.Network/loadBalancers/{lb_name}/"
                   f"loadBalancingRules/{rule}/health?api-version={api_version}"
               )
-              try:
-                  result = subprocess.run(
-                      [
-                          "az",
-                          "rest",
-                          "--method",
-                          "post",
-                          "--url",
-                          url,
-                          "--only-show-errors",
-                          "--output",
-                          "json",
-                      ],
-                      check=True,
-                      capture_output=True,
-                      text=True,
-                  )
-              except subprocess.CalledProcessError as exc:
-                  print(f"  Failed to query health for rule {rule}: {exc}", file=sys.stderr)
-                  if exc.stderr:
-                      print(exc.stderr)
-                  elif exc.stdout:
-                      print(exc.stdout)
-                  return None
-
-              output = (result.stdout or "").strip()
-              if not output:
-                  return {}
-
-              try:
-                  return json.loads(output)
-              except json.JSONDecodeError:
-                  print(f"  Received malformed JSON when querying rule {rule}", file=sys.stderr)
-                  print(output)
-                  return None
+              description = f"load balancer rule {rule} health"
+              result = _invoke_arm_json("POST", url, description)
+              if isinstance(result, dict):
+                  return result
+              return {}
 
           max_attempts = 20
           sleep_seconds = 15
@@ -994,6 +1199,232 @@ jobs:
 
           api_version = "2024-05-01"
 
+          arm_resource = os.environ.get("ARM_RESOURCE", "").strip() or "https://management.azure.com/"
+          token_cache = {"token": "", "expiry": 0.0}
+
+          def _get_arm_token() -> str:
+              now = time.time()
+              cached_token = token_cache.get("token")
+              cached_expiry = token_cache.get("expiry") or 0.0
+              if cached_token and now < (cached_expiry - 60):
+                  return cached_token
+
+              try:
+                  raw_output = subprocess.check_output(
+                      [
+                          "az",
+                          "account",
+                          "get-access-token",
+                          "--resource",
+                          arm_resource,
+                          "--query",
+                          "{accessToken:accessToken, expiresOn:expiresOn}",
+                          "-o",
+                          "json",
+                      ],
+                      text=True,
+                  )
+              except subprocess.CalledProcessError as exc:
+                  print(f"  Failed to obtain Azure access token: {exc}", file=sys.stderr)
+                  stderr = getattr(exc, "stderr", None)
+                  stdout = getattr(exc, "output", None) or getattr(exc, "stdout", None)
+                  if stderr:
+                      print(stderr, file=sys.stderr)
+                  elif stdout:
+                      print(stdout, file=sys.stderr)
+                  return ""
+
+              token = ""
+              try:
+                  payload = json.loads(raw_output)
+              except json.JSONDecodeError:
+                  token = raw_output.strip()
+              else:
+                  token = (payload.get("accessToken") or "").strip()
+
+              if not token:
+                  print("  Received empty access token from Azure CLI.", file=sys.stderr)
+                  return ""
+
+              token_cache["token"] = token
+              token_cache["expiry"] = now + 2400.0
+              return token
+
+          def _parse_retry_after(value: str) -> float:
+              if not value:
+                  return 0.0
+              candidate = value.strip()
+              if not candidate:
+                  return 0.0
+              if candidate.isdigit():
+                  try:
+                      seconds = float(candidate)
+                  except ValueError:
+                      return 0.0
+                  return seconds if seconds > 0 else 0.0
+              try:
+                  parsed = email.utils.parsedate_to_datetime(candidate)
+              except (TypeError, ValueError):
+                  return 0.0
+              if parsed is None:
+                  return 0.0
+              if parsed.tzinfo is None:
+                  parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+              remaining = (
+                  parsed - datetime.datetime.now(datetime.timezone.utc)
+              ).total_seconds()
+              return remaining if remaining > 0 else 0.0
+
+          def _unwrap_operation_payload(payload):
+              if isinstance(payload, dict):
+                  status_value = payload.get("status")
+                  if (
+                      isinstance(status_value, str)
+                      and status_value.lower() in {"succeeded", "failed", "canceled", "cancelled"}
+                  ):
+                      props = payload.get("properties")
+                      if isinstance(props, dict):
+                          for key in ("output", "outputs", "result", "value"):
+                              if key in props and props[key] is not None:
+                                  return _unwrap_operation_payload(props[key])
+                          response = props.get("response")
+                          if isinstance(response, dict):
+                              body_payload = response.get("body")
+                              if body_payload is not None:
+                                  return _unwrap_operation_payload(body_payload)
+                  props_value = payload.get("properties")
+                  if isinstance(props_value, dict):
+                      nested = _unwrap_operation_payload(props_value)
+                      if nested is not None:
+                          return nested
+              return payload
+
+          def _invoke_arm_json(method: str, url: str, description: str):
+              method_upper = method.upper()
+
+              def _send(request_method: str, request_url: str):
+                  token = _get_arm_token()
+                  if not token:
+                      return 0, {}, None, ""
+
+                  request = urllib.request.Request(request_url, method=request_method)
+                  request.add_header("Authorization", f"Bearer {token}")
+
+                  if request_method in {"POST", "PUT", "PATCH"}:
+                      request.data = b""
+                      request.add_header("Content-Length", "0")
+
+                  try:
+                      with urllib.request.urlopen(request, timeout=60) as response:
+                          status_code = getattr(response, "status", response.getcode())
+                          headers = {k.lower(): v for k, v in response.headers.items()}
+                          body_bytes = response.read()
+                  except urllib.error.HTTPError as exc:
+                      status_code = exc.code
+                      headers = {k.lower(): v for k, v in exc.headers.items()} if exc.headers else {}
+                      body_bytes = exc.read()
+
+                  body_text = body_bytes.decode("utf-8", errors="replace") if body_bytes else ""
+                  payload = None
+                  if body_text:
+                      try:
+                          payload = json.loads(body_text)
+                      except json.JSONDecodeError:
+                          payload = None
+                  return status_code, headers, payload, body_text
+
+              status_code, headers, payload, raw_text = _send(method_upper, url)
+              if status_code in (200, 201):
+                  if isinstance(payload, dict):
+                      return _unwrap_operation_payload(payload)
+                  return payload
+
+              if status_code == 202:
+                  location = headers.get("location") or headers.get("operation-location")
+                  if not location:
+                      return _unwrap_operation_payload(payload) if isinstance(payload, dict) else payload
+
+                  wait_seconds = _parse_retry_after(headers.get("retry-after"))
+                  if wait_seconds <= 0:
+                      wait_seconds = 5.0
+
+                  last_payload = payload
+                  last_text = raw_text
+
+                  for poll_attempt in range(12):
+                      if poll_attempt or wait_seconds > 0:
+                          time.sleep(wait_seconds)
+
+                      poll_status, poll_headers, poll_payload, poll_text = _send("GET", location)
+                      if poll_status in (200, 201):
+                          if isinstance(poll_payload, dict):
+                              return _unwrap_operation_payload(poll_payload)
+                          return poll_payload
+
+                      if poll_status == 202:
+                          wait_seconds = (
+                              _parse_retry_after(poll_headers.get("retry-after"))
+                              or wait_seconds
+                              or 5.0
+                          )
+                          last_payload = poll_payload
+                          last_text = poll_text
+                          continue
+
+                      if poll_status == 204:
+                          return {}
+
+                      if poll_status >= 400:
+                  if description:
+                      print(
+                          f"  Polling {description} failed with status {poll_status}",
+                          file=sys.stderr,
+                      )
+                  else:
+                      print(
+                          f"  Polling Azure operation failed with status {poll_status}",
+                          file=sys.stderr,
+                      )
+                          if poll_text:
+                              print(poll_text, file=sys.stderr)
+                          return None
+
+                      last_payload = poll_payload
+                      last_text = poll_text
+
+                  if description:
+                      print(f"  Timed out waiting for {description}", file=sys.stderr)
+                  else:
+                      print("  Timed out waiting for Azure operation to complete", file=sys.stderr)
+
+                  if isinstance(last_payload, dict):
+                      return _unwrap_operation_payload(last_payload)
+                  if last_text:
+                      print(last_text, file=sys.stderr)
+                  return last_payload
+
+              if status_code == 204:
+                  return {}
+
+              if status_code >= 400:
+                  if description:
+                      print(
+                          f"  ARM request for {description} failed with status {status_code}",
+                          file=sys.stderr,
+                      )
+                  else:
+                      print(
+                          f"  ARM request failed with status {status_code}",
+                          file=sys.stderr,
+                      )
+                  if raw_text:
+                      print(raw_text, file=sys.stderr)
+                  return None
+
+              if isinstance(payload, dict):
+                  return _unwrap_operation_payload(payload)
+              return payload
+
           def build_rule_label(rule: str) -> str:
               pool_name = rule_pool_map.get(rule)
               if pool_name:
@@ -1238,41 +1669,11 @@ jobs:
                   f"resourceGroups/{node_rg}/providers/Microsoft.Network/loadBalancers/{lb_name}/"
                   f"loadBalancingRules/{rule}/health?api-version={api_version}"
               )
-              try:
-                  result = subprocess.run(
-                      [
-                          "az",
-                          "rest",
-                          "--method",
-                          "post",
-                          "--url",
-                          url,
-                          "--only-show-errors",
-                          "--output",
-                          "json",
-                      ],
-                      check=True,
-                      capture_output=True,
-                      text=True,
-                  )
-              except subprocess.CalledProcessError as exc:
-                  print(f"Failed to query health for rule {rule}: {exc}", file=sys.stderr)
-                  if exc.stderr:
-                      print(exc.stderr)
-                  elif exc.stdout:
-                      print(exc.stdout)
-                  return None
-
-              output = (result.stdout or "").strip()
-              if not output:
-                  return {}
-
-              try:
-                  return json.loads(output)
-              except json.JSONDecodeError:
-                  print(f"Unexpected JSON for rule {rule}:")
-                  print(output)
-                  return None
+              description = f"load balancer rule {rule} health"
+              result = _invoke_arm_json("POST", url, description)
+              if isinstance(result, dict):
+                  return result
+              return {}
 
           for rule in rules:
               rule_label = build_rule_label(rule)
