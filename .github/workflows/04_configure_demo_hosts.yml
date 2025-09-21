@@ -1142,7 +1142,7 @@ jobs:
                     continue
                 parts.append(f"{key}={value_str}")
             print(",".join(parts))
-            PY
+          PY
           )
           selector=$(tr -d '\r\n' <<<"${selector}")
           if [ -z "${selector}" ]; then
