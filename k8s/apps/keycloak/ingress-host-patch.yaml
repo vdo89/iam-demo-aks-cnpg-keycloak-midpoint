@@ -1,6 +1,0 @@
-- op: add
-  path: /spec/ingressClassName
-  value: nginx
-- op: add
-  path: /spec/rules/0/host
-  value: kc.132.220.29.66.nip.io
