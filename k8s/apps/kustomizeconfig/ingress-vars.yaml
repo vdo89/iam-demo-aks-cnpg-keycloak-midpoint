@@ -1,0 +1,7 @@
+varReference:
+  - path: spec/ingressClassName
+    kind: Ingress
+  - path: spec/rules[]/host
+    kind: Ingress
+  - path: spec/hostname
+    kind: Keycloak

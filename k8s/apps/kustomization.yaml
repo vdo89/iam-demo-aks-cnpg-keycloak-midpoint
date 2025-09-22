@@ -15,6 +15,9 @@ configMapGenerator:
     envs:
       - params.env
 
+configurations:
+  - kustomizeconfig/ingress-vars.yaml
+
 vars:
   - name: INGRESS_CLASS
     objref:
