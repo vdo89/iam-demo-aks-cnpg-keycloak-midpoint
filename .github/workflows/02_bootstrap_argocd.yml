@@ -62,8 +62,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Applying vendored Argo CD install manifest (v3.1.6)"
-          kubectl apply -f k8s/argocd/install/argocd-install-v3.1.6.yaml
+          echo "Applying vendored Argo CD install manifest (v3.1.6) into namespace argocd"
+          kubectl apply -n argocd -f k8s/argocd/install/argocd-install-v3.1.6.yaml
           echo "Waiting for Argo CD core components to become ready..."
           for workload in deploy/argocd-server deploy/argocd-repo-server deploy/argocd-redis deploy/argocd-dex-server; do
             echo "Waiting for rollout of ${workload}"
