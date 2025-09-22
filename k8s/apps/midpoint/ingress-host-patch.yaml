@@ -7,3 +7,12 @@ spec:
   ingressClassName: nginx
   rules:
     - host: mp.132.220.29.66.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: midpoint
+                port:
+                  number: 8080

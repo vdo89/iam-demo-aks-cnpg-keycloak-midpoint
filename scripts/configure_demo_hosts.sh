@@ -75,6 +75,8 @@ write_ingress_patch() {
   local patch_file="$2"
   local ingress_name="$3"
   local host="$4"
+  local service_name="$5"
+  local service_port="$6"
 
   log "Updating ${label} ingress patch at ${patch_file} with host ${host}..."
   cat <<EOF >"${patch_file}"
@@ -87,6 +89,15 @@ spec:
   ingressClassName: ${INGRESS_CLASS_NAME}
   rules:
     - host: ${host}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ${service_name}
+                port:
+                  number: ${service_port}
 EOF
   log "${label} ingress patch updated. Commit and push this change so Argo CD reconciles the ingress host."
 }
@@ -136,8 +147,8 @@ detect_ingress_class() {
 }
 
 update_gitops_manifests() {
-  write_ingress_patch "Keycloak" "${KEYCLOAK_INGRESS_PATCH_FILE}" "${KEYCLOAK_INGRESS_NAME}" "${KC_HOST}"
-  write_ingress_patch "midPoint" "${MIDPOINT_INGRESS_PATCH_FILE}" "${MIDPOINT_INGRESS_NAME}" "${MP_HOST}"
+  write_ingress_patch "Keycloak" "${KEYCLOAK_INGRESS_PATCH_FILE}" "${KEYCLOAK_INGRESS_NAME}" "${KC_HOST}" "${KEYCLOAK_SERVICE_NAME}" "${KEYCLOAK_SERVICE_PORT}"
+  write_ingress_patch "midPoint" "${MIDPOINT_INGRESS_PATCH_FILE}" "${MIDPOINT_INGRESS_NAME}" "${MP_HOST}" "${MIDPOINT_SERVICE_NAME}" "${MIDPOINT_SERVICE_PORT}"
 }
 
 resolve_ingress_ip() {
