@@ -10,10 +10,27 @@ spec:
         elements:
           - name: cert-manager
             namespace: cert-manager
+            repoURL: https://charts.jetstack.io
+            chart: cert-manager
+            targetRevision: v1.15.1
+            releaseName: cert-manager
+            values: '{"installCRDs":true,"prometheus":{"enabled":false}}'
           - name: cnpg-operator
             namespace: cnpg-system
+            repoURL: https://cloudnative-pg.github.io/charts
+            chart: cloudnative-pg
+            targetRevision: 0.22.1
+            releaseName: cnpg
+            values: '{}'
           - name: ingress-nginx
             namespace: ingress-nginx
+            repoURL: https://kubernetes.github.io/ingress-nginx
+            chart: ingress-nginx
+            targetRevision: 4.10.1
+            releaseName: ingress-nginx
+            # Use the built-in status endpoint exposed on the default server so Azure probes
+            # get HTTP 200s even before any ingress rules exist.
+            values: '{"controller":{"service":{"annotations":{"service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path":"/is-dynamic-lb-initialized"},"type":"LoadBalancer"}}}'
   template:
     metadata:
       name: '{{.name}}'
@@ -24,45 +41,23 @@ spec:
         server: https://kubernetes.default.svc
         namespace: '{{.namespace}}'
       source:
-      {{ if eq .name "cert-manager" }}
-        repoURL: https://charts.jetstack.io
-        chart: cert-manager
-        targetRevision: v1.15.1
+        repoURL: '{{.repoURL}}'
+        chart: '{{.chart}}'
+        targetRevision: '{{.targetRevision}}'
         helm:
-          releaseName: cert-manager
-          valuesObject:
-            installCRDs: true
-            prometheus:
-              enabled: false
-      {{ else if eq .name "cnpg-operator" }}
-        repoURL: https://cloudnative-pg.github.io/charts
-        chart: cloudnative-pg
-        targetRevision: 0.22.1
-        helm:
-          releaseName: cnpg
-      {{ else if eq .name "ingress-nginx" }}
-        repoURL: https://kubernetes.github.io/ingress-nginx
-        chart: ingress-nginx
-        targetRevision: 4.10.1
-        helm:
-          releaseName: ingress-nginx
-          valuesObject:
-            controller:
-              service:
-                annotations:
-                  # Use the built-in status endpoint exposed on the default server so Azure probes
-                  # get HTTP 200s even before any ingress rules exist.
-                  service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: /is-dynamic-lb-initialized
-                type: LoadBalancer
-      {{ end }}
+          releaseName: '{{.releaseName}}'
+          values: '{{.values}}'
       syncPolicy:
         automated:
           prune: true
           selfHeal: true
         syncOptions:
-      {{ if eq .name "cnpg-operator" }}
+          - CreateNamespace=true
+  templatePatch: |
+    {{- if eq .name "cnpg-operator" }}
+    spec:
+      syncPolicy:
+        syncOptions:
           - CreateNamespace=true
           - ServerSideApply=true
-      {{ else }}
-          - CreateNamespace=true
-      {{ end }}
+    {{- end }}
