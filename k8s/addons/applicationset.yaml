@@ -1,0 +1,84 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: addons-charts
+  namespace: argocd
+spec:
+  goTemplate: true
+  strategy:
+    type: merge
+  generators:
+    - list:
+        elements:
+          - name: cert-manager
+            spec:
+              destination:
+                namespace: cert-manager
+              source:
+                repoURL: https://charts.jetstack.io
+                chart: cert-manager
+                targetRevision: v1.15.1
+                helm:
+                  releaseName: cert-manager
+                  valuesObject:
+                    installCRDs: true
+                    prometheus:
+                      enabled: false
+              syncPolicy:
+                syncOptions:
+                  - CreateNamespace=true
+          - name: cnpg-operator
+            spec:
+              destination:
+                namespace: cnpg-system
+              source:
+                repoURL: https://cloudnative-pg.github.io/charts
+                chart: cloudnative-pg
+                targetRevision: 0.22.1
+                helm:
+                  releaseName: cnpg
+                  skipCrds: true
+                  parameters:
+                    - name: crds.create
+                      value: "false"
+              syncPolicy:
+                syncOptions:
+                  - CreateNamespace=true
+                  - ServerSideApply=true
+          - name: ingress-nginx
+            spec:
+              destination:
+                namespace: ingress-nginx
+              source:
+                repoURL: https://kubernetes.github.io/ingress-nginx
+                chart: ingress-nginx
+                targetRevision: 4.10.1
+                helm:
+                  releaseName: ingress-nginx
+                  valuesObject:
+                    controller:
+                      config:
+                        server-snippet: |
+                          location = /healthz {
+                            access_log off;
+                            return 200;
+                          }
+                      service:
+                        annotations:
+                          service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: /healthz
+                        type: LoadBalancer
+              syncPolicy:
+                syncOptions:
+                  - CreateNamespace=true
+  template:
+    metadata:
+      name: '{{name}}'
+      namespace: argocd
+    spec:
+      project: default
+      destination:
+        server: https://kubernetes.default.svc
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
