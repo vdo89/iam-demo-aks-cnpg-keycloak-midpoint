@@ -153,7 +153,7 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     the upstream image, so letting the runtime build step execute avoids the crash loop without having to maintain a
     pre-built custom image.
   - Keycloak enables the CLI flag `health-enabled=true` so the readiness endpoints are exposed for the operator's probes.
-    Keycloak 26.0.8 removed the legacy `health` feature toggle, so the manifest now wires the option through
+    Keycloak 26.x removed the legacy `health` feature toggle, so the manifest now wires the option through
     `spec.additionalOptions` instead of relying on environment variables or the operator's default feature set.
     Leaving the old flag in place makes the container exit with `health is an unrecognized feature`, which surfaces as
     a CrashLoopBackOff in Argo CD. The current Keycloak Operator release still injects `health` whenever the feature list
@@ -163,10 +163,11 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     relies solely on the explicit enabled entry. If you upgrade the image again and the health endpoints disappear,
     review the upstream release notes for the replacement configuration knob before adjusting the feature list.
 
-  - The manifest pins Keycloak to **26.0.8** because 26.0.0 fails to start once build-time options such as `kc.db`
-    or `kc.health-enabled` diverge from what was baked into the optimized image, which is exactly the case for this
-    deployment. The regression was fixed upstream (Keycloak issue #33902) and shipping the patched image ensures the
-    StatefulSet does not get stuck in a CrashLoopBackOff when we reconcile the database and health settings.
+  - The manifest pins Keycloak to **26.3.4** to stay aligned with the operator resources the workflow installs.
+    Keycloak 26.0.0 fails to start once build-time options such as `kc.db` or `kc.health-enabled` diverge from the
+    optimized image defaults, which is exactly the case for this deployment. The upstream fix (Keycloak issue #33902)
+    ships in 26.3.4, so we keep the newer image to avoid the CrashLoopBackOff while matching the operator release
+    applied during bootstrap.
     Keycloak 26 automatically rebuilds the optimized image when runtime options change, and the legacy `auto-build`
     configuration knob was removed upstream. Leaving the old `kc.auto-build=true` entry forces the operator to render the
     invalid `--kc.auto-build` flag which causes the pod to exit immediately, so the manifest purposely omits that option.
