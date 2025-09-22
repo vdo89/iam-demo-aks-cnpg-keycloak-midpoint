@@ -15,28 +15,34 @@ configMapGenerator:
     envs:
       - params.env
 
-configurations:
-  - kustomizeconfig/ingress-vars.yaml
-
-vars:
-  - name: INGRESS_CLASS
-    objref:
-      apiVersion: v1
+replacements:
+  - source:
       kind: ConfigMap
       name: iam-ingress-settings
-    fieldref:
-      fieldpath: data.ingressClass
-  - name: KEYCLOAK_HOST
-    objref:
-      apiVersion: v1
+      fieldPath: data.ingressClass
+    targets:
+      - select:
+          kind: Ingress
+          name: midpoint
+        fieldPaths:
+          - spec.ingressClassName
+  - source:
       kind: ConfigMap
       name: iam-ingress-settings
-    fieldref:
-      fieldpath: data.keycloakHost
-  - name: MIDPOINT_HOST
-    objref:
-      apiVersion: v1
+      fieldPath: data.keycloakHost
+    targets:
+      - select:
+          kind: Keycloak
+          name: rws-keycloak
+        fieldPaths:
+          - spec.hostname.hostname
+  - source:
       kind: ConfigMap
       name: iam-ingress-settings
-    fieldref:
-      fieldpath: data.midpointHost
+      fieldPath: data.midpointHost
+    targets:
+      - select:
+          kind: Ingress
+          name: midpoint
+        fieldPaths:
+          - spec.rules.0.host

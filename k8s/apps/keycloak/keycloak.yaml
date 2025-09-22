@@ -49,7 +49,9 @@ spec:
   http:
     httpEnabled: true
   hostname:
-    hostname: $(KEYCLOAK_HOST)
+    # Default hostname is overridden by kustomize replacements using values
+    # from k8s/apps/params.env during the build.
+    hostname: kc.127.0.0.1.nip.io
     strict: false
   ingress:
     enabled: true

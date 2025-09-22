@@ -6,9 +6,11 @@ metadata:
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: "16m"
 spec:
-  ingressClassName: $(INGRESS_CLASS)
+  # Default ingress class/host values are overridden by kustomize replacements
+  # at build time using the values from k8s/apps/params.env.
+  ingressClassName: nginx
   rules:
-    - host: $(MIDPOINT_HOST)
+    - host: mp.127.0.0.1.nip.io
       http:
         paths:
           - path: /
