@@ -10,29 +10,10 @@ spec:
         elements:
           - name: cert-manager
             namespace: cert-manager
-            repoURL: https://charts.jetstack.io
-            chart: cert-manager
-            targetRevision: v1.15.1
-            helmReleaseName: cert-manager
-            syncOptions:
-              - CreateNamespace=true
           - name: cnpg-operator
             namespace: cnpg-system
-            repoURL: https://cloudnative-pg.github.io/charts
-            chart: cloudnative-pg
-            targetRevision: 0.22.1
-            helmReleaseName: cnpg
-            syncOptions:
-              - CreateNamespace=true
-              - ServerSideApply=true
           - name: ingress-nginx
             namespace: ingress-nginx
-            repoURL: https://kubernetes.github.io/ingress-nginx
-            chart: ingress-nginx
-            targetRevision: 4.10.1
-            helmReleaseName: ingress-nginx
-            syncOptions:
-              - CreateNamespace=true
   template:
     metadata:
       name: '{{.name}}'
@@ -43,17 +24,28 @@ spec:
         server: https://kubernetes.default.svc
         namespace: '{{.namespace}}'
       source:
-        repoURL: '{{.repoURL}}'
-        chart: '{{.chart}}'
-        targetRevision: '{{.targetRevision}}'
-        helm:
-          releaseName: '{{.helmReleaseName}}'
 {{- if eq .name "cert-manager" }}
+        repoURL: https://charts.jetstack.io
+        chart: cert-manager
+        targetRevision: v1.15.1
+        helm:
+          releaseName: cert-manager
           valuesObject:
             installCRDs: true
             prometheus:
               enabled: false
+{{- else if eq .name "cnpg-operator" }}
+        repoURL: https://cloudnative-pg.github.io/charts
+        chart: cloudnative-pg
+        targetRevision: 0.22.1
+        helm:
+          releaseName: cnpg
 {{- else if eq .name "ingress-nginx" }}
+        repoURL: https://kubernetes.github.io/ingress-nginx
+        chart: ingress-nginx
+        targetRevision: 4.10.1
+        helm:
+          releaseName: ingress-nginx
           valuesObject:
             controller:
               service:
@@ -67,9 +59,10 @@ spec:
         automated:
           prune: true
           selfHeal: true
-{{- if .syncOptions }}
         syncOptions:
-{{- range .syncOptions }}
-          - {{ . }}
-{{- end }}
+{{- if eq .name "cnpg-operator" }}
+          - CreateNamespace=true
+          - ServerSideApply=true
+{{- else }}
+          - CreateNamespace=true
 {{- end }}
