@@ -362,6 +362,8 @@ smoke_test() {
     "/realms/master"
   )
 
+  # Probe the default root context first; fall back to the legacy /auth base
+  # path if an older deployment still uses it.
   for prefix in "" "/auth"; do
     for keycloak_path in "${keycloak_paths[@]}"; do
       keycloak_urls+=("http://${KC_HOST}${prefix}${keycloak_path}")
@@ -405,7 +407,7 @@ main() {
   smoke_test
 
   log "✅ Configuration complete."
-  log "Keycloak URL: http://${KC_HOST}/auth"
+  log "Keycloak URL: http://${KC_HOST}/"
   log "midPoint URL: http://${MP_HOST}/midpoint"
 }
 

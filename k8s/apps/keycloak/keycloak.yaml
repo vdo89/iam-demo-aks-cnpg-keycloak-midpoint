@@ -15,11 +15,6 @@ spec:
       value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/keycloak?sslmode=disable
     - name: health-enabled
       value: "true"
-    # Restore the legacy /auth base path so clients that still expect it (for
-    # example midPoint's built-in Keycloak integration) resolve the realm
-    # endpoints without returning a 404 from Keycloak 26.
-    - name: http-relative-path
-      value: /auth
     # Allow the demo ingress to terminate HTTP without Keycloak rejecting the
     # host/scheme. The nip.io address changes every time the AKS load balancer
     # IP changes, so keep hostname checks disabled explicitly at runtime.

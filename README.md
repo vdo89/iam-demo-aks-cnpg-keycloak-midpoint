@@ -105,8 +105,8 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
 
 - Get the external IP of **ingress-nginx** (the workflow prints it; or: `kubectl -n ingress-nginx get svc ingress-nginx-controller`).
 - Keycloak is exposed through the operator-managed service `rws-keycloak-service`; check it with `kubectl -n iam get svc rws-keycloak-service` if you need the cluster IP before Ingress is ready.
-- Open Keycloak: `http://kc.<EXTERNAL-IP>.nip.io/auth` (admin user and password are in secret `rws-keycloak-initial-admin` created by operator)
-  - The deployment restores Keycloak's legacy `/auth` base path so older clients, including midPoint's built-in Keycloak integration, reach the realm endpoints without 404s.
+- Open Keycloak: `http://kc.<EXTERNAL-IP>.nip.io/` (admin user and password are in secret `rws-keycloak-initial-admin` created by operator)
+  - Keycloak now serves from the default root context, matching the upstream 26.x images. Drop any legacy `/auth` prefixes from bookmarks or client configurations.
   - The Keycloak Operator exposes HTTP on service **`rws-keycloak-service`** (note the `-service` suffix). Use `kubectl -n iam get svc` to list the generated service names instead of querying `rws-keycloak` directly.
 - Open midPoint: `http://mp.<EXTERNAL-IP>.nip.io/midpoint`
   - Login: `administrator` / the `MIDPOINT_ADMIN_PASSWORD` you set
