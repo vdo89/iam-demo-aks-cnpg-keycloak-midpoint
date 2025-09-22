@@ -1372,7 +1372,7 @@ jobs:
 
           echo "Waiting for Argo CD application 'apps' to become Synced and Healthy"
           app_synced=0
-          for attempt in $(seq 1 90); do
+          for attempt in $(seq 1 9); do
             sync_status=$(kubectl -n argocd get application apps -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")
             health_status=$(kubectl -n argocd get application apps -o jsonpath='{.status.health.status}' 2>/dev/null || echo "")
             revision_status=$(kubectl -n argocd get application apps -o jsonpath='{.status.sync.revision}' 2>/dev/null || echo "")
@@ -1383,7 +1383,7 @@ jobs:
               break
             fi
 
-            echo "Argo CD application 'apps' status: sync=${sync_status:-<unknown>} health=${health_status:-<unknown>} revision=${revision_status:-<unknown>} (attempt ${attempt}/90)"
+            echo "Argo CD application 'apps' status: sync=${sync_status:-<unknown>} health=${health_status:-<unknown>} revision=${revision_status:-<unknown>} (attempt ${attempt}/9)"
             sleep 10
           done
 
