@@ -1112,10 +1112,6 @@ jobs:
           kubectl -n ${{ inputs.NAMESPACE_IAM }} create secret generic midpoint-admin \
             --from-literal=password="$MIDPOINT_ADMIN_PASSWORD" \
             --dry-run=client -o yaml | kubectl apply -f -
-          kubectl -n ${{ inputs.NAMESPACE_IAM }} create configmap midpoint-config \
-            --from-file=config.xml=k8s/apps/midpoint/config.xml \
-            --dry-run=client -o yaml | kubectl apply -f -
-
       - name: Wait for Keycloak operator CRDs
         shell: bash
         run: |

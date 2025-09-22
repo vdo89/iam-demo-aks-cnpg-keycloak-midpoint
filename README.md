@@ -98,12 +98,13 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
 ## 4) Publish demo ingress hostnames
 
 1. Run workflow **`04_configure_demo_hosts.yml`**.
-2. The helper script (`scripts/configure_demo_hosts.sh`) waits for `ingress-nginx` to publish a load balancer,
-   detects the active ingress class, and records the resolved hosts (`kc.<IP>.nip.io` and `mp.<IP>.nip.io`) in
-   `k8s/apps/params.env`. Commit and push the updated file so Argo CD reconciles the ingress configuration
-   directly from Git.
 
----
+2. The helper script (`scripts/configure_demo_hosts.sh`) discovers the `ingress-nginx` load balancer address,
+   records the detected ingress class, and rewrites the GitOps host patches
+   (`k8s/apps/keycloak/hostname-patch.yaml` and `k8s/apps/midpoint/ingress-host-patch.yaml`) with
+   `kc.<IP>.nip.io` and `mp.<IP>.nip.io`. Commit those files after the workflow completes so Argo CD reconciles
+   the new hostnames straight from Git instead of relying on imperative `kubectl apply` calls.
+
 
 ## 5) Demo – what to click
 
