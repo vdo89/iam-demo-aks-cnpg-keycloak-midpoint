@@ -64,7 +64,7 @@ spec:
                   - CreateNamespace=true
   template:
     metadata:
-      name: '{{name}}'
+      name: '{{.name}}'
       namespace: argocd
     spec:
       project: default
