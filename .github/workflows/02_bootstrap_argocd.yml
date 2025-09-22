@@ -119,6 +119,10 @@ jobs:
             curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
           fi
 
+          CNPG_CHART_NAME="cloudnative-pg"
+          CNPG_CHART_VERSION="0.22.1"
+          CNPG_CHART_REF="cloudnative-pg/${CNPG_CHART_NAME}"
+
           echo "Adding CloudNativePG Helm repository"
           helm repo add cloudnative-pg https://cloudnative-pg.github.io/charts --force-update >/dev/null 2>&1 || true
 
@@ -136,16 +140,37 @@ jobs:
             sleep 5
           done
 
-          echo "Rendering CloudNativePG CRDs for version 0.22.1"
-          if ! helm show crds cloudnative-pg/cloudnative-pg --version 0.22.1 > /tmp/cloudnative-pg-crds.yaml; then
-            echo "helm show crds failed; aborting"
-            exit 1
+          echo "Downloading CloudNativePG chart ${CNPG_CHART_REF} (version ${CNPG_CHART_VERSION})"
+          chart_work_dir=$(mktemp -d)
+          trap 'rm -rf "${chart_work_dir}"' EXIT
+          for attempt in $(seq 1 5); do
+            rm -rf "${chart_work_dir:?}/${CNPG_CHART_NAME}" "${chart_work_dir:?}/${CNPG_CHART_NAME}-${CNPG_CHART_VERSION}.tgz"
+            if helm pull "${CNPG_CHART_REF}" \
+              --version "${CNPG_CHART_VERSION}" \
+              --destination "${chart_work_dir}" \
+              --untar \
+              --untardir "${chart_work_dir}"; then
+              echo "Downloaded CloudNativePG chart"
+              break
+            fi
+            if [ "${attempt}" -eq 5 ]; then
+              echo "Failed to download CloudNativePG chart after ${attempt} attempts"
+              exit 1
+            fi
+            echo "helm pull failed (attempt ${attempt}/5); retrying in 10 seconds"
+            sleep 10
+          done
+
+          chart_path="${chart_work_dir}/${CNPG_CHART_NAME}"
+
+          echo "Rendering CloudNativePG CRDs for version ${CNPG_CHART_VERSION}"
+          if ! helm show crds "${chart_path}" > /tmp/cloudnative-pg-crds.yaml; then
+            echo "'helm show crds' against the local chart failed"
           fi
 
           if [ ! -s /tmp/cloudnative-pg-crds.yaml ]; then
             echo "No CRDs were returned by 'helm show crds'; falling back to helm template rendering"
-            helm template cloudnative-pg-crds cloudnative-pg/cloudnative-pg \
-              --version 0.22.1 \
+            helm template cloudnative-pg-crds "${chart_path}" \
               --include-crds \
               --namespace cnpg-system > /tmp/cloudnative-pg-crds-rendered.yaml
 
