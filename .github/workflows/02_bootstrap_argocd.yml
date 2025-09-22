@@ -1352,22 +1352,49 @@ jobs:
         run: |
           set -euo pipefail
 
-          if ! command -v argocd >/dev/null 2>&1; then
-            echo "Installing Argo CD CLI"
-            curl -sSL -o /tmp/argocd-linux-amd64 \
-              https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
-            install -m 0755 /tmp/argocd-linux-amd64 /usr/local/bin/argocd
+          echo "Waiting for Argo CD application 'apps' to be created"
+          app_created=0
+          for attempt in $(seq 1 30); do
+            if kubectl -n argocd get application apps >/dev/null 2>&1; then
+              echo "Argo CD application 'apps' detected (attempt ${attempt}/30)"
+              app_created=1
+              break
+            fi
+            echo "Argo CD application 'apps' not found yet (attempt ${attempt}/30)"
+            sleep 10
+          done
+
+          if [ "${app_created}" -ne 1 ]; then
+            echo "Timed out waiting for Argo CD application 'apps' to be created; dumping diagnostics."
+            kubectl -n argocd get applications || true
+            exit 1
           fi
 
           echo "Waiting for Argo CD application 'apps' to become Synced and Healthy"
-          if ! argocd --core app wait apps --sync --health --timeout 900; then
-            echo "Argo CD application 'apps' failed to report Synced/Healthy within the timeout; dumping diagnostics."
+          app_synced=0
+          for attempt in $(seq 1 90); do
+            sync_status=$(kubectl -n argocd get application apps -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")
+            health_status=$(kubectl -n argocd get application apps -o jsonpath='{.status.health.status}' 2>/dev/null || echo "")
+            revision_status=$(kubectl -n argocd get application apps -o jsonpath='{.status.sync.revision}' 2>/dev/null || echo "")
+
+            if [ "${sync_status}" = "Synced" ] && [ "${health_status}" = "Healthy" ]; then
+              echo "Argo CD application 'apps' is Synced and Healthy"
+              app_synced=1
+              break
+            fi
+
+            echo "Argo CD application 'apps' status: sync=${sync_status:-<unknown>} health=${health_status:-<unknown>} revision=${revision_status:-<unknown>} (attempt ${attempt}/90)"
+            sleep 10
+          done
+
+          if [ "${app_synced}" -ne 1 ]; then
+            echo "Argo CD application 'apps' failed to reach Synced/Healthy within the timeout; dumping diagnostics."
             kubectl -n argocd get application apps -o yaml || true
             kubectl -n argocd get applications || true
             exit 1
           fi
 
-          argocd --core app get apps
+          kubectl -n argocd get application apps
 
       - name: Wait for Keycloak service endpoints
         shell: bash
