@@ -26,6 +26,7 @@ MIDPOINT_INGRESS_NAME="${MIDPOINT_INGRESS_NAME:-midpoint}"
 PATCH_ROOT="${PATCH_ROOT:-k8s/apps}"
 KEYCLOAK_INGRESS_PATCH_FILE="${KEYCLOAK_INGRESS_PATCH_FILE:-${PATCH_ROOT}/keycloak/ingress-host-patch.yaml}"
 MIDPOINT_INGRESS_PATCH_FILE="${MIDPOINT_INGRESS_PATCH_FILE:-${PATCH_ROOT}/midpoint/ingress-host-patch.yaml}"
+INGRESS_CLASS_NAME="${INGRESS_CLASS_NAME:-}"
 
 require_cmd kubectl
 require_cmd curl
@@ -39,6 +40,11 @@ apply_ingress() {
   local service_name="$4"
   local service_port="$5"
 
+  if [[ -z "${INGRESS_CLASS_NAME}" ]]; then
+    log "ERROR: Ingress class name is not set."
+    exit 1
+  fi
+
   log "Reconciling ${label} ingress (host ${host})..."
   cat <<EOF | kubectl apply -f -
 apiVersion: networking.k8s.io/v1
@@ -49,7 +55,7 @@ metadata:
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: "16m"
 spec:
-  ingressClassName: nginx
+  ingressClassName: ${INGRESS_CLASS_NAME}
   rules:
     - host: ${host}
       http:
@@ -78,10 +84,55 @@ metadata:
   name: ${ingress_name}
   namespace: ${NAMESPACE}
 spec:
+  ingressClassName: ${INGRESS_CLASS_NAME}
   rules:
     - host: ${host}
 EOF
   log "${label} ingress patch updated. Commit and push this change so Argo CD reconciles the ingress host."
+}
+
+# Ensure the GitOps manifests target the ingress-nginx controller that actually
+# exists in the cluster. Some environments publish the class as "nginx", others
+# as "ingress-nginx" (or mark an internal/external variant as default). Auto-
+# detecting the class prevents the "IngressClass <name> not found" events the
+# user reported when the script or manifests point at the wrong name.
+detect_ingress_class() {
+  local json=""
+  local detected=""
+
+  if [[ -n "${INGRESS_CLASS_NAME}" ]]; then
+    if kubectl get ingressclass "${INGRESS_CLASS_NAME}" >/dev/null 2>&1; then
+      log "Using ingress class ${INGRESS_CLASS_NAME} from INGRESS_CLASS_NAME."
+      return
+    fi
+
+    log "ERROR: IngressClass ${INGRESS_CLASS_NAME} not found in the cluster."
+    kubectl get ingressclass || true
+    exit 1
+  fi
+
+  log "Auto-detecting ingress-nginx IngressClass..."
+  if ! json=$(kubectl get ingressclass -o json 2>/dev/null); then
+    log "ERROR: Failed to list IngressClass resources."
+    exit 1
+  fi
+
+  detected=$(jq -r '
+    .items
+    | map(select(.spec.controller == "k8s.io/ingress-nginx"))
+    | (map(select((.metadata.annotations["ingressclass.kubernetes.io/is-default-class"] // "") == "true"))[0]?.metadata.name
+       // .[0]?.metadata.name
+       // empty)
+  ' <<<"${json}" | tr -d '\r\n')
+
+  if [[ -z "${detected}" ]]; then
+    log "ERROR: Could not find an IngressClass managed by ingress-nginx."
+    kubectl get ingressclass || true
+    exit 1
+  fi
+
+  INGRESS_CLASS_NAME="${detected}"
+  log "Detected ingress class: ${INGRESS_CLASS_NAME}"
 }
 
 update_gitops_manifests() {
@@ -151,7 +202,27 @@ except Exception:
 }
 
 wait_for_ingress_controller() {
+  local attempts=30
+  local sleep_seconds=10
+  local attempt
+
   log "Waiting for ingress-nginx controller rollout..."
+
+  for attempt in $(seq 1 "${attempts}"); do
+    if kubectl -n ingress-nginx get deploy ingress-nginx-controller >/dev/null 2>&1; then
+      break
+    fi
+
+    log "ingress-nginx controller deployment not created yet (attempt ${attempt}/${attempts}); retrying in ${sleep_seconds}s..."
+    sleep "${sleep_seconds}"
+  done
+
+  if ! kubectl -n ingress-nginx get deploy ingress-nginx-controller >/dev/null 2>&1; then
+    log "ERROR: ingress-nginx controller deployment not found."
+    kubectl -n ingress-nginx get deploy || true
+    exit 1
+  fi
+
   kubectl -n ingress-nginx rollout status deploy/ingress-nginx-controller --timeout=600s
 }
 
@@ -282,9 +353,10 @@ smoke_test() {
 }
 
 main() {
+  wait_for_ingress_controller
+  detect_ingress_class
   resolve_ingress_ip
   update_gitops_manifests
-  wait_for_ingress_controller
   wait_for_keycloak
   wait_for_midpoint
   apply_ingresses
