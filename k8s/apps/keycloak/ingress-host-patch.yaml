@@ -1,18 +1,6 @@
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: rws-keycloak-public
-  namespace: iam
-spec:
-  ingressClassName: nginx
-  rules:
-    - host: kc.132.220.29.66.nip.io
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: rws-keycloak-service
-                port:
-                  number: 8080
+- op: add
+  path: /spec/ingressClassName
+  value: nginx
+- op: add
+  path: /spec/rules/0/host
+  value: kc.132.220.29.66.nip.io

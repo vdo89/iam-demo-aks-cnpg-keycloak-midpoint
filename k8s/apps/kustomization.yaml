@@ -6,6 +6,18 @@ resources:
   - keycloak/ingress.yaml
   - midpoint
 
-patchesStrategicMerge:
-  - keycloak/ingress-host-patch.yaml
-  - midpoint/ingress-host-patch.yaml
+patchesJson6902:
+  - target:
+      group: networking.k8s.io
+      version: v1
+      kind: Ingress
+      name: rws-keycloak-public
+      namespace: iam
+    path: keycloak/ingress-host-patch.yaml
+  - target:
+      group: networking.k8s.io
+      version: v1
+      kind: Ingress
+      name: midpoint
+      namespace: iam
+    path: midpoint/ingress-host-patch.yaml
