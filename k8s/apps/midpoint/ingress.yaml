@@ -6,9 +6,9 @@ metadata:
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: "16m"
 spec:
-  ingressClassName: nginx
+  ingressClassName: $(INGRESS_CLASS)
   rules:
-    - host: mp.127.0.0.1.nip.io
+    - host: $(MIDPOINT_HOST)
       http:
         paths:
           - path: /

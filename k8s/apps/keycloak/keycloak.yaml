@@ -49,6 +49,7 @@ spec:
   http:
     httpEnabled: true
   hostname:
+    hostname: $(KEYCLOAK_HOST)
     strict: false
   ingress:
     enabled: true
