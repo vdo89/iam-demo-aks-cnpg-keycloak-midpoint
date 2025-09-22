@@ -287,18 +287,60 @@ apply_ingresses() {
 check_endpoint() {
   local label="$1"
   shift
-  local url status=1 response
+  local url status=1
 
   for url in "$@"; do
     [[ -n "${url}" ]] || continue
     log "Probing ${label} at ${url}"
-    if response=$(curl -sS --fail --location --max-time 15 -o /dev/null -D - "${url}" 2>&1 | head -n 1); then
-      log "${label} responded via ${url}: ${response}"
-      status=0
-      break
+
+    local headers_file body_file http_code status_line curl_status
+    headers_file=$(mktemp)
+    body_file=$(mktemp)
+
+    # Capture headers and a small snippet of the body so we can surface
+    # the HTTP status code (and any proxy errors) without fighting pipefail.
+    if curl -sS --show-error --location --max-time 15 \
+      --output "${body_file}" --dump-header "${headers_file}" \
+      "${url}"; then
+      status_line=$(head -n 1 "${headers_file}" | tr -d '\r\n')
+      http_code=$(awk 'NR==1 {print $2}' "${headers_file}" | tr -d '\r\n')
+
+      if [[ -n "${http_code}" && "${http_code}" =~ ^[0-9]+$ &&
+            "${http_code}" -ge 200 && "${http_code}" -lt 400 ]]; then
+        log "${label} responded via ${url}: ${status_line}"
+        status=0
+        rm -f "${headers_file}" "${body_file}"
+        break
+      fi
+
+      local error_snippet=""
+      if [[ -s "${body_file}" ]]; then
+        error_snippet=$(head -c 200 "${body_file}" | tr -d '\r')
+      elif [[ -s "${headers_file}" ]]; then
+        error_snippet=$(head -c 200 "${headers_file}" | tr -d '\r')
+      fi
+
+      if [[ -n "${error_snippet}" ]]; then
+        log "${label} probe against ${url} returned HTTP ${http_code}; snippet: ${error_snippet}"
+      else
+        log "${label} probe against ${url} returned HTTP ${http_code}; will retry if attempts remain."
+      fi
     else
-      log "${label} probe against ${url} failed; will retry if attempts remain."
+      curl_status=$?
+      local error_snippet=""
+      if [[ -s "${body_file}" ]]; then
+        error_snippet=$(head -c 200 "${body_file}" | tr -d '\r')
+      elif [[ -s "${headers_file}" ]]; then
+        error_snippet=$(head -c 200 "${headers_file}" | tr -d '\r')
+      fi
+      if [[ -n "${error_snippet}" ]]; then
+        log "${label} probe against ${url} failed (curl exit ${curl_status}). Snippet: ${error_snippet}"
+      else
+        log "${label} probe against ${url} failed (curl exit ${curl_status})."
+      fi
     fi
+
+    rm -f "${headers_file}" "${body_file}"
   done
 
   return "${status}"
