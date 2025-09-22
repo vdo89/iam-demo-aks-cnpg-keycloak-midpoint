@@ -92,8 +92,8 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
 
 1. Run workflow **`04_configure_demo_hosts.yml`**.
 2. The helper script (`scripts/configure_demo_hosts.sh`) discovers the `ingress-nginx` load balancer address,
-   waits for the Keycloak and midPoint services to expose ready pods, updates the GitOps ingress host patches
-   (`k8s/apps/keycloak/ingress-host-patch.yaml` and `k8s/apps/midpoint/ingress-host-patch.yaml`) with
+   waits for the Keycloak and midPoint services to expose ready pods, updates the GitOps host patches
+   (`k8s/apps/keycloak/hostname-patch.yaml` and `k8s/apps/midpoint/ingress-host-patch.yaml`) with
    `kc.<IP>.nip.io` and `mp.<IP>.nip.io`, applies them once so you can browse immediately, and lets the workflow
    commit the patch files back to the repo. Argo CD now reconciles the dynamic hosts directly from Git instead
    of relying on `ignoreDifferences` rules.

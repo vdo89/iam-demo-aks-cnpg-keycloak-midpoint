@@ -3,17 +3,16 @@ kind: Kustomization
 resources:
   - keycloak/keycloak.yaml
   - keycloak/rws-realm.yaml
-  - keycloak/ingress.yaml
   - midpoint
 
 patchesJson6902:
   - target:
-      group: networking.k8s.io
-      version: v1
-      kind: Ingress
-      name: rws-keycloak-public
+      group: k8s.keycloak.org
+      version: v2alpha1
+      kind: Keycloak
+      name: rws-keycloak
       namespace: iam
-    path: keycloak/ingress-host-patch.yaml
+    path: keycloak/hostname-patch.yaml
   - target:
       group: networking.k8s.io
       version: v1

@@ -1,0 +1,3 @@
+- op: add
+  path: /spec/hostname/hostname
+  value: kc.127.0.0.1.nip.io
