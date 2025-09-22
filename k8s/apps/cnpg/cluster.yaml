@@ -11,6 +11,7 @@ spec:
 
   superuserSecret:
     name: cnpg-superuser
+    namespace: iam
 
   bootstrap:
     initdb:
@@ -18,6 +19,7 @@ spec:
       owner: keycloak
       secret:
         name: keycloak-db-app
+        namespace: iam
 
   managed:
     roles:
@@ -26,11 +28,13 @@ spec:
         passwordSecret:
           name: keycloak-db-app
           key: password
+          namespace: iam
       - name: midpoint
         login: true
         passwordSecret:
           name: midpoint-db-app
           key: password
+          namespace: iam
     databases:
       - name: keycloak
         owner: keycloak
@@ -54,9 +58,11 @@ spec:
         connectionString:
           name: cnpg-azure-backup
           key: AZURE_CONNECTION_STRING
+          namespace: iam
         storageAccount:
           name: cnpg-azure-backup
           key: AZURE_STORAGE_ACCOUNT
+          namespace: iam
       wal:
         compression: gzip
         maxParallel: 4
