@@ -3,6 +3,10 @@ kind: Job
 metadata:
   name: midpoint-seeder
   namespace: iam
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+    argocd.argoproj.io/sync-wave: "20"
 spec:
   template:
     spec:
@@ -17,7 +21,7 @@ spec:
                   name: midpoint-admin
                   key: password
             - name: MIDPOINT_URL
-              value: "{{MIDPOINT_URL}}"
+              value: "http://midpoint:8080/midpoint"
           volumeMounts:
             - name: objs
               mountPath: /objects
@@ -25,17 +29,50 @@ spec:
             - /bin/sh
             - -ec
             - |
-              set -eu
+              set -euo pipefail
+              if [ -z "${MIDPOINT_PASSWORD:-}" ]; then
+                echo "MIDPOINT_PASSWORD is empty; aborting" >&2
+                exit 1
+              fi
               MP_URL="${MIDPOINT_URL:-http://midpoint:8080/midpoint}"
               echo "Using midPoint at: $MP_URL"
 
               auth="administrator:${MIDPOINT_PASSWORD}"
 
+              shopt -s nullglob
+              found=0
               for f in /objects/*.xml; do
+                found=1
                 echo "Posting $f"
-                curl -fsS -u "$auth" -H "Content-Type: application/xml" \
-                  -X POST "$MP_URL/ws/rest/objects" --data-binary "@$f"
+                tmp_response="$(mktemp)"
+                http_code="$(curl -sS -u "$auth" -H "Content-Type: application/xml" \
+                  -X POST "$MP_URL/ws/rest/objects" --data-binary "@$f" \
+                  -o "${tmp_response}" -w '%{http_code}')"
+
+                case "${http_code}" in
+                  200|201)
+                    echo "Imported $f (HTTP ${http_code})"
+                    ;;
+                  409)
+                    echo "Object from $f already exists; skipping (HTTP 409)"
+                    ;;
+                  *)
+                    echo "Failed to import $f (HTTP ${http_code})" >&2
+                    if [ -s "${tmp_response}" ]; then
+                      echo "Response body:" >&2
+                      cat "${tmp_response}" >&2
+                    fi
+                    rm -f "${tmp_response}"
+                    exit 1
+                    ;;
+                esac
+
+                rm -f "${tmp_response}"
               done
+
+              if [ "${found}" -eq 0 ]; then
+                echo "No midPoint object definitions were mounted; skipping import"
+              fi
 
               echo "Done."
       volumes:

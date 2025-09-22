@@ -6,6 +6,7 @@ resources:
   - deployment.yaml
   - precreate.yaml
   - ingress.yaml
+  - seeder-job.yaml
 
 configMapGenerator:
   - name: midpoint-config
@@ -26,5 +27,16 @@ configMapGenerator:
       - MP_UNSET_midpoint_repository_jdbcPassword=1
       - MP_UNSET_midpoint_repository_username=1
       - MP_UNSET_midpoint_repository_password=1
+    options:
+      disableNameSuffixHash: true
+  - name: midpoint-objects
+    files:
+      - objects/01_org_rws.xml
+      - objects/02_role_project_admin.xml
+      - objects/03_org_architects.xml
+      - objects/04_user_director.xml
+      - objects/05_user_architect1.xml
+      - objects/06_user_po1.xml
+      - objects/07_user_dev1.xml
     options:
       disableNameSuffixHash: true

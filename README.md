@@ -82,9 +82,13 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
 
 ## 3) Seed midPoint (roles, org, minimal demo users)
 
-1. Run workflow **`03_apply_midpoint_objects.yml`**.
-2. This creates a short-lived **Kubernetes Job** that posts the XML objects in `k8s/apps/midpoint/objects/`
-   into midPoint via its REST API. It uses the admin password from the GitHub secret.
+- Argo CD now runs the `midpoint-seeder` Job as a **PostSync hook** after the IAM application becomes healthy.
+  The hook mounts the XML definitions from `k8s/apps/midpoint/objects/` through the `midpoint-objects` ConfigMap
+  and imports them into midPoint via its REST API using the admin password in the `midpoint-admin` Secret.
+- The Job treats existing objects as a no-op (HTTP 409), so repeated Argo CD syncs keep the demo state convergent
+  without failing when objects already exist.
+- To re-run the import manually, trigger an Argo CD sync or delete the completed `midpoint-seeder` Job and Argo CD
+  will recreate it on the next reconcile.
 
 ---
 
@@ -109,7 +113,7 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
   - The Keycloak Operator exposes HTTP on service **`rws-keycloak-service`** (note the `-service` suffix). Use `kubectl -n iam get svc` to list the generated service names instead of querying `rws-keycloak` directly.
 - Open midPoint: `http://mp.<EXTERNAL-IP>.nip.io/midpoint`
   - Login: `administrator` / the `MIDPOINT_ADMIN_PASSWORD` you set
-  - Check **Users**/**Roles**/**Orgs** seeded by the job
+- Check **Users**/**Roles**/**Orgs** seeded by the PostSync job
   - Try assigning the `Project Admin` role to a developer and observe approval in **Cases**
 
 ---
