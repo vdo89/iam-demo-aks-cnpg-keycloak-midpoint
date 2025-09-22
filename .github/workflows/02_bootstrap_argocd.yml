@@ -1379,7 +1379,7 @@ jobs:
             exit 1
           fi
 
-      - name: Ensure midPoint database and role exist
+      - name: Wait for CloudNativePG cluster readiness
         env:
           NAMESPACE_IAM: ${{ inputs.NAMESPACE_IAM }}
         shell: bash
@@ -1497,51 +1497,7 @@ jobs:
           fi
 
           echo "iam-db-rw endpoints: ${endpoints}"
-
-          run_bootstrap_job() {
-            local job_name="$1"
-            local template_path="$2"
-            local description="$3"
-
-            echo "Starting ${description} job (${job_name}) in namespace ${ns}"
-            kubectl -n "${ns}" delete job "${job_name}" --ignore-not-found
-
-            local manifest
-            manifest="$(mktemp)"
-            trap 'rm -f "${manifest}"' RETURN
-
-            if ! sed "s#{{NAMESPACE}}#${ns}#g" "${template_path}" >"${manifest}"; then
-              echo "Failed to render manifest ${template_path} for job ${job_name}"
-              rm -f "${manifest}"
-              exit 1
-            fi
-
-            if grep -q '{{NAMESPACE}}' "${manifest}"; then
-              echo "Namespace placeholder substitution failed for job ${job_name} manifest"
-              cat "${manifest}"
-              rm -f "${manifest}"
-              exit 1
-            fi
-
-            kubectl apply -f "${manifest}"
-
-            if ! kubectl -n "${ns}" wait --for=condition=Complete job/"${job_name}" --timeout=240s; then
-              echo "${description} job ${job_name} did not complete successfully"
-              kubectl -n "${ns}" logs job/"${job_name}" || true
-              kubectl -n "${ns}" describe job "${job_name}" || true
-              kubectl -n "${ns}" get pods -l job-name="${job_name}" -o wide || true
-              rm -f "${manifest}"
-              exit 1
-            fi
-
-            kubectl -n "${ns}" logs job/"${job_name}" || true
-            kubectl -n "${ns}" delete job "${job_name}" --ignore-not-found
-            rm -f "${manifest}"
-            trap - RETURN
-          }
-
-          run_bootstrap_job "keycloak-db-bootstrap" "k8s/apps/cnpg/keycloak-db-bootstrap-job.yaml" "Keycloak database bootstrap"
-          run_bootstrap_job "midpoint-db-bootstrap" "k8s/apps/cnpg/midpoint-db-bootstrap-job.yaml" "midPoint database bootstrap"
+          echo "CloudNativePG managed roles now reconcile application databases, credentials, and extensions from Git."
 
           kubectl -n "${ns}" wait cluster/iam-db --for=condition=Ready --timeout=600s || true
 
