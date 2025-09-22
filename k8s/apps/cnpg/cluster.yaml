@@ -18,8 +18,42 @@ spec:
       owner: keycloak
       secret:
         name: keycloak-db-app
-      postInitApplicationSQL:
-        - ALTER USER keycloak WITH LOGIN;
+      postInitSQL:
+        - |
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'keycloak') THEN
+              EXECUTE 'CREATE ROLE keycloak LOGIN';
+            ELSE
+              EXECUTE 'ALTER ROLE keycloak LOGIN';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'midpoint') THEN
+              EXECUTE 'CREATE ROLE midpoint LOGIN';
+            ELSE
+              EXECUTE 'ALTER ROLE midpoint LOGIN';
+            END IF;
+          END
+          $$ LANGUAGE plpgsql;
+        - CREATE EXTENSION IF NOT EXISTS dblink;
+        - |
+          DO $$
+          DECLARE
+            current_owner text;
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'midpoint') THEN
+              PERFORM dblink_exec('dbname=postgres', 'CREATE DATABASE midpoint OWNER midpoint');
+            ELSE
+              SELECT pg_catalog.pg_get_userbyid(datdba) INTO current_owner
+              FROM pg_database
+              WHERE datname = 'midpoint';
+              IF current_owner IS DISTINCT FROM 'midpoint' THEN
+                PERFORM dblink_exec('dbname=postgres', 'ALTER DATABASE midpoint OWNER TO midpoint');
+              END IF;
+            END IF;
+          END
+          $$ LANGUAGE plpgsql;
+        - SELECT dblink_exec('dbname=midpoint', 'CREATE EXTENSION IF NOT EXISTS pgcrypto');
+        - SELECT dblink_exec('dbname=midpoint', 'CREATE EXTENSION IF NOT EXISTS pg_trgm');
 
   storage:
     size: 20Gi
@@ -44,3 +78,14 @@ spec:
       data:
         compression: gzip
         jobs: 2
+
+  managed:
+    roles:
+      - name: keycloak
+        login: true
+        passwordSecret:
+          name: keycloak-db-app
+      - name: midpoint
+        login: true
+        passwordSecret:
+          name: midpoint-db-app
