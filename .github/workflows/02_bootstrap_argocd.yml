@@ -251,7 +251,7 @@ jobs:
           envsubst < k8s/argocd/root-apps.yaml | kubectl apply -f -
           echo "Waiting for Argo CD application 'addons' to be created and synced"
           addons_ready=0
-          for attempt in $(seq 1 60); do
+          for attempt in $(seq 1 10); do
             if kubectl -n argocd get application addons >/dev/null 2>&1; then
               sync_status=$(kubectl -n argocd get application addons -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")
               health_status=$(kubectl -n argocd get application addons -o jsonpath='{.status.health.status}' 2>/dev/null || echo "")
