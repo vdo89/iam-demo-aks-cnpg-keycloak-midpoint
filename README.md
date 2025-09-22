@@ -81,6 +81,7 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
    - Create a Kubernetes **Secret** with Azure Blob credentials (from repo secrets) for CNPG backups
    - Purge any existing WAL/archive blobs in the Azure `cnpg-backups/iam-db` prefix so CloudNativePG can bootstrap cleanly on reruns
    - The workflow now waits on the `apps` application by calling `argocd app wait --core --sync --health`, so you see Argo CD's native status output instead of bespoke polling. If reconciliation stalls, the CLI output highlights the objects Argo CD still considers out of sync.
+   - Argo CD ships with a custom health script for the Keycloak operator's CRDs (`Keycloak` and `KeycloakRealmImport`). The controller now marks those resources `Healthy` once the operator reports `status.ready=true`/`status.phase=Done`, so `argocd app wait --health` no longer stalls even though the pods respond to `/health/ready` on the management port.
 
 > By default, services are plain HTTP for simplicity and use **`nip.io`** hostnames you can visit from your browser.
 
@@ -152,7 +153,9 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     differ...` when the optimized image still carries the default `kc.db=dev-file`/`kc.health-enabled=false` values from
     the upstream image, so letting the runtime build step execute avoids the crash loop without having to maintain a
     pre-built custom image.
-  - Keycloak enables the CLI flag `health-enabled=true` so the readiness endpoints are exposed for the operator's probes.
+  - Keycloak enables the CLI flags `health-enabled=true` and `metrics-enabled=true` so the readiness endpoints expose the
+    `/health/ready` and database checks on the management port. The operator uses those endpoints for its probes and Argo CD's
+    custom health script promotes the CRs to `Healthy` as soon as the operator reports `status.ready=true`.
     Keycloak 26.x removed the legacy `health` feature toggle, so the manifest now wires the option through
     `spec.additionalOptions` instead of relying on environment variables or the operator's default feature set.
     Leaving the old flag in place makes the container exit with `health is an unrecognized feature`, which surfaces as

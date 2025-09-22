@@ -13,7 +13,12 @@ spec:
     # database section later.
     - name: db-url
       value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/keycloak?sslmode=disable
+    # Enable Quarkus health/metrics endpoints so Kubernetes and the operator
+    # can call `/health/ready` during startup and surface Keycloak readiness to
+    # Argo CD's health checks.
     - name: health-enabled
+      value: "true"
+    - name: metrics-enabled
       value: "true"
     # Allow the demo ingress to terminate HTTP without Keycloak rejecting the
     # host/scheme. The nip.io address changes every time the AKS load balancer
