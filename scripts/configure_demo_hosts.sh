@@ -16,50 +16,28 @@ require_cmd() {
 }
 
 # Default configuration (can be overridden via environment variables).
-NAMESPACE="${NAMESPACE_IAM:-${NAMESPACE:-iam}}"
-KEYCLOAK_SERVICE_NAME="${KEYCLOAK_SERVICE_NAME:-rws-keycloak-service}"
-KEYCLOAK_SERVICE_PORT="${KEYCLOAK_SERVICE_PORT:-8080}"
-MIDPOINT_SERVICE_NAME="${MIDPOINT_SERVICE_NAME:-midpoint}"
-MIDPOINT_SERVICE_PORT="${MIDPOINT_SERVICE_PORT:-8080}"
-MIDPOINT_INGRESS_NAME="${MIDPOINT_INGRESS_NAME:-midpoint}"
-PATCH_ROOT="${PATCH_ROOT:-k8s/apps}"
-KEYCLOAK_CR_NAME="${KEYCLOAK_CR_NAME:-rws-keycloak}"
-KEYCLOAK_HOST_PATCH_FILE="${KEYCLOAK_HOST_PATCH_FILE:-${PATCH_ROOT}/keycloak/hostname-patch.yaml}"
-MIDPOINT_INGRESS_PATCH_FILE="${MIDPOINT_INGRESS_PATCH_FILE:-${PATCH_ROOT}/midpoint/ingress-host-patch.yaml}"
+PARAMS_ENV_FILE="${PARAMS_ENV_FILE:-k8s/apps/params.env}"
 INGRESS_CLASS_NAME="${INGRESS_CLASS_NAME:-}"
 
 require_cmd kubectl
 require_cmd jq
 require_cmd python3
 
-write_ingress_patch() {
-  local label="$1"
-  local patch_file="$2"
-  local host="$3"
+write_ingress_params() {
+  local file="$1"
+  local ingress_class="$2"
+  local keycloak_host="$3"
+  local midpoint_host="$4"
 
-  log "Updating ${label} ingress patch at ${patch_file} with host ${host}..."
-  cat <<EOF >"${patch_file}"
-- op: add
-  path: /spec/ingressClassName
-  value: ${INGRESS_CLASS_NAME}
-- op: add
-  path: /spec/rules/0/host
-  value: ${host}
+  log "Writing ingress parameters to ${file}..."
+  cat <<EOF >"${file}"
+# Ingress parameters for the IAM demo environment.
+# Updated by scripts/configure_demo_hosts.sh.
+ingressClass=${ingress_class}
+keycloakHost=${keycloak_host}
+midpointHost=${midpoint_host}
 EOF
-  log "${label} ingress patch updated. Commit and push this change so Argo CD reconciles the ingress host."
-}
-
-write_keycloak_hostname_patch() {
-  local patch_file="$1"
-  local host="$2"
-
-  log "Updating Keycloak hostname patch at ${patch_file} with host ${host}..."
-  cat <<EOF >"${patch_file}"
-- op: add
-  path: /spec/hostname/hostname
-  value: ${host}
-EOF
-  log "Keycloak hostname patch updated. Commit and push this change so Argo CD reconciles the ingress host."
+  log "Ingress parameters updated. Commit and push this change so Argo CD reconciles the new hosts."
 }
 
 # Ensure the GitOps manifests target the ingress-nginx controller that actually
@@ -107,9 +85,10 @@ detect_ingress_class() {
 }
 
 update_gitops_manifests() {
-  write_keycloak_hostname_patch "${KEYCLOAK_HOST_PATCH_FILE}" "${KC_HOST}"
-  write_ingress_patch "midPoint" "${MIDPOINT_INGRESS_PATCH_FILE}" "${MP_HOST}"
-}
+  if [[ -z "${INGRESS_CLASS_NAME}" ]]; then
+    log "ERROR: Ingress class name is not set."
+    exit 1
+  fi
 
 resolve_ingress_ip() {
   local attempt max_attempts sleep_seconds
@@ -197,17 +176,15 @@ wait_for_ingress_controller() {
   kubectl -n ingress-nginx rollout status deploy/ingress-nginx-controller --timeout=600s
 }
 
-
 main() {
   wait_for_ingress_controller
   detect_ingress_class
   resolve_ingress_ip
   update_gitops_manifests
-
-  log "✅ Generated GitOps patches for ingress hosts."
-  log "Commit and push ${KEYCLOAK_HOST_PATCH_FILE} and ${MIDPOINT_INGRESS_PATCH_FILE} so Argo CD reconciles the new hostnames."
-  log "Keycloak host: http://${KC_HOST}/"
-  log "midPoint host: http://${MP_HOST}/midpoint"
+  log "✅ GitOps parameters updated in ${PARAMS_ENV_FILE}."
+  log "Commit and push the change so Argo CD reconciles the ingress configuration."
+  log "Keycloak host: ${KC_HOST}"
+  log "midPoint host: ${MP_HOST}"
 }
 
 main "$@"
