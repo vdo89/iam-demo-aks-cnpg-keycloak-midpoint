@@ -53,15 +53,11 @@ spec:
                   releaseName: ingress-nginx
                   valuesObject:
                     controller:
-                      config:
-                        server-snippet: |
-                          location = /healthz {
-                            access_log off;
-                            return 200;
-                          }
                       service:
                         annotations:
-                          service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: /healthz
+                          service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: /is-dynamic-lb-initialized
+                          # Use the built-in status endpoint exposed on the default server so Azure probes
+                          # get HTTP 200s even before any ingress rules exist.
                         type: LoadBalancer
               syncPolicy:
                 syncOptions:
