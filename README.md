@@ -67,7 +67,10 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
    - Install **Argo CD**
    - Sync **addons** via Argo: Ingress-NGINX, cert-manager, CNPG Operator
      - The workflow pre-installs CloudNativePG CRDs with `kubectl apply --server-side`. It first attempts to render them via `helm show crds` and, if the chart does not publish CRDs in that location (as happens with recent releases), falls back to `helm template --include-crds` and filters the `CustomResourceDefinition` manifests. This keeps the large schemas out of Kubernetes' annotation history while the Argo CD application disables chart-managed CRDs (`crds.create=false`) to avoid reintroducing the oversized annotation.
-   - Create **CNPG** cluster `iam-db` (+ Azure Blob backup config)
+   - Reconcile **CNPG** cluster `iam-db` (+ Azure Blob backup config) via Argo CD. Update
+     `k8s/apps/cnpg/params.env` with the Terraform `storage_account_name` before running this
+     workflow so the rendered destination path matches the Azure Storage account that holds the
+     backups.
    - Configure CloudNativePG **managed roles and databases** so the `keycloak` and `midpoint` users, databases, and required extensions (`pgcrypto`, `pg_trgm`) stay in sync with the GitHub secrets on every reconcile.
    - Install **Keycloak Operator** then create a **Keycloak** CR bound to CNPG
      - The workflow now reconfigures the operator deployment to watch the `iam` application namespace (in addition to its home namespace) so it publishes the generated services, such as `rws-keycloak-service`, where Argo CD manages the workloads.
@@ -133,6 +136,9 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
   `location`, `prefix`, `create_resource_group`, `resource_group_name`, `aks_default_node_vm_size`, `aks_default_node_count`, `aks_default_node_max_surge`, `aks_sku_tier` as needed.
 - **Helm/Argo versions**: see `k8s/addons/*/application.yaml`
 - **DB sizing**: `k8s/apps/cnpg/cluster.yaml`
+- **CNPG backup destination**: `k8s/apps/cnpg/params.env` – set `storageAccount` to the Terraform
+  `storage_account_name` so Argo CD renders the correct backup URL. Keep it aligned with the
+  `STORAGE_ACCOUNT` input when you trigger the bootstrap workflow.
 
 - **Keycloak config**: `k8s/apps/keycloak/keycloak.yaml`
   - The `KeycloakRealmImport` inside that manifest seeds the `rws` realm. After the Keycloak Operator imports the realm it

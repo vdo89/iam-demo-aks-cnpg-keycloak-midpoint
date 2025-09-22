@@ -299,73 +299,42 @@ jobs:
           echo "Timed out waiting for CloudNativePG CRDs"
           exit 1
 
-      - name: Wait for CNPG webhook service endpoints
+      - name: Validate CNPG storage account config matches Git
         shell: bash
+        env:
+          STORAGE_ACCOUNT_INPUT: ${{ inputs.STORAGE_ACCOUNT }}
         run: |
           set -euo pipefail
 
-          WEBHOOK_READY_FROM_ENDPOINTS=""
-          WEBHOOK_NOT_READY_FROM_ENDPOINTS=""
-          WEBHOOK_READY_FROM_SLICES=""
-          WEBHOOK_NOT_READY_FROM_SLICES=""
+          config_file="k8s/apps/cnpg/params.env"
+          if [ ! -f "${config_file}" ]; then
+            echo "Configuration file ${config_file} not found. Commit the file with the Terraform output first."
+            exit 1
+          fi
 
-          collect_webhook_status() {
-            WEBHOOK_READY_FROM_ENDPOINTS=""
-            WEBHOOK_NOT_READY_FROM_ENDPOINTS=""
-            WEBHOOK_READY_FROM_SLICES=""
-            WEBHOOK_NOT_READY_FROM_SLICES=""
+          storage_account_git=$(grep -E '^storageAccount=' "${config_file}" | tail -n 1 | cut -d'=' -f2- | tr -d ' \t\r\n')
+          if [ -z "${storage_account_git}" ]; then
+            echo "storageAccount entry in ${config_file} is empty. Set it to the Terraform storage_account_name output."
+            exit 1
+          fi
 
-            if endpoints_json=$(kubectl -n cnpg-system get endpoints cnpg-webhook-service -o json 2>/dev/null); then
-              WEBHOOK_READY_FROM_ENDPOINTS=$(jq -r '[.subsets[]? | .addresses[]? | .ip] | join(" ")' <<<"${endpoints_json}" 2>/dev/null || true)
-              WEBHOOK_NOT_READY_FROM_ENDPOINTS=$(jq -r '[.subsets[]? | .notReadyAddresses[]? | .ip] | join(" ")' <<<"${endpoints_json}" 2>/dev/null || true)
-            fi
+          if [ "${storage_account_git}" = "changeme" ]; then
+            echo "storageAccount in ${config_file} is still set to the placeholder 'changeme'. Update it before running this workflow."
+            exit 1
+          fi
 
-            if endpointslices_json=$(kubectl -n cnpg-system get endpointslices.discovery.k8s.io -l kubernetes.io/service-name=cnpg-webhook-service -o json 2>/dev/null); then
-              WEBHOOK_READY_FROM_SLICES=$(jq -r '[.items[]? | .endpoints[]? | select(.conditions.ready == true) | .addresses[]?] | join(" ")' <<<"${endpointslices_json}" 2>/dev/null || true)
-              WEBHOOK_NOT_READY_FROM_SLICES=$(jq -r '[.items[]? | .endpoints[]? | select(.conditions.ready != true) | .addresses[]?] | join(" ")' <<<"${endpointslices_json}" 2>/dev/null || true)
-            fi
-          }
+          storage_account_input="$(printf '%s' "${STORAGE_ACCOUNT_INPUT:-}" | tr -d ' \t\r\n')"
+          if [ -z "${storage_account_input}" ]; then
+            echo "STORAGE_ACCOUNT input must not be empty."
+            exit 1
+          fi
 
-          log_webhook_status() {
-            echo "cnpg-webhook-service ready IPs (Endpoints): ${WEBHOOK_READY_FROM_ENDPOINTS:-<none>}"
-            echo "cnpg-webhook-service notReady IPs (Endpoints): ${WEBHOOK_NOT_READY_FROM_ENDPOINTS:-<none>}"
-            echo "cnpg-webhook-service ready IPs (EndpointSlices): ${WEBHOOK_READY_FROM_SLICES:-<none>}"
-            echo "cnpg-webhook-service notReady IPs (EndpointSlices): ${WEBHOOK_NOT_READY_FROM_SLICES:-<none>}"
-          }
+          if [ "${storage_account_git,,}" != "${storage_account_input,,}" ]; then
+            echo "storageAccount value '${storage_account_git}' in ${config_file} does not match STORAGE_ACCOUNT input '${storage_account_input}'."
+            exit 1
+          fi
 
-          echo "Ensuring cnpg-webhook-service has ready endpoints..."
-          consecutive_ready=0
-          for attempt in $(seq 1 45); do
-            if ! kubectl -n cnpg-system get service cnpg-webhook-service >/dev/null 2>&1; then
-              echo "cnpg-webhook-service not created yet (attempt ${attempt}/45)"
-              consecutive_ready=0
-            else
-              collect_webhook_status
-              log_webhook_status
-              if [ -n "${WEBHOOK_READY_FROM_ENDPOINTS}" ] || [ -n "${WEBHOOK_READY_FROM_SLICES}" ]; then
-                consecutive_ready=$((consecutive_ready + 1))
-                echo "Ready endpoints observed (${consecutive_ready}/3 consecutive confirmations)"
-                if [ "${consecutive_ready}" -ge 3 ]; then
-                  echo "cnpg-webhook-service has ready endpoints that appear stable"
-                  echo "Waiting a few seconds to let the Kubernetes API server register the webhook endpoints"
-                  sleep 10
-                  exit 0
-                fi
-                sleep 5
-                continue
-              fi
-
-              echo "cnpg-webhook-service endpoints not ready yet (attempt ${attempt}/45)"
-              consecutive_ready=0
-            fi
-            sleep 10
-          done
-
-          echo "Timed out waiting for cnpg-webhook-service endpoints"
-          kubectl -n cnpg-system get pods -l app.kubernetes.io/name=cloudnative-pg -o wide || true
-          kubectl -n cnpg-system get endpoints cnpg-webhook-service -o yaml || true
-          kubectl -n cnpg-system get endpointslices.discovery.k8s.io -l kubernetes.io/service-name=cnpg-webhook-service -o yaml || true
-          exit 1
+          echo "storageAccount configuration matches workflow input."
 
       - name: Create CNPG secrets (DB users + superuser)
         shell: bash
@@ -1015,124 +984,6 @@ jobs:
 
           echo "Azure backup prefix ${prefix}/ successfully emptied"
 
-      - name: Reset CloudNativePG cluster state if stuck
-        shell: bash
-        env:
-          NAMESPACE_IAM: ${{ inputs.NAMESPACE_IAM }}
-        run: |
-          set -euo pipefail
-
-          ns="${NAMESPACE_IAM}"
-          if [ -z "${ns}" ]; then
-            echo "NAMESPACE_IAM input must not be empty"
-            exit 1
-          fi
-
-          wait_for_cluster_absence() {
-            for attempt in $(seq 1 30); do
-              if ! kubectl -n "${ns}" get cluster iam-db >/dev/null 2>&1; then
-                echo "CloudNativePG cluster iam-db removed"
-                return 0
-              fi
-              echo "Waiting for cluster iam-db to be removed (attempt ${attempt}/30)"
-              sleep 10
-            done
-            return 1
-          }
-
-          cleanup_initdb_job() {
-            if kubectl -n "${ns}" get job iam-db-1-initdb >/dev/null 2>&1; then
-              echo "Deleting leftover CloudNativePG initdb job"
-              kubectl -n "${ns}" delete job iam-db-1-initdb --ignore-not-found --wait=false
-              for attempt in $(seq 1 12); do
-                if ! kubectl -n "${ns}" get job iam-db-1-initdb >/dev/null 2>&1; then
-                  echo "initdb job removed"
-                  return 0
-                fi
-                echo "Waiting for initdb job to terminate (attempt ${attempt}/12)"
-                sleep 5
-              done
-              echo "initdb job still present after waiting"
-              kubectl -n "${ns}" get job iam-db-1-initdb -o yaml || true
-              return 1
-            fi
-            return 0
-          }
-
-          list_cnpg_pvcs() {
-            kubectl -n "${ns}" get pvc -l cnpg.io/cluster=iam-db -o json 2>/dev/null \
-              | jq -r '.items[]?.metadata.name' | sed '/^$/d'
-          }
-
-          cleanup_pvcs() {
-            mapfile -t pvcs < <(list_cnpg_pvcs || true)
-            if [ "${#pvcs[@]}" -eq 0 ] || { [ "${#pvcs[@]}" -eq 1 ] && [ -z "${pvcs[0]}" ]; }; then
-              echo "No leftover CloudNativePG PVCs detected"
-              return 0
-            fi
-
-            echo "Deleting leftover CloudNativePG PVCs: ${pvcs[*]}"
-            kubectl -n "${ns}" delete pvc -l cnpg.io/cluster=iam-db --ignore-not-found
-
-            for attempt in $(seq 1 30); do
-              mapfile -t remaining < <(list_cnpg_pvcs || true)
-              if [ "${#remaining[@]}" -eq 0 ] || { [ "${#remaining[@]}" -eq 1 ] && [ -z "${remaining[0]}" ]; }; then
-                echo "CloudNativePG PVC cleanup complete"
-                return 0
-              fi
-              echo "Waiting for PVC deletion to finish (attempt ${attempt}/30): ${remaining[*]}"
-              sleep 10
-            done
-
-            echo "Timed out waiting for CloudNativePG PVCs to be removed"
-            kubectl -n "${ns}" get pvc -l cnpg.io/cluster=iam-db || true
-            return 1
-          }
-
-          cleanup_cluster_artifacts() {
-            cleanup_initdb_job
-            cleanup_pvcs
-          }
-
-          cluster_ready=""
-          cluster_deleting=""
-
-          if kubectl -n "${ns}" get cluster iam-db >/dev/null 2>&1; then
-            cluster_json=$(kubectl -n "${ns}" get cluster iam-db -o json)
-            cluster_ready=$(jq -r '.status.conditions[]? | select(.type=="Ready") | .status' <<<"${cluster_json}" | tail -n 1)
-            cluster_deleting=$(jq -r '.metadata.deletionTimestamp // ""' <<<"${cluster_json}")
-
-            if [ "${cluster_ready}" = "True" ] && [ -z "${cluster_deleting}" ]; then
-              echo "CloudNativePG cluster iam-db already Ready; skipping reset"
-              exit 0
-            fi
-
-            echo "CloudNativePG cluster iam-db exists but is not Ready (Ready condition: ${cluster_ready:-<unknown>}); forcing clean bootstrap"
-
-            if [ -n "${cluster_deleting}" ]; then
-              echo "Cluster already marked for deletion at ${cluster_deleting}; waiting for completion"
-            else
-              kubectl -n "${ns}" delete cluster iam-db --ignore-not-found --wait=false
-            fi
-
-            if ! wait_for_cluster_absence; then
-              echo "Cluster iam-db still present after waiting"
-              kubectl -n "${ns}" get cluster iam-db -o yaml || true
-              exit 1
-            fi
-
-            if ! cleanup_cluster_artifacts; then
-              exit 1
-            fi
-            echo "Stale CloudNativePG resources removed"
-          else
-            echo "CloudNativePG cluster iam-db not found; checking for leftover resources"
-            if ! cleanup_cluster_artifacts; then
-              exit 1
-            fi
-            echo "CloudNativePG namespace ${ns} is free of leftover PVCs"
-          fi
-
       - name: Validate CNPG prerequisites
         env:
           NAMESPACE_IAM: ${{ inputs.NAMESPACE_IAM }}
@@ -1241,265 +1092,6 @@ jobs:
           ready_endpoints="${WEBHOOK_READY_FROM_ENDPOINTS:-${WEBHOOK_READY_FROM_SLICES}}"
 
           echo "cnpg-webhook-service ready endpoints: ${ready_endpoints:-<unknown>}"
-
-      - name: Apply CNPG cluster (iam-db)
-        env:
-          STORAGE_ACCOUNT: ${{ inputs.STORAGE_ACCOUNT }}
-          NAMESPACE_IAM: ${{ inputs.NAMESPACE_IAM }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          manifest="$(mktemp)"
-          trap 'rm -f "${manifest}"' EXIT
-          sed "s/{{STORAGE_ACCOUNT}}/${STORAGE_ACCOUNT}/g" k8s/apps/cnpg/cluster.yaml > "${manifest}"
-
-          WEBHOOK_READY_FROM_ENDPOINTS=""
-          WEBHOOK_NOT_READY_FROM_ENDPOINTS=""
-          WEBHOOK_READY_FROM_SLICES=""
-          WEBHOOK_NOT_READY_FROM_SLICES=""
-
-          collect_webhook_status() {
-            WEBHOOK_READY_FROM_ENDPOINTS=""
-            WEBHOOK_NOT_READY_FROM_ENDPOINTS=""
-            WEBHOOK_READY_FROM_SLICES=""
-            WEBHOOK_NOT_READY_FROM_SLICES=""
-
-            if endpoints_json=$(kubectl -n cnpg-system get endpoints cnpg-webhook-service -o json 2>/dev/null); then
-              WEBHOOK_READY_FROM_ENDPOINTS=$(jq -r '[.subsets[]? | .addresses[]? | .ip] | join(" ")' <<<"${endpoints_json}" 2>/dev/null || true)
-              WEBHOOK_NOT_READY_FROM_ENDPOINTS=$(jq -r '[.subsets[]? | .notReadyAddresses[]? | .ip] | join(" ")' <<<"${endpoints_json}" 2>/dev/null || true)
-            fi
-
-            if endpointslices_json=$(kubectl -n cnpg-system get endpointslices.discovery.k8s.io -l kubernetes.io/service-name=cnpg-webhook-service -o json 2>/dev/null); then
-              WEBHOOK_READY_FROM_SLICES=$(jq -r '[.items[]? | .endpoints[]? | select(.conditions.ready == true) | .addresses[]?] | join(" ")' <<<"${endpointslices_json}" 2>/dev/null || true)
-              WEBHOOK_NOT_READY_FROM_SLICES=$(jq -r '[.items[]? | .endpoints[]? | select(.conditions.ready != true) | .addresses[]?] | join(" ")' <<<"${endpointslices_json}" 2>/dev/null || true)
-            fi
-          }
-
-          log_webhook_status() {
-            echo "cnpg-webhook-service ready IPs (Endpoints): ${WEBHOOK_READY_FROM_ENDPOINTS:-<none>}"
-            echo "cnpg-webhook-service notReady IPs (Endpoints): ${WEBHOOK_NOT_READY_FROM_ENDPOINTS:-<none>}"
-            echo "cnpg-webhook-service ready IPs (EndpointSlices): ${WEBHOOK_READY_FROM_SLICES:-<none>}"
-            echo "cnpg-webhook-service notReady IPs (EndpointSlices): ${WEBHOOK_NOT_READY_FROM_SLICES:-<none>}"
-          }
-
-          is_webhook_unavailable_error() {
-            local message="$1"
-            if grep -qi 'no endpoints available for service "cnpg-webhook-service"' <<<"${message}"; then
-              return 0
-            fi
-            if grep -qi 'failed calling webhook "mcluster.cnpg.io"' <<<"${message}" && grep -qi 'cnpg-webhook-service' <<<"${message}"; then
-              return 0
-            fi
-            if grep -qi 'failed calling webhook' <<<"${message}" && grep -qi 'cnpg-webhook-service' <<<"${message}"; then
-              return 0
-            fi
-            return 1
-          }
-
-          max_attempts=8
-          success=0
-          for attempt in $(seq 1 "${max_attempts}"); do
-            echo "Applying CNPG cluster manifest (attempt ${attempt}/${max_attempts})"
-
-            prereqs_ready=1
-            if ! kubectl -n cnpg-system rollout status deployment/cnpg-cloudnative-pg --timeout=180s; then
-              echo "cnpg-cloudnative-pg deployment not yet available"
-              prereqs_ready=0
-            fi
-
-            if ! kubectl -n cnpg-system wait --for=condition=Ready pod -l app.kubernetes.io/name=cloudnative-pg --timeout=180s; then
-              echo "CNPG operator pods are not yet in Ready state"
-              prereqs_ready=0
-            fi
-
-            collect_webhook_status
-            log_webhook_status
-            if [ -z "${WEBHOOK_READY_FROM_ENDPOINTS}" ] && [ -z "${WEBHOOK_READY_FROM_SLICES}" ]; then
-              echo "cnpg-webhook-service has no ready endpoints before attempt ${attempt}"
-              prereqs_ready=0
-            fi
-
-            if [ "${prereqs_ready}" -ne 1 ]; then
-              echo "CNPG operator prerequisites are not ready, waiting before retrying"
-              sleep 20
-              continue
-            fi
-
-            echo "Running server-side dry run to verify CNPG webhooks are reachable"
-            if dry_run_output=$(kubectl apply --dry-run=server -f "${manifest}" 2>&1); then
-              echo "${dry_run_output}"
-            else
-              echo "${dry_run_output}"
-              if is_webhook_unavailable_error "${dry_run_output}"; then
-                echo "Server-side dry run indicates CNPG webhooks are unavailable; retrying after delay"
-                sleep 20
-                continue
-              fi
-              echo "Server-side dry run failed for an unexpected reason; showing diagnostics"
-              kubectl -n cnpg-system get pods -l app.kubernetes.io/name=cloudnative-pg -o wide || true
-              kubectl -n cnpg-system describe deployment cnpg-cloudnative-pg || true
-              kubectl -n cnpg-system get endpoints cnpg-webhook-service -o yaml || true
-              kubectl -n cnpg-system get endpointslices.discovery.k8s.io -l kubernetes.io/service-name=cnpg-webhook-service -o yaml || true
-              sleep 20
-              continue
-            fi
-
-            collect_webhook_status
-            log_webhook_status
-            if [ -z "${WEBHOOK_READY_FROM_ENDPOINTS}" ] && [ -z "${WEBHOOK_READY_FROM_SLICES}" ]; then
-              echo "cnpg-webhook-service endpoints disappeared after dry run; waiting before retry"
-              sleep 20
-              continue
-            fi
-
-            if apply_output=$(kubectl apply -f "${manifest}" 2>&1); then
-              echo "${apply_output}"
-              echo "CNPG cluster manifest applied successfully"
-              success=1
-              break
-            else
-              echo "${apply_output}"
-              if is_webhook_unavailable_error "${apply_output}"; then
-                echo "kubectl apply failed because CNPG webhooks were unavailable; retrying after gathering diagnostics"
-              else
-                echo "kubectl apply failed on attempt ${attempt}; showing CNPG operator diagnostics"
-              fi
-            fi
-
-            kubectl -n cnpg-system get pods -l app.kubernetes.io/name=cloudnative-pg -o wide || true
-            kubectl -n cnpg-system describe deployment cnpg-cloudnative-pg || true
-            kubectl -n cnpg-system get endpoints cnpg-webhook-service -o yaml || true
-            kubectl -n cnpg-system get endpointslices.discovery.k8s.io -l kubernetes.io/service-name=cnpg-webhook-service -o yaml || true
-            sleep 20
-          done
-
-          if [ "${success:-0}" -ne 1 ]; then
-            echo "Failed to apply CNPG cluster manifest after ${max_attempts} attempts"
-            exit 1
-          fi
-
-      - name: Wait for CloudNativePG cluster readiness
-        env:
-          NAMESPACE_IAM: ${{ inputs.NAMESPACE_IAM }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          ns="${NAMESPACE_IAM}"
-          if [ -z "${ns}" ]; then
-            echo "NAMESPACE_IAM input must not be empty"
-            exit 1
-          fi
-
-          echo "Waiting for CloudNativePG cluster iam-db resource to be created"
-          cluster_found=0
-          for attempt in $(seq 1 30); do
-            if kubectl -n "${ns}" get cluster iam-db >/dev/null 2>&1; then
-              cluster_found=1
-              break
-            fi
-            echo "Cluster iam-db not found yet in namespace ${ns} (attempt ${attempt}/30)"
-            sleep 10
-          done
-
-          if [ "${cluster_found}" -ne 1 ]; then
-            echo "Timed out waiting for Cluster iam-db resource to be created"
-            kubectl -n "${ns}" get cluster iam-db -o yaml || true
-            exit 1
-          fi
-
-          echo "Waiting for CloudNativePG cluster iam-db Ready condition"
-          if ! kubectl -n "${ns}" wait --for=condition=Ready cluster/iam-db --timeout=600s; then
-            echo "Cluster iam-db did not reach Ready condition within timeout"
-            kubectl -n "${ns}" get cluster iam-db -o yaml || true
-            kubectl -n "${ns}" get pods -l cnpg.io/cluster=iam-db -o wide || true
-            kubectl -n "${ns}" get jobs -l cnpg.io/cluster=iam-db -o wide || true
-            kubectl -n "${ns}" describe cluster iam-db || true
-
-            mapfile -t initdb_pods < <(kubectl -n "${ns}" get pods -l job-name=iam-db-1-initdb -o name 2>/dev/null || true)
-            if [ "${#initdb_pods[@]}" -eq 0 ]; then
-              echo "No initdb pods found when gathering diagnostics"
-            else
-              for pod in "${initdb_pods[@]}"; do
-                if [ -z "${pod}" ]; then
-                  continue
-                fi
-                echo "---- Logs for ${pod} ----"
-                kubectl -n "${ns}" logs "${pod}" || true
-                echo "---- End logs for ${pod} ----"
-              done
-            fi
-            exit 1
-          fi
-
-          DB_READY_FROM_ENDPOINTS=""
-          DB_NOT_READY_FROM_ENDPOINTS=""
-          DB_READY_FROM_SLICES=""
-          DB_NOT_READY_FROM_SLICES=""
-
-          collect_db_endpoint_status() {
-            DB_READY_FROM_ENDPOINTS=""
-            DB_NOT_READY_FROM_ENDPOINTS=""
-            DB_READY_FROM_SLICES=""
-            DB_NOT_READY_FROM_SLICES=""
-
-            if endpoints_json=$(kubectl -n "${ns}" get endpoints iam-db-rw -o json 2>/dev/null); then
-              DB_READY_FROM_ENDPOINTS=$(jq -r '[.subsets[]? | .addresses[]? | .ip] | join(" ")' <<<"${endpoints_json}" 2>/dev/null || true)
-              DB_NOT_READY_FROM_ENDPOINTS=$(jq -r '[.subsets[]? | .notReadyAddresses[]? | .ip] | join(" ")' <<<"${endpoints_json}" 2>/dev/null || true)
-            fi
-
-            if endpointslices_json=$(kubectl -n "${ns}" get endpointslices.discovery.k8s.io -l kubernetes.io/service-name=iam-db-rw -o json 2>/dev/null); then
-              DB_READY_FROM_SLICES=$(jq -r '[.items[]? | .endpoints[]? | select(.conditions.ready == true) | .addresses[]?] | join(" ")' <<<"${endpointslices_json}" 2>/dev/null || true)
-              DB_NOT_READY_FROM_SLICES=$(jq -r '[.items[]? | .endpoints[]? | select(.conditions.ready != true) | .addresses[]?] | join(" ")' <<<"${endpointslices_json}" 2>/dev/null || true)
-            fi
-          }
-
-          log_db_endpoint_status() {
-            echo "iam-db-rw ready IPs (Endpoints): ${DB_READY_FROM_ENDPOINTS:-<none>}"
-            echo "iam-db-rw notReady IPs (Endpoints): ${DB_NOT_READY_FROM_ENDPOINTS:-<none>}"
-            echo "iam-db-rw ready IPs (EndpointSlices): ${DB_READY_FROM_SLICES:-<none>}"
-            echo "iam-db-rw notReady IPs (EndpointSlices): ${DB_NOT_READY_FROM_SLICES:-<none>}"
-          }
-
-          echo "Waiting for iam-db read/write service endpoints in namespace ${ns}"
-          endpoints=""
-          consecutive_ready=0
-          max_attempts=45
-          for attempt in $(seq 1 "${max_attempts}"); do
-            collect_db_endpoint_status
-            log_db_endpoint_status
-
-            if [ -n "${DB_READY_FROM_ENDPOINTS}" ] || [ -n "${DB_READY_FROM_SLICES}" ]; then
-              endpoints="${DB_READY_FROM_ENDPOINTS:-${DB_READY_FROM_SLICES}}"
-              consecutive_ready=$((consecutive_ready + 1))
-              echo "iam-db-rw has ready endpoints (${consecutive_ready}/3 consecutive confirmations)"
-              if [ "${consecutive_ready}" -ge 3 ]; then
-                break
-              fi
-              sleep 5
-              continue
-            fi
-
-            echo "iam-db-rw service has no ready endpoints yet (attempt ${attempt}/${max_attempts})"
-            consecutive_ready=0
-            sleep 10
-          done
-
-          if [ -z "${endpoints}" ]; then
-            echo "Timed out waiting for iam-db-rw service endpoints"
-            kubectl -n "${ns}" get svc iam-db-rw -o yaml || true
-            kubectl -n "${ns}" get endpoints iam-db-rw -o yaml || true
-            kubectl -n "${ns}" get endpointslices.discovery.k8s.io -l kubernetes.io/service-name=iam-db-rw -o yaml || true
-            kubectl -n "${ns}" get pods -l cnpg.io/cluster=iam-db -o wide || true
-            kubectl -n "${ns}" describe cluster iam-db || true
-            exit 1
-          fi
-
-          echo "iam-db-rw endpoints: ${endpoints}"
-          echo "CloudNativePG managed roles now reconcile application databases, credentials, and extensions from Git."
-
-          kubectl -n "${ns}" wait cluster/iam-db --for=condition=Ready --timeout=600s || true
 
       - name: Install Keycloak Operator (CRDs + operator Deployment)
         shell: bash
