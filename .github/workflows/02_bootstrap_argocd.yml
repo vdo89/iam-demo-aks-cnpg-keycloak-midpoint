@@ -1734,11 +1734,25 @@ jobs:
 
       - name: Wait for iam apps Argo CD application
         shell: bash
-        env:
-          IAM_NAMESPACE: ${{ inputs.NAMESPACE_IAM }}
         run: |
           set -euo pipefail
-          ./scripts/wait_for_apps.sh
+
+          if ! command -v argocd >/dev/null 2>&1; then
+            echo "Installing Argo CD CLI"
+            curl -sSL -o /tmp/argocd-linux-amd64 \
+              https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+            install -m 0755 /tmp/argocd-linux-amd64 /usr/local/bin/argocd
+          fi
+
+          echo "Waiting for Argo CD application 'apps' to become Synced and Healthy"
+          if ! argocd app wait apps --sync --health --timeout 900 --core; then
+            echo "Argo CD application 'apps' failed to report Synced/Healthy within the timeout; dumping diagnostics."
+            kubectl -n argocd get application apps -o yaml || true
+            kubectl -n argocd get applications || true
+            exit 1
+          fi
+
+          argocd app get apps --core
 
       - name: Wait for Keycloak service endpoints
         shell: bash
