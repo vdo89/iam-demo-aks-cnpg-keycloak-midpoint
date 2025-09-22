@@ -24,7 +24,7 @@ spec:
         server: https://kubernetes.default.svc
         namespace: '{{.namespace}}'
       source:
-{{- if eq .name "cert-manager" }}
+      {{ if eq .name "cert-manager" }}
         repoURL: https://charts.jetstack.io
         chart: cert-manager
         targetRevision: v1.15.1
@@ -34,13 +34,13 @@ spec:
             installCRDs: true
             prometheus:
               enabled: false
-{{- else if eq .name "cnpg-operator" }}
+      {{ else if eq .name "cnpg-operator" }}
         repoURL: https://cloudnative-pg.github.io/charts
         chart: cloudnative-pg
         targetRevision: 0.22.1
         helm:
           releaseName: cnpg
-{{- else if eq .name "ingress-nginx" }}
+      {{ else if eq .name "ingress-nginx" }}
         repoURL: https://kubernetes.github.io/ingress-nginx
         chart: ingress-nginx
         targetRevision: 4.10.1
@@ -54,15 +54,15 @@ spec:
                   # get HTTP 200s even before any ingress rules exist.
                   service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: /is-dynamic-lb-initialized
                 type: LoadBalancer
-{{- end }}
+      {{ end }}
       syncPolicy:
         automated:
           prune: true
           selfHeal: true
         syncOptions:
-{{- if eq .name "cnpg-operator" }}
+      {{ if eq .name "cnpg-operator" }}
           - CreateNamespace=true
           - ServerSideApply=true
-{{- else }}
+      {{ else }}
           - CreateNamespace=true
-{{- end }}
+      {{ end }}
