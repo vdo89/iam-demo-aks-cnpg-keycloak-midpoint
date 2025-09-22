@@ -304,13 +304,15 @@ check_endpoint() {
     [[ -n "${url}" ]] || continue
     log "Probing ${label} at ${url}"
 
-    local headers_file body_file http_code status_line curl_status
+    local headers_file body_file cookie_file http_code status_line curl_status
     headers_file=$(mktemp)
     body_file=$(mktemp)
+    cookie_file=$(mktemp)
 
     # Capture headers and a small snippet of the body so we can surface
     # the HTTP status code (and any proxy errors) without fighting pipefail.
     if curl -sS --show-error --location --max-time 15 \
+      --cookie "${cookie_file}" --cookie-jar "${cookie_file}" \
       --output "${body_file}" --dump-header "${headers_file}" \
       "${url}"; then
       status_line=$(head -n 1 "${headers_file}" | tr -d '\r\n')
@@ -320,7 +322,7 @@ check_endpoint() {
             "${http_code}" -ge 200 && "${http_code}" -lt 400 ]]; then
         log "${label} responded via ${url}: ${status_line}"
         status=0
-        rm -f "${headers_file}" "${body_file}"
+        rm -f "${headers_file}" "${body_file}" "${cookie_file}"
         break
       fi
 
@@ -351,7 +353,7 @@ check_endpoint() {
       fi
     fi
 
-    rm -f "${headers_file}" "${body_file}"
+    rm -f "${headers_file}" "${body_file}" "${cookie_file}"
   done
 
   return "${status}"
