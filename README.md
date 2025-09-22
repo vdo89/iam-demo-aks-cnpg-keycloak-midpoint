@@ -65,6 +65,9 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
 2. The workflow will:
    - Fetch AKS kubeconfig (OIDC auth)
    - Install **Argo CD**
+     - The workflow now applies the vendored Argo CD install manifest pinned to **v3.1.6**
+       (`k8s/argocd/install/argocd-install-v3.1.6.yaml`) so GitHub Actions no longer depends
+       on `raw.githubusercontent.com` availability during bootstrap.
    - Sync **addons** via Argo: Ingress-NGINX, cert-manager, CNPG Operator
      - The workflow pre-installs CloudNativePG CRDs with `kubectl apply --server-side`. It first attempts to render them via `helm show crds` and, if the chart does not publish CRDs in that location (as happens with recent releases), falls back to `helm template --include-crds` and filters the `CustomResourceDefinition` manifests. This keeps the large schemas out of Kubernetes' annotation history while the Argo CD application disables chart-managed CRDs (`crds.create=false`) to avoid reintroducing the oversized annotation.
    - Reconcile **CNPG** cluster `iam-db` (+ Azure Blob backup config) via Argo CD. Update
