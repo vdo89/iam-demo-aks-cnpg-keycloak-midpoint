@@ -15,15 +15,23 @@ require_cmd() {
   fi
 }
 
+usage() {
+  cat <<'EOF'
+Usage: configure_demo_hosts.sh [update|verify]
+
+Commands:
+  update  Resolve the ingress IP and update the GitOps patches (default).
+  verify  Wait for Argo CD to reconcile the latest commit and smoke test the endpoints.
+
+Environment variables:
+  ARGOCD_APP_NAME     Argo CD application that manages the IAM stack (default: apps)
+  ARGOCD_SYNC_TIMEOUT Timeout, in seconds, for argocd app wait (default: 900)
+EOF
+}
+
 # Default configuration (can be overridden via environment variables).
 NAMESPACE="${NAMESPACE_IAM:-${NAMESPACE:-iam}}"
-KEYCLOAK_SERVICE_NAME="${KEYCLOAK_SERVICE_NAME:-rws-keycloak-service}"
-KEYCLOAK_SERVICE_PORT="${KEYCLOAK_SERVICE_PORT:-8080}"
-MIDPOINT_SERVICE_NAME="${MIDPOINT_SERVICE_NAME:-midpoint}"
-MIDPOINT_SERVICE_PORT="${MIDPOINT_SERVICE_PORT:-8080}"
-MIDPOINT_INGRESS_NAME="${MIDPOINT_INGRESS_NAME:-midpoint}"
 PATCH_ROOT="${PATCH_ROOT:-k8s/apps}"
-KEYCLOAK_CR_NAME="${KEYCLOAK_CR_NAME:-rws-keycloak}"
 KEYCLOAK_HOST_PATCH_FILE="${KEYCLOAK_HOST_PATCH_FILE:-${PATCH_ROOT}/keycloak/hostname-patch.yaml}"
 MIDPOINT_INGRESS_PATCH_FILE="${MIDPOINT_INGRESS_PATCH_FILE:-${PATCH_ROOT}/midpoint/ingress-host-patch.yaml}"
 INGRESS_CLASS_NAME="${INGRESS_CLASS_NAME:-}"
@@ -32,43 +40,6 @@ require_cmd kubectl
 require_cmd curl
 require_cmd jq
 require_cmd python3
-
-apply_ingress() {
-  local label="$1"
-  local name="$2"
-  local host="$3"
-  local service_name="$4"
-  local service_port="$5"
-
-  if [[ -z "${INGRESS_CLASS_NAME}" ]]; then
-    log "ERROR: Ingress class name is not set."
-    exit 1
-  fi
-
-  log "Reconciling ${label} ingress (host ${host})..."
-  cat <<EOF | kubectl apply -f -
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: ${name}
-  namespace: ${NAMESPACE}
-  annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: "16m"
-spec:
-  ingressClassName: ${INGRESS_CLASS_NAME}
-  rules:
-    - host: ${host}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: ${service_name}
-                port:
-                  number: ${service_port}
-EOF
-}
 
 write_ingress_patch() {
   local label="$1"
@@ -147,15 +118,6 @@ detect_ingress_class() {
 update_gitops_manifests() {
   write_keycloak_hostname_patch "${KEYCLOAK_HOST_PATCH_FILE}" "${KC_HOST}"
   write_ingress_patch "midPoint" "${MIDPOINT_INGRESS_PATCH_FILE}" "${MP_HOST}"
-}
-
-patch_keycloak_hostname() {
-  local host="$1"
-
-  log "Reconciling Keycloak hostname ${host} on CR ${KEYCLOAK_CR_NAME}..."
-  kubectl -n "${NAMESPACE}" patch keycloaks.k8s.keycloak.org "${KEYCLOAK_CR_NAME}" \
-    --type merge \
-    --patch "$(printf '{"spec":{"hostname":{"hostname":"%s"}}}' "${host}")"
 }
 
 resolve_ingress_ip() {
@@ -242,64 +204,6 @@ wait_for_ingress_controller() {
   fi
 
   kubectl -n ingress-nginx rollout status deploy/ingress-nginx-controller --timeout=600s
-}
-
-wait_for_service_selector() {
-  local service_name="$1"
-  local attempts=30
-  local sleep_seconds=10
-  local svc_json selector
-
-  for attempt in $(seq 1 "${attempts}"); do
-    if ! svc_json=$(kubectl -n "${NAMESPACE}" get svc "${service_name}" -o json 2>/dev/null); then
-      log "Service ${service_name} not ready yet (attempt ${attempt}/${attempts}); retrying in ${sleep_seconds}s..."
-      sleep "${sleep_seconds}"
-      continue
-    fi
-
-    selector=$(jq -r '
-      .spec.selector // {} |
-      to_entries |
-      map(select(.value != null)) |
-      map(.key + "=" + .value) |
-      join(",")
-    ' <<<"${svc_json}" | tr -d '\r\n')
-
-    if [[ -n "${selector}" ]]; then
-      echo "${selector}"
-      return 0
-    fi
-
-    log "Service ${service_name} does not expose a selector yet (attempt ${attempt}/${attempts}); retrying..."
-    sleep "${sleep_seconds}"
-  done
-
-  log "ERROR: Timed out waiting for service ${service_name} to publish a pod selector."
-  kubectl -n "${NAMESPACE}" get svc "${service_name}" -o yaml || true
-  exit 1
-}
-
-wait_for_keycloak() {
-  local selector
-  selector=$(wait_for_service_selector "${KEYCLOAK_SERVICE_NAME}")
-  log "Keycloak service selector: ${selector}"
-
-  log "Waiting for Keycloak pods to become Ready..."
-  kubectl -n "${NAMESPACE}" wait --for=condition=ready pod -l "${selector}" --timeout=600s
-}
-
-wait_for_midpoint() {
-  log "Waiting for midPoint deployment ${MIDPOINT_SERVICE_NAME} to become available..."
-  kubectl -n "${NAMESPACE}" rollout status deploy/${MIDPOINT_SERVICE_NAME} --timeout=600s || true
-  if ! kubectl -n "${NAMESPACE}" get svc "${MIDPOINT_SERVICE_NAME}" >/dev/null 2>&1; then
-    log "WARNING: Service ${MIDPOINT_SERVICE_NAME} not found yet; continuing to ingress reconciliation."
-  fi
-}
-
-apply_ingresses() {
-  patch_keycloak_hostname "${KC_HOST}"
-  apply_ingress "midPoint" "${MIDPOINT_INGRESS_NAME}" "${MP_HOST}" "${MIDPOINT_SERVICE_NAME}" "${MIDPOINT_SERVICE_PORT}"
-  kubectl -n "${NAMESPACE}" get ingress -o wide || true
 }
 
 check_endpoint() {
@@ -416,19 +320,82 @@ smoke_test() {
   done
 }
 
-main() {
+sync_gitops_app() {
+  local app_name="${ARGOCD_APP_NAME:-apps}"
+  local timeout="${ARGOCD_SYNC_TIMEOUT:-900}"
+
+  require_cmd argocd
+
+  log "Triggering Argo CD sync for application ${app_name}..."
+  if ! argocd app sync "${app_name}" --core; then
+    log "ERROR: Failed to start Argo CD sync for ${app_name}."
+    argocd app get "${app_name}" --core || true
+    exit 1
+  fi
+
+  log "Waiting for Argo CD application ${app_name} to become Synced and Healthy..."
+  if ! argocd app wait "${app_name}" --sync --health --timeout "${timeout}" --core; then
+    log "ERROR: Argo CD application ${app_name} did not become healthy in time."
+    argocd app get "${app_name}" --core || true
+    exit 1
+  fi
+  log "Argo CD application ${app_name} is synced and healthy."
+}
+
+update_mode() {
   wait_for_ingress_controller
   detect_ingress_class
   resolve_ingress_ip
   update_gitops_manifests
-  wait_for_keycloak
-  wait_for_midpoint
-  apply_ingresses
+
+  log "✅ GitOps patches updated. Commit and push the changes to let Argo CD reconcile them."
+  log "Keycloak host: ${KC_HOST}"
+  log "midPoint host: ${MP_HOST}"
+}
+
+verify_mode() {
+  wait_for_ingress_controller
+  resolve_ingress_ip
+  sync_gitops_app
   smoke_test
 
-  log "✅ Configuration complete."
+  log "✅ Verification complete."
   log "Keycloak URL: http://${KC_HOST}/"
   log "midPoint URL: http://${MP_HOST}/midpoint"
+}
+
+main() {
+  local mode="update"
+
+  if [[ $# -gt 0 ]]; then
+    case "$1" in
+      update|verify)
+        mode="$1"
+        ;;
+      --help|-h)
+        usage
+        exit 0
+        ;;
+      *)
+        log "ERROR: Unknown command '$1'."
+        usage
+        exit 1
+        ;;
+    esac
+  fi
+
+  case "${mode}" in
+    update)
+      update_mode
+      ;;
+    verify)
+      verify_mode
+      ;;
+    *)
+      log "ERROR: Unsupported mode '${mode}'."
+      exit 1
+      ;;
+  esac
 }
 
 main "$@"
