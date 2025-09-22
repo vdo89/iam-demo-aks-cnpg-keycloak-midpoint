@@ -260,9 +260,9 @@ jobs:
                 addons_ready=1
                 break
               fi
-              echo "addons application status: sync=${sync_status:-<unknown>} health=${health_status:-<unknown>} (attempt ${attempt}/60)"
+              echo "addons application status: sync=${sync_status:-<unknown>} health=${health_status:-<unknown>} (attempt ${attempt}/20)"
             else
-              echo "addons application not found yet (attempt ${attempt}/60)"
+              echo "addons application not found yet (attempt ${attempt}/20)"
             fi
             sleep 10
           done
@@ -278,7 +278,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "Waiting for Argo CD application cnpg-operator to be created..."
-          for attempt in $(seq 1 60); do
+          for attempt in $(seq 1 20); do
             if kubectl -n argocd get application cnpg-operator >/dev/null 2>&1; then
               sync_status=$(kubectl -n argocd get application cnpg-operator -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")
               health_status=$(kubectl -n argocd get application cnpg-operator -o jsonpath='{.status.health.status}' 2>/dev/null || echo "")
@@ -288,7 +288,7 @@ jobs:
               fi
               echo "cnpg-operator status: sync=${sync_status:-<unknown>} health=${health_status:-<unknown>} (attempt ${attempt}/60)"
             else
-              echo "Application cnpg-operator not found yet (attempt ${attempt}/60)"
+              echo "Application cnpg-operator not found yet (attempt ${attempt}/20)"
             fi
             sleep 10
           done
@@ -1385,7 +1385,7 @@ jobs:
           echo "Waiting for Keycloak service in namespace ${ns}"
           service_name=""
           service_candidates=(rws-keycloak-service rws-keycloak)
-          for attempt in $(seq 1 60); do
+          for attempt in $(seq 1 20); do
             for candidate in "${service_candidates[@]}"; do
               if kubectl -n "${ns}" get svc "${candidate}" >/dev/null 2>&1; then
                 service_name="${candidate}"
@@ -1396,7 +1396,7 @@ jobs:
               echo "Keycloak service ${service_name} detected"
               break
             fi
-            echo "Keycloak service not created yet (attempt ${attempt}/60)"
+            echo "Keycloak service not created yet (attempt ${attempt}/20)"
             sleep 10
           done
 
