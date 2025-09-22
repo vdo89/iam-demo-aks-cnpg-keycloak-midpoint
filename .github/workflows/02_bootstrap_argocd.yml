@@ -1360,14 +1360,14 @@ jobs:
           fi
 
           echo "Waiting for Argo CD application 'apps' to become Synced and Healthy"
-          if ! argocd app wait apps --sync --health --timeout 900 --core; then
+          if ! argocd --core app wait apps --sync --health --timeout 900; then
             echo "Argo CD application 'apps' failed to report Synced/Healthy within the timeout; dumping diagnostics."
             kubectl -n argocd get application apps -o yaml || true
             kubectl -n argocd get applications || true
             exit 1
           fi
 
-          argocd app get apps --core
+          argocd --core app get apps
 
       - name: Wait for Keycloak service endpoints
         shell: bash
