@@ -286,7 +286,7 @@ jobs:
                 echo "cnpg-operator application is synced and healthy"
                 exit 0
               fi
-              echo "cnpg-operator status: sync=${sync_status:-<unknown>} health=${health_status:-<unknown>} (attempt ${attempt}/60)"
+              echo "cnpg-operator status: sync=${sync_status:-<unknown>} health=${health_status:-<unknown>} (attempt ${attempt}/20)"
             else
               echo "Application cnpg-operator not found yet (attempt ${attempt}/20)"
             fi
