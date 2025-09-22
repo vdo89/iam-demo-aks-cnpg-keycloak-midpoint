@@ -37,10 +37,6 @@ spec:
                 targetRevision: 0.22.1
                 helm:
                   releaseName: cnpg
-                  skipCrds: true
-                  parameters:
-                    - name: crds.create
-                      value: "false"
               syncPolicy:
                 syncOptions:
                   - CreateNamespace=true
