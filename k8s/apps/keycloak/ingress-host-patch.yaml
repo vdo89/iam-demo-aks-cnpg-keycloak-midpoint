@@ -4,5 +4,6 @@ metadata:
   name: rws-keycloak-public
   namespace: iam
 spec:
+  ingressClassName: nginx
   rules:
     - host: kc.132.220.29.66.nip.io
