@@ -9,7 +9,8 @@ spec:
   startOptimized: false
   additionalOptions:
     # Only keep CLI toggles that are still missing strongly typed equivalents in
-    # the v2alpha1 Keycloak CR.
+    # the v2alpha1 Keycloak CR. Strict HTTPS validation and the database URL now
+    # rely on the dedicated spec fields instead of legacy overrides.
     # Enable Quarkus health/metrics endpoints so Kubernetes and the operator
     # can call `/health/ready` during startup and surface Keycloak readiness to
     # Argo CD's health checks.
@@ -17,10 +18,6 @@ spec:
       value: "true"
     - name: metrics-enabled
       value: "true"
-    # The CR does not expose a typed toggle for strict HTTPS validation yet, so
-    # keep the legacy CLI option until the operator grows that field.
-    - name: hostname-strict-https
-      value: "false"
   # Pin the operator's feature list to a known good entry so it does not inject
   # the legacy "health" feature into KC_FEATURES. Keycloak 26 removed that flag
   # and will crash if we request it, so we enable the health endpoints via
@@ -50,7 +47,8 @@ spec:
     hostname: kc.127.0.0.1.nip.io
     # Allow the demo ingress to terminate HTTP without Keycloak rejecting the
     # host/scheme. The nip.io address changes every time the AKS load balancer
-    # IP changes, so keep hostname checks disabled in the typed spec fields.
+    # IP changes, so keep hostname checks disabled via the typed spec field
+    # instead of the deprecated CLI toggle.
     strict: false
   ingress:
     enabled: true

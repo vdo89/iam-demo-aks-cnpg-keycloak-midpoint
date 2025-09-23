@@ -155,15 +155,11 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
   - Keycloak enables the CLI flags `health-enabled=true` and `metrics-enabled=true` so the readiness endpoints expose the
     `/health/ready` and database checks on the management port. The operator uses those endpoints for its probes and Argo CD's
     custom health script promotes the CRs to `Healthy` as soon as the operator reports `status.ready=true`.
-    Keycloak 26.x removed the legacy `health` feature toggle, so the manifest now wires the option through
-    `spec.additionalOptions` instead of relying on environment variables or the operator's default feature set.
-    Leaving the old flag in place makes the container exit with `health is an unrecognized feature`, which surfaces as
-    a CrashLoopBackOff in Argo CD. The current Keycloak Operator release still injects `health` whenever the feature list
-    is empty, so the manifest pins `spec.features.enabled` and the explicit `features` additional option to a harmless
-    entry (`token-exchange`) to force the operator to stop requesting the removed flag. Setting `spec.features.disabled`
-    to `health` still makes the operator render the removed toggle, so the disabled list stays empty and the manifest
-    relies solely on the explicit enabled entry. If you upgrade the image again and the health endpoints disappear,
-    review the upstream release notes for the replacement configuration knob before adjusting the feature list.
+    Keycloak 26.x removed the legacy `health` feature toggle, so the manifest pins `spec.features.enabled`
+    to a harmless entry (`token-exchange`) to force the operator to stop requesting the removed flag.
+    Setting `spec.features.disabled` to `health` still makes the operator render the removed toggle, so the disabled list stays
+    empty. If you upgrade the image again and the health endpoints disappear, review the upstream release notes for the
+    replacement configuration knob before adjusting the feature list.
 
   - The manifest pins Keycloak to **26.3.4** to stay aligned with the operator resources the workflow installs.
     Keycloak 26.0.0 fails to start once build-time options such as `kc.db` or `kc.health-enabled` diverge from the
@@ -173,11 +169,13 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     Keycloak 26 automatically rebuilds the optimized image when runtime options change, and the legacy `auto-build`
     configuration knob was removed upstream. Leaving the old `kc.auto-build=true` entry forces the operator to render the
     invalid `--kc.auto-build` flag which causes the pod to exit immediately, so the manifest purposely omits that option.
+  - The Keycloak hostname section disables strict checks through `spec.hostname.strict=false` so the demo ingress can terminate
+    HTTP without Keycloak rejecting the host/scheme. The nip.io address changes every time the AKS load balancer IP changes,
+    so keeping the typed field relaxed avoids having to rely on the deprecated CLI toggles.
   - The PostgreSQL connection now uses an explicit JDBC URL with `sslmode=disable` so Keycloak skips TLS validation against
-    CloudNativePG's self-signed server certificate. The value is expressed both in the CRD's database section and via
-    `spec.additionalOptions` to guarantee the exact JDBC string (including the query parameters) always reaches the
-    container even if the operator rewrites the database options. Without this override the startup probe repeatedly fails
-    with `connection refused`, the pod restarts, and the application never reaches Healthy.
+    CloudNativePG's self-signed server certificate. The value lives in the CRD's database section via `spec.db.url` to guarantee
+    the exact JDBC string (including the query parameters) always reaches the container. Without this override the startup
+    probe repeatedly fails with `connection refused`, the pod restarts, and the application never reaches Healthy.
   - The operator-managed Ingress defaults to routing traffic to Keycloak over HTTPS. The demo keeps the public endpoints on
     plain HTTP for simplicity, so the manifest overrides the controller annotation to use an HTTP backend and disables the
     automatic SSL redirect. Without this change ingress-nginx attempts an HTTPS handshake with Keycloak, never receives a
