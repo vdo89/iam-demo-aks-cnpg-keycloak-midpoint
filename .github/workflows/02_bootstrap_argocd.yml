@@ -62,8 +62,41 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Applying vendored Argo CD install manifest (v3.1.6) into namespace argocd"
-          kubectl apply -n argocd -f k8s/argocd/install/argocd-install-v3.1.6.yaml
+          ARGOCD_VERSION="v3.1.6"
+          ARGOCD_MANIFEST_URL="https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/install.yaml"
+
+          echo "Downloading Argo CD install manifest ${ARGOCD_VERSION} from ${ARGOCD_MANIFEST_URL}"
+          manifest_path=$(mktemp)
+          cleanup() {
+            rm -f "${manifest_path}"
+          }
+          trap cleanup EXIT
+
+          for attempt in $(seq 1 5); do
+            rm -f "${manifest_path}"
+            if curl -fsSLo "${manifest_path}" --connect-timeout 10 --max-time 120 \
+              --retry 3 --retry-delay 5 --retry-all-errors \
+              "${ARGOCD_MANIFEST_URL}"; then
+              if [ -s "${manifest_path}" ]; then
+                echo "Downloaded Argo CD manifest to ${manifest_path}"
+                break
+              fi
+              echo "Downloaded file is empty; retrying"
+            else
+              echo "Failed to download Argo CD manifest from ${ARGOCD_MANIFEST_URL} (attempt ${attempt}/5)"
+            fi
+
+            if [ "${attempt}" -eq 5 ]; then
+              echo "Unable to download Argo CD manifest after ${attempt} attempts"
+              exit 1
+            fi
+
+            echo "Retrying download in 5 seconds"
+            sleep 5
+          done
+
+          echo "Applying Argo CD manifest ${ARGOCD_VERSION} into namespace argocd"
+          kubectl apply -n argocd -f "${manifest_path}"
           echo "Waiting for Argo CD core components to become ready..."
           for workload in deploy/argocd-server deploy/argocd-repo-server deploy/argocd-redis deploy/argocd-dex-server; do
             echo "Waiting for rollout of ${workload}"
