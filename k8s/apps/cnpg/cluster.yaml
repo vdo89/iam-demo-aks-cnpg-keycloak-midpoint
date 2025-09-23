@@ -12,24 +12,6 @@ spec:
   superuserSecret:
     name: cnpg-superuser
 
-  bootstrap:
-    initdb:
-      database: keycloak
-      owner: keycloak
-      secret:
-        name: keycloak-db-app
-
-  managed:
-    roles:
-      - name: keycloak
-        login: true
-        passwordSecret:
-          name: keycloak-db-app
-      - name: midpoint
-        login: true
-        passwordSecret:
-          name: midpoint-db-app
-
   storage:
     size: 20Gi
 
