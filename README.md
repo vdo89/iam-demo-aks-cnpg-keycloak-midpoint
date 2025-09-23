@@ -152,7 +152,7 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     differ...` when the optimized image still carries the default `kc.db=dev-file`/`kc.health-enabled=false` values from
     the upstream image, so letting the runtime build step execute avoids the crash loop without having to maintain a
     pre-built custom image.
-  - Keycloak enables the CLI flags `health-enabled=true` and `metrics-enabled=true` so the readiness endpoints expose the
+  - Keycloak sets `KC_HEALTH_ENABLED=true` and `KC_METRICS_ENABLED=true` so the readiness endpoints expose the
     `/health/ready` and database checks on the management port. The operator uses those endpoints for its probes and Argo CD's
     custom health script promotes the CRs to `Healthy` as soon as the operator reports `status.ready=true`.
     Keycloak 26.x removed the legacy `health` feature toggle, so the manifest pins `spec.features.enabled`

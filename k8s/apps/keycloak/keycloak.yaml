@@ -7,16 +7,17 @@ spec:
   image: quay.io/keycloak/keycloak:26.3.4
   instances: 1
   startOptimized: false
-  additionalOptions:
-    # Only keep CLI toggles that are still missing strongly typed equivalents in
-    # the v2alpha1 Keycloak CR. Strict HTTPS validation and the database URL now
-    # rely on the dedicated spec fields instead of legacy overrides.
-    # Enable Quarkus health/metrics endpoints so Kubernetes and the operator
-    # can call `/health/ready` during startup and surface Keycloak readiness to
-    # Argo CD's health checks.
-    - name: health-enabled
+  # Expose the Quarkus health and metrics endpoints through environment
+  # variables instead of the legacy CLI toggles. The operator translates
+  # `additionalOptions` into `--<option>` arguments and the Keycloak 26.x
+  # distribution now warns when first-class CR fields (such as `db-url` or
+  # `hostname-strict`) leak through that escape hatch. Using `KC_*` variables
+  # keeps the startup contract identical while avoiding the operator warning
+  # and the resulting CrashLoopBackOff.
+  env:
+    - name: KC_HEALTH_ENABLED
       value: "true"
-    - name: metrics-enabled
+    - name: KC_METRICS_ENABLED
       value: "true"
   # Pin the operator's feature list to a known good entry so it does not inject
   # the legacy "health" feature into KC_FEATURES. Keycloak 26 removed that flag
