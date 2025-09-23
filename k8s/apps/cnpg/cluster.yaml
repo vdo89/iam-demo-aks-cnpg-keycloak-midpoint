@@ -18,10 +18,6 @@ spec:
       owner: keycloak
       secret:
         name: keycloak-db-app
-      postInitSQLRefs:
-        configMapRefs:
-          - name: cnpg-managed-databases
-            key: midpoint.sql
 
   managed:
     roles:
