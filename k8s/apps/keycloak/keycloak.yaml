@@ -8,11 +8,8 @@ spec:
   instances: 1
   startOptimized: false
   additionalOptions:
-    # Inject the full JDBC string so the runtime always connects with the
-    # explicit `sslmode=disable` flag even if the operator rewrites the
-    # database section later.
-    - name: db-url
-      value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/keycloak?sslmode=disable
+    # Only keep CLI toggles that are still missing strongly typed equivalents in
+    # the v2alpha1 Keycloak CR.
     # Enable Quarkus health/metrics endpoints so Kubernetes and the operator
     # can call `/health/ready` during startup and surface Keycloak readiness to
     # Argo CD's health checks.
@@ -20,19 +17,10 @@ spec:
       value: "true"
     - name: metrics-enabled
       value: "true"
-    # Allow the demo ingress to terminate HTTP without Keycloak rejecting the
-    # host/scheme. The nip.io address changes every time the AKS load balancer
-    # IP changes, so keep hostname checks disabled explicitly at runtime.
-    - name: hostname-strict
-      value: "false"
+    # The CR does not expose a typed toggle for strict HTTPS validation yet, so
+    # keep the legacy CLI option until the operator grows that field.
     - name: hostname-strict-https
       value: "false"
-    # Pin a safe default features list so the operator stops appending the
-    # removed "health" toggle. The 26.x operator still injects its defaults
-    # whenever the enabled list is empty, which makes the pod exit with
-    # "health is an unrecognized feature".
-    - name: features
-      value: token-exchange
   # Pin the operator's feature list to a known good entry so it does not inject
   # the legacy "health" feature into KC_FEATURES. Keycloak 26 removed that flag
   # and will crash if we request it, so we enable the health endpoints via
@@ -43,6 +31,9 @@ spec:
     enabled:
       - token-exchange
   db:
+    # Inject the explicit JDBC string (including `sslmode=disable`) via the
+    # strongly typed field so the operator no longer requires the deprecated
+    # CLI override.
     vendor: postgres
     url: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/keycloak?sslmode=disable
     usernameSecret:
@@ -57,6 +48,9 @@ spec:
     # Default hostname is overridden by kustomize replacements using values
     # from k8s/apps/params.env during the build.
     hostname: kc.127.0.0.1.nip.io
+    # Allow the demo ingress to terminate HTTP without Keycloak rejecting the
+    # host/scheme. The nip.io address changes every time the AKS load balancer
+    # IP changes, so keep hostname checks disabled in the typed spec fields.
     strict: false
   ingress:
     enabled: true
