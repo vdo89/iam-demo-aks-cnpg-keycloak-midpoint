@@ -30,7 +30,18 @@ spec:
             releaseName: ingress-nginx
             # Use the built-in status endpoint exposed on the default server so Azure probes
             # get HTTP 200s even before any ingress rules exist.
-            values: '{"controller":{"service":{"annotations":{"service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path":"/is-dynamic-lb-initialized"},"type":"LoadBalancer"}}}'
+            values: |
+              controller:
+                service:
+                  annotations:
+                    service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: /is-dynamic-lb-initialized
+                  type: LoadBalancer
+                # Treat the ingress-nginx class as default so Keycloak's operator-managed ingress
+                # (which initially shipped without an explicit class) is reconciled even before the
+                # configure_demo_hosts workflow rewrites the manifests with the detected class.
+                watchIngressWithoutClass: true
+                ingressClassResource:
+                  default: true
   template:
     metadata:
       name: '{{.name}}'
