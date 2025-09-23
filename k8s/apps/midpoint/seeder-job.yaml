@@ -39,17 +39,19 @@ spec:
 
               auth="administrator:${MIDPOINT_PASSWORD}"
 
-              shopt -s nullglob
-              found=0
-              for f in /objects/*.xml; do
-                found=1
-                echo "Posting $f"
-                tmp_response="$(mktemp)"
-                http_code="$(curl -sS -u "$auth" -H "Content-Type: application/xml" \
-                  -X POST "$MP_URL/ws/rest/objects" --data-binary "@$f" \
-                  -o "${tmp_response}" -w '%{http_code}')"
+              set -- /objects/*.xml
 
-                case "${http_code}" in
+              if [ "${1}" = "/objects/*.xml" ]; then
+                echo "No midPoint object definitions were mounted; skipping import"
+              else
+                for f in "$@"; do
+                  echo "Posting $f"
+                  tmp_response="$(mktemp)"
+                  http_code="$(curl -sS -u "$auth" -H "Content-Type: application/xml" \
+                    -X POST "$MP_URL/ws/rest/objects" --data-binary "@$f" \
+                    -o "${tmp_response}" -w '%{http_code}')"
+
+                  case "${http_code}" in
                   200|201)
                     echo "Imported $f (HTTP ${http_code})"
                     ;;
@@ -67,11 +69,8 @@ spec:
                     ;;
                 esac
 
-                rm -f "${tmp_response}"
-              done
-
-              if [ "${found}" -eq 0 ]; then
-                echo "No midPoint object definitions were mounted; skipping import"
+                  rm -f "${tmp_response}"
+                done
               fi
 
               echo "Done."
