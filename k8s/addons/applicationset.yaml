@@ -54,7 +54,7 @@ spec:
         syncOptions:
           - CreateNamespace=true
   templatePatch: |
-    {{- if eq .name "cnpg-operator" }}
+    {{- if or (eq .name "cnpg-operator") (eq .name "cert-manager") }}
     spec:
       syncPolicy:
         syncOptions:
