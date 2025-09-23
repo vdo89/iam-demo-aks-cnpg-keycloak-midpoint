@@ -65,7 +65,29 @@ spec:
         syncOptions:
           - CreateNamespace=true
   templatePatch: |
-    {{- if or (eq .name "cnpg-operator") (eq .name "cert-manager") }}
+    {{- if eq .name "cert-manager" }}
+    spec:
+      ignoreDifferences:
+        # cert-manager injects webhook and APIService CA bundles at runtime, so
+        # ignore those controller-managed fields to keep Argo CD from reporting
+        # perpetual drift.
+        - group: admissionregistration.k8s.io
+          kind: MutatingWebhookConfiguration
+          jqPathExpressions:
+            - .webhooks[]?.clientConfig.caBundle
+        - group: admissionregistration.k8s.io
+          kind: ValidatingWebhookConfiguration
+          jqPathExpressions:
+            - .webhooks[]?.clientConfig.caBundle
+        - group: apiregistration.k8s.io
+          kind: APIService
+          jqPathExpressions:
+            - .spec.caBundle
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+    {{- else if eq .name "cnpg-operator" }}
     spec:
       syncPolicy:
         syncOptions:
