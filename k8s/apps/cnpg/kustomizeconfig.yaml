@@ -1,0 +1,3 @@
+varReference:
+  - path: spec/backup/barmanObjectStore/destinationPath
+    kind: Cluster
