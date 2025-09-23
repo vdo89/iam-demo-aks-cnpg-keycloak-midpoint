@@ -29,12 +29,10 @@ spec:
         login: true
         passwordSecret:
           name: keycloak-db-app
-          key: password
       - name: midpoint
         login: true
         passwordSecret:
           name: midpoint-db-app
-          key: password
 
   storage:
     size: 20Gi
