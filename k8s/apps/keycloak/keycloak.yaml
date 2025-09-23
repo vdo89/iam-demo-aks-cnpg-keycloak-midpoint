@@ -60,6 +60,9 @@ spec:
     strict: false
   ingress:
     enabled: true
+    # Ingress class is overridden at build time by kustomize replacements using
+    # the detected value written to k8s/apps/params.env by
+    # scripts/configure_demo_hosts.sh.
     className: nginx
   resources:
     requests:
