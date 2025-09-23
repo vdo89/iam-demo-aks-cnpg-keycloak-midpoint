@@ -64,6 +64,12 @@ spec:
     # the detected value written to k8s/apps/params.env by
     # scripts/configure_demo_hosts.sh.
     className: nginx
+    # Force the operator-managed ingress to proxy Keycloak over HTTP. The
+    # operator defaults to HTTPS backends, which breaks the demo's plain-HTTP
+    # routing through ingress-nginx.
+    annotations:
+      nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+      nginx.ingress.kubernetes.io/ssl-redirect: "false"
   resources:
     requests:
       cpu: "250m"

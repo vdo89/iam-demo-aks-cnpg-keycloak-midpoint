@@ -178,6 +178,10 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     `spec.additionalOptions` to guarantee the exact JDBC string (including the query parameters) always reaches the
     container even if the operator rewrites the database options. Without this override the startup probe repeatedly fails
     with `connection refused`, the pod restarts, and the application never reaches Healthy.
+  - The operator-managed Ingress defaults to routing traffic to Keycloak over HTTPS. The demo keeps the public endpoints on
+    plain HTTP for simplicity, so the manifest overrides the controller annotation to use an HTTP backend and disables the
+    automatic SSL redirect. Without this change ingress-nginx attempts an HTTPS handshake with Keycloak, never receives a
+    response, and the published `kc.<IP>.nip.io` URL times out even though the pods are healthy.
 
 - **midPoint config**: `k8s/apps/midpoint/deployment.yaml` + `k8s/apps/midpoint/config.xml`
   - The deployment constrains the JVM heap (`MP_MEM_INIT=768M`, `MP_MEM_MAX=1536M`) to keep resource usage predictable.
