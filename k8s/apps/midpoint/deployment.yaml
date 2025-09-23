@@ -34,6 +34,96 @@ spec:
           volumeMounts:
             - name: midpoint-home
               mountPath: /midpoint-home
+        - name: midpoint-db-wait
+          image: ghcr.io/cloudnative-pg/postgresql:16.4
+          command:
+            - /bin/bash
+            - -ec
+            - |
+              set -euo pipefail
+
+              parse_positive_int() {
+                local value="$1"
+                local fallback="$2"
+
+                if [[ "${value}" =~ ^[0-9]+$ ]] && [ "${value}" -ge 1 ]; then
+                  printf '%s' "${value}"
+                else
+                  printf '%s' "${fallback}"
+                fi
+              }
+
+              host="${MIDPOINT_DB_HOST:-iam-db-rw.iam.svc.cluster.local}"
+              port="${MIDPOINT_DB_PORT:-5432}"
+              database="${MIDPOINT_DB_NAME:-midpoint}"
+              username_file="${MIDPOINT_DB_USERNAME_FILE:-/var/run/secrets/midpoint-db-app/username}"
+              password_file="${MIDPOINT_DB_PASSWORD_FILE:-/var/run/secrets/midpoint-db-app/password}"
+
+              max_attempts="$(parse_positive_int "${MIDPOINT_DB_WAIT_MAX_ATTEMPTS:-60}" 60)"
+              sleep_seconds="$(parse_positive_int "${MIDPOINT_DB_WAIT_SLEEP_SECONDS:-5}" 5)"
+
+              if [ ! -r "${username_file}" ]; then
+                echo "ERROR: repository username file ${username_file} is not readable" >&2
+                exit 1
+              fi
+
+              if [ ! -r "${password_file}" ]; then
+                echo "ERROR: repository password file ${password_file} is not readable" >&2
+                exit 1
+              fi
+
+              username="$(tr -d '\r\n' <"${username_file}")"
+              password="$(tr -d '\r\n' <"${password_file}")"
+
+              if [ -z "${username}" ]; then
+                echo "ERROR: repository username from ${username_file} is empty" >&2
+                exit 1
+              fi
+
+              if [ -z "${password}" ]; then
+                echo "ERROR: repository password from ${password_file} is empty" >&2
+                exit 1
+              fi
+
+              attempt=1
+              last_status=1
+              last_output=""
+
+              while [ "${attempt}" -le "${max_attempts}" ]; do
+                if output="$(PGPASSWORD="${password}" pg_isready -h "${host}" -p "${port}" -d "${database}" -U "${username}" 2>&1)"; then
+                  echo "PostgreSQL ${host}:${port}/${database} is ready (attempt ${attempt}/${max_attempts})"
+                  exit 0
+                fi
+
+                last_status=$?
+                last_output="${output}"
+
+                if [ "${attempt}" -lt "${max_attempts}" ]; then
+                  echo "PostgreSQL not ready (attempt ${attempt}/${max_attempts}); sleeping ${sleep_seconds}s"
+                  sleep "${sleep_seconds}"
+                fi
+
+                attempt=$((attempt + 1))
+              done
+
+              echo "ERROR: timed out waiting for PostgreSQL at ${host}:${port}/${database} (last exit ${last_status})" >&2
+              if [ -n "${last_output}" ]; then
+                echo "Last pg_isready output:" >&2
+                printf '%s\n' "${last_output}" >&2
+              fi
+              exit "${last_status}"
+          envFrom:
+            - configMapRef:
+                name: midpoint-env
+          env:
+            - name: MIDPOINT_DB_USERNAME_FILE
+              value: /var/run/secrets/midpoint-db-app/username
+            - name: MIDPOINT_DB_PASSWORD_FILE
+              value: /var/run/secrets/midpoint-db-app/password
+          volumeMounts:
+            - name: midpoint-db-credentials
+              mountPath: /var/run/secrets/midpoint-db-app
+              readOnly: true
         - name: midpoint-db-init
           image: evolveum/midpoint:4.9
           workingDir: /opt/midpoint
@@ -124,8 +214,8 @@ spec:
               db_username="$(read_secret_file "${db_username_file}" 'repository username')"
               db_password="$(read_secret_file "${db_password_file}" 'repository password')"
 
-              ninja_max_attempts="$(parse_positive_int "${MP_NINJA_MAX_ATTEMPTS:-5}" 5)"
-              ninja_retry_delay_seconds="$(parse_positive_int "${MP_NINJA_RETRY_DELAY_SECONDS:-5}" 5)"
+              ninja_max_attempts="$(parse_positive_int "${MP_NINJA_MAX_ATTEMPTS:-30}" 30)"
+              ninja_retry_delay_seconds="$(parse_positive_int "${MP_NINJA_RETRY_DELAY_SECONDS:-10}" 10)"
 
               run_ninja_command() {
                 local log_file="$1"
@@ -177,7 +267,7 @@ spec:
                 local max_attempts
                 local retry_delay
 
-                max_attempts="$(parse_positive_int "${MIDPOINT_INIT_MAX_ATTEMPTS:-3}" 3)"
+                max_attempts="$(parse_positive_int "${MIDPOINT_INIT_MAX_ATTEMPTS:-12}" 12)"
                 retry_delay="$(parse_positive_int "${MIDPOINT_INIT_RETRY_DELAY_SECONDS:-10}" 10)"
 
                 local attempt=1

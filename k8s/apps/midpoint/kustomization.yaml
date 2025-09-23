@@ -26,6 +26,11 @@ configMapGenerator:
       - MP_UNSET_midpoint_repository_jdbcPassword=1
       - MP_UNSET_midpoint_repository_username=1
       - MP_UNSET_midpoint_repository_password=1
+      - MIDPOINT_DB_HOST=iam-db-rw.iam.svc.cluster.local
+      - MIDPOINT_DB_PORT=5432
+      - MIDPOINT_DB_NAME=midpoint
+      - MIDPOINT_DB_WAIT_MAX_ATTEMPTS=60
+      - MIDPOINT_DB_WAIT_SLEEP_SECONDS=5
     options:
       disableNameSuffixHash: true
   - name: midpoint-objects

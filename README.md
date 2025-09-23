@@ -195,11 +195,19 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     The deployment now clears the container image's default `MP_SET_midpoint_repository_*` environment variables (including
     the JDBC URL and credentials) so the rendered `config.xml` remains authoritative for repository settings instead of
     reverting to the bundled H2 defaults or the sample `midpoint/midpoint` password.
+  - A dedicated `midpoint-db-wait` init container (based on the CloudNativePG PostgreSQL utility image) blocks the pod until
+    `pg_isready` reports that the `iam-db-rw` service accepts authenticated connections to the `midpoint` database. The
+    default retry window (60 attempts with a 5 second pause) covers the cold-start time of new clusters; tune the behaviour
+    through the `MIDPOINT_DB_WAIT_MAX_ATTEMPTS` and `MIDPOINT_DB_WAIT_SLEEP_SECONDS` keys inside the `midpoint-env` ConfigMap
+    if your environment needs a longer grace period.
   - The `midpoint-db-init` container renders `config.xml` from a template using the database credentials mounted as files.
     This keeps the GitOps manifests credential-free while ensuring the running pod always picks up the latest JDBC settings.
     Update both the manifest (for the JDBC URL or secret paths) and the GitHub secrets when changing the database hostname,
     username or password. The helper now also escapes XML entities so passwords containing characters such as `&` or `<`
-    no longer corrupt the rendered configuration.
+    no longer corrupt the rendered configuration. The retry logic for `midpoint.sh init-native` and the `ninja` schema
+    commands was expanded to tolerate longer failovers (12 init retries with a 10 second pause plus 30 `ninja` attempts with
+    a 10 second backoff by default); adjust the windows via the existing `MIDPOINT_INIT_*` and `MP_NINJA_*` environment
+    variables if you need different thresholds.
   - An init container now runs `midpoint.sh init-native` and then drives `ninja.sh run-sql` to create **and upgrade** the
     PostgreSQL schema before the main pod starts. The workflow is idempotent, so it safely bootstraps fresh clusters and also
     applies in-place upgrades when you bump the midPoint image version. The helper retries `midpoint.sh` and every `ninja`
