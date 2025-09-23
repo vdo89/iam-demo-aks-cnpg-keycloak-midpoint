@@ -1419,7 +1419,7 @@ jobs:
 
           timeout_seconds=1200
           echo "Waiting for Argo CD application 'apps' to reach Synced/Healthy (timeout ${timeout_seconds}s)"
-          if ! argocd app wait apps --core --sync --health --timeout "${timeout_seconds}"; then
+          if ! argocd --core app wait apps --sync --health --timeout "${timeout_seconds}"; then
             echo "Argo CD application 'apps' failed to reach Synced/Healthy within ${timeout_seconds}s; dumping diagnostics."
             kubectl -n argocd get application apps -o yaml || true
             kubectl -n argocd get applications || true
