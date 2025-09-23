@@ -90,6 +90,9 @@ update_gitops_manifests() {
     exit 1
   fi
 
+  write_ingress_params "${PARAMS_ENV_FILE}" "${INGRESS_CLASS_NAME}" "${KC_HOST}" "${MP_HOST}"
+}
+
 resolve_ingress_ip() {
   local attempt max_attempts sleep_seconds
   local ip=""
