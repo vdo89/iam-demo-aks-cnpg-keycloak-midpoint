@@ -1574,6 +1574,9 @@ jobs:
           if [ "${ready_confirmed}" -ne 1 ]; then
             echo "Timed out waiting for Keycloak service ${service_name} to expose ready endpoints" >&2
             log_service_status
+            kubectl -n "${ns}" describe svc "${service_name}" || true
+            kubectl -n "${ns}" get endpoints "${service_name}" -o yaml || true
+            kubectl -n "${ns}" get endpointslices.discovery.k8s.io -l kubernetes.io/service-name="${service_name}" -o yaml || true
             kubectl -n "${ns}" get pods -l app.kubernetes.io/instance=rws-keycloak -o wide || true
             if pods=$(kubectl -n "${ns}" get pods -l app.kubernetes.io/instance=rws-keycloak -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); then
               for pod in ${pods}; do
@@ -1586,6 +1589,104 @@ jobs:
           fi
 
           echo "Keycloak service ${service_name} is publishing ready endpoints"
+
+      - name: Wait for midPoint service endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ns="${{ inputs.NAMESPACE_IAM }}"
+          service_name="midpoint"
+
+          echo "Waiting for midPoint service ${service_name} in namespace ${ns}"
+          for attempt in $(seq 1 20); do
+            if kubectl -n "${ns}" get svc "${service_name}" >/dev/null 2>&1; then
+              echo "midPoint service ${service_name} detected"
+              break
+            fi
+            echo "midPoint service not created yet (attempt ${attempt}/20)"
+            sleep 10
+          done
+
+          if ! kubectl -n "${ns}" get svc "${service_name}" >/dev/null 2>&1; then
+            echo "Timed out waiting for midPoint service ${service_name} in namespace ${ns}" >&2
+            kubectl -n "${ns}" get svc -l app=midpoint -o wide || true
+            kubectl -n "${ns}" get pods -l app=midpoint -o wide || true
+            kubectl -n "${ns}" get events --sort-by=.metadata.creationTimestamp | tail -n 50 || true
+            exit 1
+          fi
+
+          ready_from_endpoints=""
+          ready_from_slices=""
+          not_ready_from_endpoints=""
+          not_ready_from_slices=""
+
+          collect_service_status() {
+            ready_from_endpoints=""
+            ready_from_slices=""
+            not_ready_from_endpoints=""
+            not_ready_from_slices=""
+
+            if endpoints_json=$(kubectl -n "${ns}" get endpoints "${service_name}" -o json 2>/dev/null); then
+              ready_from_endpoints=$(jq -r '[.subsets[]? | .addresses[]? | .ip] | join(" ")' <<<"${endpoints_json}" 2>/dev/null || true)
+              not_ready_from_endpoints=$(jq -r '[.subsets[]? | .notReadyAddresses[]? | .ip] | join(" ")' <<<"${endpoints_json}" 2>/dev/null || true)
+            fi
+
+            if endpointslices_json=$(kubectl -n "${ns}" get endpointslices.discovery.k8s.io -l kubernetes.io/service-name="${service_name}" -o json 2>/dev/null); then
+              ready_from_slices=$(jq -r '[.items[]? | .endpoints[]? | select(.conditions.ready == true) | .addresses[]?] | join(" ")' <<<"${endpointslices_json}" 2>/dev/null || true)
+              not_ready_from_slices=$(jq -r '[.items[]? | .endpoints[]? | select(.conditions.ready != true) | .addresses[]?] | join(" ")' <<<"${endpointslices_json}" 2>/dev/null || true)
+            fi
+          }
+
+          log_service_status() {
+            echo "midPoint service ready IPs (Endpoints): ${ready_from_endpoints:-<none>}"
+            echo "midPoint service notReady IPs (Endpoints): ${not_ready_from_endpoints:-<none>}"
+            echo "midPoint service ready IPs (EndpointSlices): ${ready_from_slices:-<none>}"
+            echo "midPoint service notReady IPs (EndpointSlices): ${not_ready_from_slices:-<none>}"
+          }
+
+          consecutive_ready=0
+          ready_confirmed=0
+
+          for attempt in $(seq 1 45); do
+            collect_service_status
+            log_service_status
+
+            if [ -n "${ready_from_endpoints}" ] || [ -n "${ready_from_slices}" ]; then
+              consecutive_ready=$((consecutive_ready + 1))
+              echo "Ready endpoints observed for midPoint service (confirmation ${consecutive_ready}/3)"
+              if [ "${consecutive_ready}" -ge 3 ]; then
+                ready_confirmed=1
+                echo "midPoint service ${service_name} endpoints appear stable"
+                break
+              fi
+              sleep 5
+              continue
+            fi
+
+            echo "midPoint service ${service_name} endpoints not ready yet (attempt ${attempt}/45)"
+            consecutive_ready=0
+            sleep 10
+          done
+
+          if [ "${ready_confirmed}" -ne 1 ]; then
+            echo "Timed out waiting for midPoint service ${service_name} to expose ready endpoints" >&2
+            log_service_status
+            kubectl -n "${ns}" describe svc "${service_name}" || true
+            kubectl -n "${ns}" get endpoints "${service_name}" -o yaml || true
+            kubectl -n "${ns}" get endpointslices.discovery.k8s.io -l kubernetes.io/service-name="${service_name}" -o yaml || true
+            kubectl -n "${ns}" get pods -l app=midpoint -o wide || true
+            if pods=$(kubectl -n "${ns}" get pods -l app=midpoint -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); then
+              for pod in ${pods}; do
+                echo "---- Logs from midPoint pod ${pod} ----"
+                kubectl -n "${ns}" logs "${pod}" --tail=40 || true
+              done
+            fi
+            kubectl -n "${ns}" describe deployment midpoint || true
+            exit 1
+          fi
+
+          echo "midPoint service ${service_name} is publishing ready endpoints"
 
       - name: Show ingress endpoints (if available)
         shell: bash
