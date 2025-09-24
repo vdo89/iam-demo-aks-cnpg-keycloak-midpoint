@@ -64,6 +64,10 @@ spec:
     # IP changes, so keep hostname checks disabled via the typed spec field
     # instead of the deprecated CLI toggle.
     strict: false
+    # Relax backchannel hostname verification with the strongly typed knob so
+    # we do not have to fall back to the legacy `--hostname-strict` CLI flag
+    # that Keycloak 26 rejects.
+    strictBackchannel: false
   ingress:
     enabled: true
     # Ingress class is overridden at build time by kustomize replacements using
