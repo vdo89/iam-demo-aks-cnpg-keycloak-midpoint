@@ -22,6 +22,10 @@ spec:
   superuserSecret:
     name: cnpg-superuser
 
+  # CloudNativePG manages TLS certificates for the cluster. Keep the defaults so
+  # the admission webhook continues to accept the manifest (the `ssl` parameter
+  # is immutable) and the applications can rely on their `sslmode=require`
+  # connection strings.
   storage:
     size: 20Gi
 
