@@ -43,6 +43,10 @@ spec:
     host: iam-db-rw.iam.svc.cluster.local
     port: 5432
     database: keycloak
+    # Keycloak defaults to the "public" schema when connecting to PostgreSQL.
+    # Declare it explicitly so future operator releases do not infer a schema
+    # switch that would force us back to the deprecated `--db-url` CLI flag.
+    schema: public
     usernameSecret:
       name: keycloak-db-app
       key: username
