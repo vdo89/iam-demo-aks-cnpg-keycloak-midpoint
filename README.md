@@ -165,6 +165,10 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     Setting `spec.features.disabled` to `health` still makes the operator render the removed toggle, so the disabled list stays
     empty. If you upgrade the image again and the health endpoints disappear, review the upstream release notes for the
     replacement configuration knob before adjusting the feature list.
+  - Keep the **first-class configuration** inside the strongly typed sections of the CR instead of `spec.additionalOptions`.
+    Run `scripts/check_keycloak_first_class_fields.py` after editing the manifest; it fails fast when someone reintroduces the
+    deprecated `--db-url`, `--hostname-strict` or `--features` flags or revives `spec.db.url`, which caused the CrashLoopBackOff
+    observed in the bootstrap logs.
 
   - The manifest pins Keycloak to **26.3.4** to stay aligned with the operator resources the workflow installs.
     Keycloak 26.0.0 fails to start once build-time options such as `kc.db` or `kc.health-enabled` diverge from the
