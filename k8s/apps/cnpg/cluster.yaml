@@ -16,7 +16,6 @@ spec:
       encoding: UTF8
       localeCollate: C
       localeCType: C
-      postInitSQLRefs: []
       secret:
         name: keycloak-db-app
 
