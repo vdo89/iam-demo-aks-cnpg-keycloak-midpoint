@@ -140,10 +140,11 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
   `location`, `prefix`, `create_resource_group`, `resource_group_name`, `aks_default_node_vm_size`, `aks_default_node_count`, `aks_default_node_max_surge`, `aks_sku_tier` as needed.
 - **Helm/Argo versions**: see `k8s/addons/*/application.yaml`
 - **DB sizing**: `k8s/apps/cnpg/cluster.yaml`
-  - The demo cluster disables PostgreSQL TLS (`ssl=off`) so Keycloak can rely on
-    the CR's strongly typed database fields without reintroducing the deprecated
-    `--db-url` flag. If you secure the database with TLS, drop the override and
-    update the application manifests to mount the appropriate CA bundle.
+  - CloudNativePG keeps TLS enabled by default and both Keycloak and midPoint
+    negotiate encrypted connections through their strongly typed database
+    settings. If you rotate the server certificates or switch to a private CA,
+    distribute the updated trust bundle to the applications before tightening
+    the JDBC `sslmode` so the deployments remain convergent.
 - **CNPG backup destination**: `k8s/apps/cnpg/params.env` – set `storageAccount` to the Terraform
   `storage_account_name` so Argo CD renders the correct backup URL. Keep it aligned with the
   `STORAGE_ACCOUNT` input when you trigger the bootstrap workflow.
