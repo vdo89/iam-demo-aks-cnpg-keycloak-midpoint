@@ -23,6 +23,14 @@ spec:
   superuserSecret:
     name: cnpg-superuser
 
+  postgresql:
+    parameters:
+      # Keycloak and midPoint both request plaintext connections via their
+      # strongly typed database settings. Disable server-side TLS so the
+      # generated JDBC URLs connect successfully without mounting a custom CA
+      # bundle into each workload.
+      ssl: "off"
+
   storage:
     size: 20Gi
 
