@@ -10,10 +10,6 @@ configMapGenerator:
     namespace: iam
     envs:
       - params.env
-  - name: cnpg-managed-databases
-    namespace: iam
-    files:
-      - sql/midpoint.sql
 generatorOptions:
   disableNameSuffixHash: true
 vars:
