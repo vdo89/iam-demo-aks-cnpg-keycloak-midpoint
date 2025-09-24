@@ -86,24 +86,15 @@ spec:
     limits:
       cpu: "1"
       memory: "2Gi"
-  # The operator defaults the startup probe to the management port (9000), but
-  # this demo only exposes the HTTP listener during bootstrap. Point the probe
-  # at the HTTP health endpoint and give Keycloak enough time to finish the
-  # first-run augmentation step before Kubernetes restarts the pod. The
-  # v2alpha1 CRD now exposes the strongly typed `spec.startupProbe`, but it only
-  # allows tuning thresholds and still targets the management port. Use the
-  # `unsupported.podTemplate` escape hatch so we can continue to override the
-  # full probe configuration.
-  unsupported:
-    podTemplate:
-      spec:
-        containers:
-          - name: keycloak
-            startupProbe:
-              httpGet:
-                path: /health/started
-                port: 8080
-                scheme: HTTP
-              initialDelaySeconds: 30
-              periodSeconds: 5
-              failureThreshold: 12
+  # The v2alpha1 CRD now provides a typed `spec.startupProbe`. The controller
+  # rejects unknown fields when reconciling through Server-Side Apply, so keep
+  # the probe configuration inside the supported schema rather than the
+  # `unsupported.podTemplate` escape hatch. The operator still defaults to the
+  # management port, but enabling the Quarkus health endpoints above keeps the
+  # `/health/ready` handler available during bootstrap. Relax the thresholds so
+  # Keycloak can finish the initial augmentation without the pod cycling.
+  startupProbe:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 5
+    failureThreshold: 12
