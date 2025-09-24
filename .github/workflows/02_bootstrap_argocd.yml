@@ -636,6 +636,17 @@ jobs:
           container="cnpg-backups"
           prefix="iam-db"
 
+          prefix_raw="${prefix}"
+          prefix="${prefix_raw%/}"
+          if [ -z "${prefix}" ]; then
+            echo "Azure backup prefix must not be empty"
+            exit 1
+          fi
+          if [ "${prefix}" != "${prefix_raw}" ]; then
+            echo "Normalized Azure backup prefix from '${prefix_raw}' to '${prefix}'"
+          fi
+          prefix_with_slash="${prefix}/"
+
           AZURE_STORAGE_ACCOUNT_RAW="${AZURE_STORAGE_ACCOUNT:-}"
           AZURE_STORAGE_ACCOUNT="$(python3 -c "import os; print(os.environ.get('AZURE_STORAGE_ACCOUNT', '').strip())")"
           AZURE_STORAGE_ACCOUNT_INPUT="${AZURE_STORAGE_ACCOUNT}"
@@ -961,18 +972,25 @@ jobs:
           fi
 
           echo "Checking for leftover WAL/archive objects under ${container}/${prefix}"
-          existing_count="$(run_az_storage_command capture "listing blobs under ${prefix}" blob list --container-name "${container}" --prefix "${prefix}" --query "[?name=='${prefix}' || starts_with(name, '${prefix}/')]|length(@)" -o tsv)"
-          existing_count="$(printf '%s' "${existing_count}" | tr -d '\r\n')"
-          if [ -z "${existing_count}" ]; then
-            existing_count=0
+          existing_children="$(run_az_storage_command capture "listing blobs under ${prefix_with_slash}" blob list --container-name "${container}" --prefix "${prefix_with_slash}" --query "length(@)" -o tsv)"
+          existing_children="$(printf '%s' "${existing_children}" | tr -d '\r\n')"
+          if [ -z "${existing_children}" ]; then
+            existing_children=0
           fi
 
-          if [ "${existing_count}" -eq 0 ]; then
+          marker_pre_exists="$(run_az_storage_command capture "checking for directory marker ${prefix}" blob exists --container-name "${container}" --name "${prefix}" --query exists -o tsv)"
+          marker_pre_exists="$(printf '%s' "${marker_pre_exists}" | tr -d '\r\n' | tr '[:upper:]' '[:lower:]')"
+          existing_total="${existing_children}"
+          if [ "${marker_pre_exists}" = "true" ]; then
+            existing_total=$((existing_total + 1))
+          fi
+
+          if [ "${existing_total}" -eq 0 ]; then
             echo "Azure backup prefix ${prefix}/ is already empty"
             exit 0
           fi
 
-          echo "Deleting ${existing_count} Azure Blob object(s) under ${prefix}/ before bootstrapping CNPG"
+          echo "Deleting ${existing_total} Azure Blob object(s) under ${prefix}/ before bootstrapping CNPG"
 
           delete_batch_flags=()
           if az storage blob delete-batch --help 2>&1 | grep -Fq -- '--no-progress'; then
@@ -1034,7 +1052,7 @@ jobs:
           delete_blobs_manually() {
             echo "Falling back to deleting blobs under ${prefix}/ individually via az storage blob delete"
             local names_output
-            names_output="$(run_az_storage_command capture "listing blob names under ${prefix} for manual deletion" blob list --container-name "${container}" --prefix "${prefix}" --query "[?name=='${prefix}' || starts_with(name, '${prefix}/')].name" -o tsv)"
+            names_output="$(run_az_storage_command capture "listing blob names under ${prefix_with_slash} for manual deletion" blob list --container-name "${container}" --prefix "${prefix_with_slash}" --query "[].name" -o tsv)"
             if [ -z "${names_output}" ]; then
               echo "No blob names returned for manual deletion; nothing to delete."
               return 0
@@ -1074,14 +1092,21 @@ jobs:
           fi
 
           echo "Verifying Azure backup prefix ${prefix} is now empty"
-          remaining_count="$(run_az_storage_command capture "verifying blob cleanup" blob list --container-name "${container}" --prefix "${prefix}" --query "[?name=='${prefix}' || starts_with(name, '${prefix}/')]|length(@)" -o tsv)"
-          remaining_count="$(printf '%s' "${remaining_count}" | tr -d '\r\n')"
-          if [ -z "${remaining_count}" ]; then
-            remaining_count=0
+          remaining_children="$(run_az_storage_command capture "verifying blob cleanup under ${prefix_with_slash}" blob list --container-name "${container}" --prefix "${prefix_with_slash}" --query "length(@)" -o tsv)"
+          remaining_children="$(printf '%s' "${remaining_children}" | tr -d '\r\n')"
+          if [ -z "${remaining_children}" ]; then
+            remaining_children=0
           fi
 
-          if [ "${remaining_count}" -ne 0 ]; then
-            echo "Failed to purge Azure backup prefix ${prefix}/ (still ${remaining_count} object(s) present)"
+          final_marker_exists="$(run_az_storage_command capture "re-checking for directory marker ${prefix}" blob exists --container-name "${container}" --name "${prefix}" --query exists -o tsv)"
+          final_marker_exists="$(printf '%s' "${final_marker_exists}" | tr -d '\r\n' | tr '[:upper:]' '[:lower:]')"
+          remaining_total="${remaining_children}"
+          if [ "${final_marker_exists}" = "true" ]; then
+            remaining_total=$((remaining_total + 1))
+          fi
+
+          if [ "${remaining_total}" -ne 0 ]; then
+            echo "Failed to purge Azure backup prefix ${prefix}/ (still ${remaining_total} object(s) present)"
             exit 1
           fi
 
