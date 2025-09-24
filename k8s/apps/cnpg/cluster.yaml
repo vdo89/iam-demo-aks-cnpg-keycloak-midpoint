@@ -8,15 +8,54 @@ spec:
   imageName: ghcr.io/cloudnative-pg/postgresql:16.4
   primaryUpdateStrategy: unsupervised
   enableSuperuserAccess: true
+  enablePDB: true
 
   superuserSecret:
     name: cnpg-superuser
 
   storage:
     size: 20Gi
+    resizeInUseVolumes: true
+
+  affinity:
+    podAntiAffinityType: preferred
 
   monitoring:
     enablePodMonitor: false
+    customQueriesConfigMap:
+      - name: cnpg-default-monitoring
+        key: queries
+
+  managed:
+    roles:
+      - name: keycloak
+        ensure: present
+        login: true
+        inherit: true
+        connectionLimit: -1
+        passwordSecret:
+          name: keycloak-db-app
+      - name: midpoint
+        ensure: present
+        login: true
+        inherit: true
+        connectionLimit: -1
+        passwordSecret:
+          name: midpoint-db-app
+
+  bootstrap:
+    initdb:
+      database: keycloak
+      owner: keycloak
+      encoding: UTF8
+      localeCType: C
+      localeCollate: C
+      secret:
+        name: keycloak-db-app
+      postInitSQLRefs:
+        configMapRefs:
+          - name: cnpg-managed-databases
+            key: midpoint.sql
 
   backup:
     retentionPolicy: "7d"
