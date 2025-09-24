@@ -139,6 +139,10 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
   `location`, `prefix`, `create_resource_group`, `resource_group_name`, `aks_default_node_vm_size`, `aks_default_node_count`, `aks_default_node_max_surge`, `aks_sku_tier` as needed.
 - **Helm/Argo versions**: see `k8s/addons/*/application.yaml`
 - **DB sizing**: `k8s/apps/cnpg/cluster.yaml`
+  - The demo cluster disables PostgreSQL TLS (`ssl=off`) so Keycloak can rely on
+    the CR's strongly typed database fields without reintroducing the deprecated
+    `--db-url` flag. If you secure the database with TLS, drop the override and
+    update the application manifests to mount the appropriate CA bundle.
 - **CNPG backup destination**: `k8s/apps/cnpg/params.env` – set `storageAccount` to the Terraform
   `storage_account_name` so Argo CD renders the correct backup URL. Keep it aligned with the
   `STORAGE_ACCOUNT` input when you trigger the bootstrap workflow.
@@ -173,10 +177,11 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
   - The Keycloak hostname section disables strict checks through `spec.hostname.strict=false` so the demo ingress can terminate
     HTTP without Keycloak rejecting the host/scheme. The nip.io address changes every time the AKS load balancer IP changes,
     so keeping the typed field relaxed avoids having to rely on the deprecated CLI toggles.
-  - The PostgreSQL connection now uses an explicit JDBC URL with `sslmode=disable` so Keycloak skips TLS validation against
-    CloudNativePG's self-signed server certificate. The value lives in the CRD's database section via `spec.db.url` to guarantee
-    the exact JDBC string (including the query parameters) always reaches the container. Without this override the startup
-    probe repeatedly fails with `connection refused`, the pod restarts, and the application never reaches Healthy.
+  - The PostgreSQL connection now relies on the typed database fields (`spec.db.host`, `spec.db.port`, `spec.db.database`)
+    so the operator never renders the legacy `--db-url` CLI flag that Keycloak 26 rejects at startup. CloudNativePG's cluster
+    manifest disables server-side TLS for the demo, letting the generated JDBC URL work without extra flags. If you tighten
+    the database's TLS policy, distribute the CA bundle and adjust the Keycloak database block accordingly so the runtime
+    configuration continues to match the new security posture.
   - The operator-managed Ingress defaults to routing traffic to Keycloak over HTTPS. The demo keeps the public endpoints on
     plain HTTP for simplicity, so the manifest overrides the controller annotation to use an HTTP backend and disables the
     automatic SSL redirect. Without this change ingress-nginx attempts an HTTPS handshake with Keycloak, never receives a
