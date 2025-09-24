@@ -94,7 +94,6 @@ spec:
   # `/health/ready` handler available during bootstrap. Relax the thresholds so
   # Keycloak can finish the initial augmentation without the pod cycling.
   startupProbe:
-    enabled: true
     initialDelaySeconds: 30
     periodSeconds: 5
     failureThreshold: 12
