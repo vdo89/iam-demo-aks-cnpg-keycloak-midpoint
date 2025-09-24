@@ -21,7 +21,7 @@ spec:
             chart: cloudnative-pg
             targetRevision: 0.24.0
             releaseName: cnpg
-            values: '{}'
+            values: '{"crds":{"create":true}}'
           - name: ingress-nginx
             namespace: ingress-nginx
             repoURL: https://kubernetes.github.io/ingress-nginx
@@ -89,6 +89,9 @@ spec:
           - ServerSideApply=true
     {{- else if eq .name "cnpg-operator" }}
     spec:
+      source:
+        helm:
+          skipCrds: false
       syncPolicy:
         syncOptions:
           - CreateNamespace=true
