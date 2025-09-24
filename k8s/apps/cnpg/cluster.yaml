@@ -42,8 +42,6 @@ spec:
       wal:
         compression: gzip
         maxParallel: 4
-        archiveCheck:
-          enabled: false
       data:
         compression: gzip
         jobs: 2
