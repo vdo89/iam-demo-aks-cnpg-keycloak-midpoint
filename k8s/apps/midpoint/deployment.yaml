@@ -478,7 +478,7 @@ spec:
                 name: midpoint-env
           env:
             - name: MIDPOINT_JDBC_URL
-              value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/midpoint?sslmode=disable
+              value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/midpoint?sslmode=require
             - name: MIDPOINT_DB_USERNAME_FILE
               value: /var/run/secrets/midpoint-db-app/username
             - name: MIDPOINT_DB_PASSWORD_FILE

@@ -183,10 +183,11 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     HTTP without Keycloak rejecting the host/scheme. The nip.io address changes every time the AKS load balancer IP changes,
     so keeping the typed field relaxed avoids having to rely on the deprecated CLI toggles.
   - The PostgreSQL connection now relies on the typed database fields (`spec.db.host`, `spec.db.port`, `spec.db.database`)
-    so the operator never renders the legacy `--db-url` CLI flag that Keycloak 26 rejects at startup. CloudNativePG's cluster
-    manifest disables server-side TLS for the demo, letting the generated JDBC URL work without extra flags. If you tighten
-    the database's TLS policy, distribute the CA bundle and adjust the Keycloak database block accordingly so the runtime
-    configuration continues to match the new security posture. If you see Argo CD report `warning: You need to specify these
+    so the operator never renders the legacy `--db-url` CLI flag that Keycloak 26 rejects at startup. CloudNativePG ships
+    with TLS enabled by default and Keycloak negotiates it automatically, so no JDBC URL overrides are required. If you
+    harden the database certificates (for example by switching to a private CA), distribute the new trust bundle and adjust
+    the Keycloak database block accordingly so the runtime configuration continues to match the security posture. If you see
+    Argo CD report `warning: You need to specify these
     fields as the first-class citizen of the CR: features,hostname-strict,db-url`, double-check that no overrides reintroduced
     those CLI switches—Keycloak will crash-loop with that configuration.
   - The operator-managed Ingress defaults to routing traffic to Keycloak over HTTPS. The demo keeps the public endpoints on
@@ -199,10 +200,10 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     Adjust these values together with the container `resources` block if you customize the AKS node sizing beyond the defaults.
   - `config.xml` uses the **native PostgreSQL repository** (Sqale) recommended for midPoint 4.9 and later, which
     matches the CloudNativePG PostgreSQL 16 cluster created by the automation.
-    The JDBC URL explicitly sets `sslmode=disable` because CloudNativePG issues self-signed server certificates by default and
-    the demo deployment does not distribute a CA bundle to midPoint. Without the flag the driver may abort during the TLS
-    handshake and the pod will restart in a crash loop. Disable the flag only after you install a trusted server certificate
-    and update the midPoint keystore accordingly.
+    The JDBC URL explicitly sets `sslmode=require` so the driver negotiates TLS without validating the server certificate.
+    This matches CloudNativePG's default posture (self-signed certificates with in-cluster trust) while keeping the connection
+    encrypted. Switch to `sslmode=verify-full` once you install a trusted server certificate and distribute the CA bundle to
+    midPoint.
     The deployment now clears the container image's default `MP_SET_midpoint_repository_*` environment variables (including
     the JDBC URL and credentials) so the rendered `config.xml` remains authoritative for repository settings instead of
     reverting to the bundled H2 defaults or the sample `midpoint/midpoint` password.
