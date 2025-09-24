@@ -9,6 +9,17 @@ spec:
   primaryUpdateStrategy: unsupervised
   enableSuperuserAccess: true
 
+  bootstrap:
+    initdb:
+      database: keycloak
+      owner: keycloak
+      encoding: UTF8
+      localeCollate: C
+      localeCType: C
+      postInitSQLRefs: []
+      secret:
+        name: keycloak-db-app
+
   superuserSecret:
     name: cnpg-superuser
 
@@ -35,3 +46,20 @@ spec:
       data:
         compression: gzip
         jobs: 2
+
+  managed:
+    roles:
+      - name: keycloak
+        ensure: present
+        login: true
+        inherit: true
+        connectionLimit: -1
+        passwordSecret:
+          name: keycloak-db-app
+      - name: midpoint
+        ensure: present
+        login: true
+        inherit: true
+        connectionLimit: -1
+        passwordSecret:
+          name: midpoint-db-app
