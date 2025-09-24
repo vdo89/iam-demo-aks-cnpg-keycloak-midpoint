@@ -74,8 +74,8 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
      `k8s/apps/cnpg/params.env` with the Terraform `storage_account_name` before running this
      workflow so the rendered destination path matches the Azure Storage account that holds the
      backups.
-  - Run an idempotent CloudNativePG **bootstrap Job** that waits for the cluster to accept connections, creates the `keycloak`
-    and `midpoint` roles/databases from the Git-managed secrets, and enables the required extensions (`pgcrypto`, `pg_trgm`).
+  - Converge a CloudNativePG **Database** resource alongside the managed roles so the Git-managed `midpoint` database and its
+    required `pgcrypto`/`pg_trgm` extensions stay declarative.
    - Install **Keycloak Operator** then create a **Keycloak** CR bound to CNPG
      - The workflow now reconfigures the operator deployment to watch the `iam` application namespace (in addition to its home namespace) so it publishes the generated services, such as `rws-keycloak-service`, where Argo CD manages the workloads.
    - Deploy **midPoint** bound to CNPG

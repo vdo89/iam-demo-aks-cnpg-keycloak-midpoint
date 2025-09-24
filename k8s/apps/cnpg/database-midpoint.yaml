@@ -1,0 +1,18 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: midpoint
+  namespace: iam
+spec:
+  cluster:
+    name: iam-db
+  name: midpoint
+  owner: midpoint
+  schemas:
+    - name: public
+      owner: midpoint
+  extensions:
+    - name: pgcrypto
+      schema: public
+    - name: pg_trgm
+      schema: public
