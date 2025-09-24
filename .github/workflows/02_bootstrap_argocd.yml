@@ -587,6 +587,42 @@ jobs:
             "${secret_args[@]}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
+      - name: Verify cnpg-azure-backup secret contains required keys
+        shell: bash
+        env:
+          NAMESPACE_IAM: ${{ inputs.NAMESPACE_IAM }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${NAMESPACE_IAM:-}" ]; then
+            echo "NAMESPACE_IAM input must not be empty"
+            exit 1
+          fi
+
+          if ! kubectl -n "${NAMESPACE_IAM}" get secret cnpg-azure-backup >/dev/null 2>&1; then
+            echo "Secret cnpg-azure-backup was not created in namespace ${NAMESPACE_IAM}."
+            exit 1
+          fi
+
+          get_secret_field() {
+            local field="$1"
+            local value
+            value=$(kubectl -n "${NAMESPACE_IAM}" get secret cnpg-azure-backup -o jsonpath="{.data.${field}}" || true)
+            if [ -z "${value}" ]; then
+              echo "Secret cnpg-azure-backup is missing required key ${field}."
+              exit 1
+            fi
+            if [ -z "$(printf '%s' "${value}" | base64 --decode | tr -d '\n')" ]; then
+              echo "Secret cnpg-azure-backup key ${field} is empty after base64 decoding."
+              exit 1
+            fi
+          }
+
+          get_secret_field "AZURE_CONNECTION_STRING"
+          get_secret_field "AZURE_STORAGE_ACCOUNT"
+
+          echo "cnpg-azure-backup secret contains AZURE_CONNECTION_STRING and AZURE_STORAGE_ACCOUNT keys."
+
       - name: Purge existing CNPG Azure backup prefix
         shell: bash
         env:
