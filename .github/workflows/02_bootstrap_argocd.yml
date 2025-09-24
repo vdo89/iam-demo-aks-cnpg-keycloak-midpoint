@@ -961,7 +961,7 @@ jobs:
           fi
 
           echo "Checking for leftover WAL/archive objects under ${container}/${prefix}"
-          existing_count="$(run_az_storage_command capture "listing blobs under ${prefix}/" blob list --container-name "${container}" --prefix "${prefix}/" --query 'length(@)' -o tsv)"
+          existing_count="$(run_az_storage_command capture "listing blobs under ${prefix}" blob list --container-name "${container}" --prefix "${prefix}" --query "[?name=='${prefix}' || starts_with(name, '${prefix}/')]|length(@)" -o tsv)"
           existing_count="$(printf '%s' "${existing_count}" | tr -d '\r\n')"
           if [ -z "${existing_count}" ]; then
             existing_count=0
@@ -1034,7 +1034,7 @@ jobs:
           delete_blobs_manually() {
             echo "Falling back to deleting blobs under ${prefix}/ individually via az storage blob delete"
             local names_output
-            names_output="$(run_az_storage_command capture "listing blob names under ${prefix}/ for manual deletion" blob list --container-name "${container}" --prefix "${prefix}/" --query '[].name' -o tsv)"
+            names_output="$(run_az_storage_command capture "listing blob names under ${prefix} for manual deletion" blob list --container-name "${container}" --prefix "${prefix}" --query "[?name=='${prefix}' || starts_with(name, '${prefix}/')].name" -o tsv)"
             if [ -z "${names_output}" ]; then
               echo "No blob names returned for manual deletion; nothing to delete."
               return 0
@@ -1066,8 +1066,15 @@ jobs:
             fi
           fi
 
-          echo "Verifying Azure backup prefix ${prefix}/ is now empty"
-          remaining_count="$(run_az_storage_command capture "verifying blob cleanup" blob list --container-name "${container}" --prefix "${prefix}/" --query 'length(@)' -o tsv)"
+          echo "Removing potential directory marker blob ${prefix}"
+          prefix_marker_exists="$(run_az_storage_command capture "checking for directory marker ${prefix}" blob exists --container-name "${container}" --name "${prefix}" --query exists -o tsv)"
+          prefix_marker_exists="$(printf '%s' "${prefix_marker_exists}" | tr -d '\r\n' | tr '[:upper:]' '[:lower:]')"
+          if [ "${prefix_marker_exists}" = "true" ]; then
+            run_az_storage_command no-capture "deleting directory marker blob ${prefix}" blob delete --container-name "${container}" --name "${prefix}"
+          fi
+
+          echo "Verifying Azure backup prefix ${prefix} is now empty"
+          remaining_count="$(run_az_storage_command capture "verifying blob cleanup" blob list --container-name "${container}" --prefix "${prefix}" --query "[?name=='${prefix}' || starts_with(name, '${prefix}/')]|length(@)" -o tsv)"
           remaining_count="$(printf '%s' "${remaining_count}" | tr -d '\r\n')"
           if [ -z "${remaining_count}" ]; then
             remaining_count=0
