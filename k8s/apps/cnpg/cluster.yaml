@@ -23,6 +23,15 @@ spec:
   superuserSecret:
     name: cnpg-superuser
 
+  postgresql:
+    parameters:
+      # Keycloak uses the typed database fields in its CR to avoid the legacy
+      # `--db-url` CLI override. Disable server-side TLS so the generated JDBC
+      # URL (which no longer appends `sslmode=disable`) still connects
+      # successfully without requiring a custom CA bundle. MidPoint continues to
+      # request plain TCP connections explicitly in its configuration file.
+      ssl: "off"
+
   storage:
     size: 20Gi
 

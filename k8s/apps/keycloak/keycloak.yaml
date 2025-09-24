@@ -28,11 +28,13 @@ spec:
     enabled:
       - token-exchange
   db:
-    # Inject the explicit JDBC string (including `sslmode=disable`) via the
-    # strongly typed field so the operator no longer requires the deprecated
-    # CLI override.
+    # Drive the database configuration through the strongly typed fields so the
+    # operator does not have to fall back to the deprecated CLI flags (Keycloak
+    # 26.x now fails hard when `--db-url` is provided).
     vendor: postgres
-    url: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/keycloak?sslmode=disable
+    host: iam-db-rw.iam.svc.cluster.local
+    port: 5432
+    database: keycloak
     usernameSecret:
       name: keycloak-db-app
       key: username
