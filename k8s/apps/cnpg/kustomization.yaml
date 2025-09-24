@@ -19,4 +19,4 @@ vars:
       kind: ConfigMap
       name: cnpg-backup-settings
     fieldref:
-      fieldpath: data.storageAccount
+      fieldPath: data.storageAccount
