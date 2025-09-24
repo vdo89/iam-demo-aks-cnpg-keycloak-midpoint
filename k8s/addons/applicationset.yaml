@@ -19,7 +19,7 @@ spec:
             namespace: cnpg-system
             repoURL: https://cloudnative-pg.github.io/charts
             chart: cloudnative-pg
-            targetRevision: 0.24.0
+            targetRevision: 0.26.0
             releaseName: cnpg
             values: '{"crds":{"create":true}}'
           - name: ingress-nginx
