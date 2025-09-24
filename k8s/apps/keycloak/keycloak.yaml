@@ -35,10 +35,9 @@ spec:
   db:
     # Drive the database configuration through the strongly typed fields so the
     # operator does not have to fall back to the deprecated CLI flags (Keycloak
-    # 26.x fails hard when `--db-url` is provided). CloudNativePG accepts
-    # plaintext connections from in-cluster clients once TLS is disabled at the
-    # cluster level, so the generated JDBC URL works without additional query
-    # parameters.
+    # 26.x fails hard when `--db-url` is provided). CloudNativePG defaults to
+    # TLS and Keycloak negotiates it automatically, so the generated JDBC URL
+    # works without extra query parameters.
     vendor: postgres
     host: iam-db-rw.iam.svc.cluster.local
     port: 5432
