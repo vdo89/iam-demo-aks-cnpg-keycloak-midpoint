@@ -25,9 +25,15 @@ def parse_credential(raw: str, storage_account: str) -> AzureCredential:
     if not value:
         raise ValueError("Credential must not be empty")
 
-    if ";" in value and "=" in value:
+    looks_like_connection_string = any(sep in value for sep in (";", "\n", "\r")) or re.search(
+        r"account(name|key)|sharedaccesssignature",
+        value,
+        re.IGNORECASE,
+    )
+
+    if looks_like_connection_string and "=" in value:
         parts: dict[str, tuple[str, str]] = {}
-        for segment in value.split(";"):
+        for segment in re.split(r"[;\r\n]+", value):
             if not segment or "=" not in segment:
                 continue
             key, val = segment.split("=", 1)
@@ -69,12 +75,13 @@ def parse_credential(raw: str, storage_account: str) -> AzureCredential:
                 connection.append(f"{original_key}={val}")
 
         connection_string = ";".join(connection)
-        return AzureCredential(
-            storage_account=account or storage_account,
-            connection_string=connection_string,
-            account_key=account_key,
-            sas_token=sas,
-        )
+        if connection_string:
+            return AzureCredential(
+                storage_account=account or storage_account,
+                connection_string=connection_string,
+                account_key=account_key,
+                sas_token=sas,
+            )
 
     token = value.lstrip("?")
     token_lower = token.lower()

@@ -22,6 +22,14 @@ def test_parse_connection_string():
     assert cred.account_key == "abcd"
 
 
+def test_parse_connection_string_with_newlines():
+    raw = "AccountName=cnpgdemo\nAccountKey=abcd==\nEndpointSuffix=core.windows.net"
+    cred = parse_credential(raw, "ignored")
+    assert cred.storage_account == "cnpgdemo"
+    assert "AccountKey=abcd==" in cred.connection_string
+    assert cred.account_key == "abcd=="
+
+
 def test_parse_sas_token():
     token = "?sv=2021-10-04&ss=bf&srt=sco&sp=rl&sig=fakesignature"
     cred = parse_credential(token, "demoacct")
