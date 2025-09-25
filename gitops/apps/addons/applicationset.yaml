@@ -12,7 +12,7 @@ spec:
             namespace: cert-manager
             repoURL: https://charts.jetstack.io
             chart: cert-manager
-            targetRevision: v1.15.1
+            targetRevision: v1.18.2
             releaseName: cert-manager
             values: '{"installCRDs":true,"prometheus":{"enabled":false}}'
           - name: cnpg-operator
@@ -26,7 +26,7 @@ spec:
             namespace: ingress-nginx
             repoURL: https://kubernetes.github.io/ingress-nginx
             chart: ingress-nginx
-            targetRevision: 4.10.1
+            targetRevision: 4.13.2
             releaseName: ingress-nginx
             # Use the built-in status endpoint exposed on the default server so Azure probes
             # get HTTP 200s even before any ingress rules exist.

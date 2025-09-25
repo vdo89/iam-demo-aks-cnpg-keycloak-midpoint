@@ -16,7 +16,7 @@ require_cmd() {
 }
 
 # Default configuration (can be overridden via environment variables).
-PARAMS_ENV_FILE="${PARAMS_ENV_FILE:-k8s/apps/params.env}"
+PARAMS_ENV_FILE="${PARAMS_ENV_FILE:-gitops/apps/platform/params.env}"
 INGRESS_CLASS_NAME="${INGRESS_CLASS_NAME:-}"
 
 require_cmd kubectl
