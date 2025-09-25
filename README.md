@@ -81,7 +81,7 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
    - Deploy **midPoint** bound to CNPG
    - Create a Kubernetes **Secret** with Azure Blob credentials (from repo secrets) for CNPG backups
    - Purge any existing WAL/archive blobs in the Azure `cnpg-backups/iam-db` prefix so CloudNativePG can bootstrap cleanly on reruns
-  - The workflow now polls the `apps` Argo CD application via `kubectl`, logging the controller's operation message (for example when a PostSync hook is running) and waiting up to ten minutes for the app to become `Synced/Healthy`. You can override the timeout or polling interval per run with the `ARGOCD_APPS_WAIT_TIMEOUT_SECONDS` and `ARGOCD_APPS_WAIT_INTERVAL_SECONDS` workflow inputs.
+   - The workflow now waits on the `apps` application by calling `argocd --core app wait --sync --health`, so you see Argo CD's native status output instead of bespoke polling. If reconciliation stalls, the CLI output highlights the objects Argo CD still considers out of sync.
    - Both Argo CD Applications now track the explicit **`main`** branch (instead of the symbolic `HEAD` ref) so the repo server refreshes to the latest commit as soon as you push. If you promote changes from another branch, update the manifests' `targetRevision` fields accordingly before running the workflow.
    - Argo CD ships with a custom health script for the Keycloak operator's CRDs (`Keycloak` and `KeycloakRealmImport`). The controller now marks those resources `Healthy` once the operator reports `status.ready=true`/`status.phase=Done`, so `argocd app wait --health` no longer stalls even though the pods respond to `/health/ready` on the management port.
 
