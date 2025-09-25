@@ -1,3 +1,5 @@
+import json
+
 from scripts.normalize_azure_storage_secret import parse_credential
 
 
@@ -97,3 +99,20 @@ def test_parse_key_dict_with_keys_field():
     raw = '{"keys": [{"value": "ZmFrZUFjY291bnRLZXkxMjM0NTY="}]}'
     cred = parse_credential(raw, "demoacct")
     assert cred.account_key == "ZmFrZUFjY291bnRLZXkxMjM0NTY="
+
+
+def test_parse_nested_json_wrappers():
+    raw = json.dumps(
+        {
+            "data": {
+                "properties": {
+                    "value": {
+                        "connectionString": "DefaultEndpointsProtocol=https;AccountName=cnpgdemo;AccountKey=abcd;EndpointSuffix=core.windows.net",
+                    }
+                }
+            }
+        }
+    )
+    cred = parse_credential(raw, "ignored")
+    assert cred.storage_account == "cnpgdemo"
+    assert cred.account_key == "abcd"
