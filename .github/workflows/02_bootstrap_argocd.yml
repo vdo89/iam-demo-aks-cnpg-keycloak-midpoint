@@ -1450,8 +1450,12 @@ jobs:
 
       - name: Wait for iam apps Argo CD application
         shell: bash
+        env:
+          IAM_NAMESPACE: ${{ inputs.NAMESPACE_IAM }}
         run: |
           set -euo pipefail
+
+          iam_ns="${IAM_NAMESPACE:-iam}"
 
           echo "Waiting for Argo CD application 'apps' to be created"
           app_created=0
@@ -1471,7 +1475,7 @@ jobs:
             exit 1
           fi
 
-          timeout_seconds=120
+          timeout_seconds=${ARGOCD_APPS_TIMEOUT_SECONDS:-900}
           interval_seconds=10
           max_attempts=$((timeout_seconds / interval_seconds))
           echo "Waiting for Argo CD application 'apps' to reach Synced/Healthy (timeout ${timeout_seconds}s)"
@@ -1489,6 +1493,34 @@ jobs:
             fi
 
             echo "apps status: sync=${sync_status:-<unknown>} health=${health_status:-<unknown>} operation=${operation_phase:-<unknown>} (attempt ${attempt}/${max_attempts})"
+
+            if [ "${operation_phase}" = "Failed" ]; then
+              echo "Argo CD reports the 'apps' application operation failed; collecting diagnostics."
+              kubectl -n argocd get application apps -o yaml || true
+              if [ -n "${iam_ns}" ]; then
+                kubectl -n "${iam_ns}" describe job midpoint-seeder || true
+                kubectl -n "${iam_ns}" logs job/midpoint-seeder --all-containers || true
+              fi
+              exit 1
+            fi
+
+            if [ "${operation_phase}" = "Running" ] && [ -n "${iam_ns}" ] && [ $((attempt % 3)) -eq 0 ]; then
+              if kubectl -n "${iam_ns}" get job midpoint-seeder >/dev/null 2>&1; then
+                if command -v jq >/dev/null 2>&1; then
+                  job_summary=$(kubectl -n "${iam_ns}" get job midpoint-seeder -o json 2>/dev/null \
+                    | jq -r '[((.status.conditions // []) | map("\(.type)=\(.status)")[]?), "succeeded=\(.status.succeeded // 0)", "failed=\(.status.failed // 0)", "active=\(.status.active // 0)"] | join(" ")' 2>/dev/null || true)
+                else
+                  succeeded=$(kubectl -n "${iam_ns}" get job midpoint-seeder -o jsonpath='{.status.succeeded}' 2>/dev/null || echo "")
+                  failed=$(kubectl -n "${iam_ns}" get job midpoint-seeder -o jsonpath='{.status.failed}' 2>/dev/null || echo "")
+                  active=$(kubectl -n "${iam_ns}" get job midpoint-seeder -o jsonpath='{.status.active}' 2>/dev/null || echo "")
+                  job_summary="succeeded=${succeeded:-0} failed=${failed:-0} active=${active:-0}"
+                fi
+                echo "midpoint-seeder job status: ${job_summary:-<unavailable>}"
+              else
+                echo "midpoint-seeder job has not been created yet."
+              fi
+            fi
+
             sleep "${interval_seconds}"
           done
 
@@ -1496,10 +1528,17 @@ jobs:
             echo "Argo CD application 'apps' failed to reach Synced/Healthy within ${timeout_seconds}s; dumping diagnostics."
             kubectl -n argocd get application apps -o yaml || true
             kubectl -n argocd get applications || true
+            if [ -n "${iam_ns}" ]; then
+              kubectl -n "${iam_ns}" describe job midpoint-seeder || true
+              kubectl -n "${iam_ns}" logs job/midpoint-seeder --all-containers || true
+            fi
             exit 1
           fi
 
           kubectl -n argocd get application apps
+          if [ -n "${iam_ns}" ]; then
+            kubectl -n "${iam_ns}" get job midpoint-seeder || true
+          fi
 
       - name: Wait for Keycloak service endpoints
         shell: bash
