@@ -498,9 +498,6 @@ spec:
           ports:
             - name: http
               containerPort: 8080
-          # Wait for the midPoint web application to serve the login page before
-          # marking the pod Ready so Argo CD defers PostSync hooks (e.g. the
-          # midpoint-seeder Job) until the REST API is responsive.
           readinessProbe:
             httpGet:
               path: /midpoint/login

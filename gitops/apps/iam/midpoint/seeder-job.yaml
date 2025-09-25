@@ -125,21 +125,6 @@ spec:
         - name: objs
           configMap:
             name: midpoint-objects
-            items:
-              - key: 01_org_rws.xml
-                path: 01_org_rws.xml
-              - key: 02_role_project_admin.xml
-                path: 02_role_project_admin.xml
-              - key: 03_org_architects.xml
-                path: 03_org_architects.xml
-              - key: 04_user_director.xml
-                path: 04_user_director.xml
-              - key: 05_user_architect1.xml
-                path: 05_user_architect1.xml
-              - key: 06_user_po1.xml
-                path: 06_user_po1.xml
-              - key: 07_user_dev1.xml
-                path: 07_user_dev1.xml
         - name: midpoint-admin-secret
           secret:
             secretName: midpoint-admin

@@ -8,43 +8,20 @@ spec:
   instances: 1
   startOptimized: false
   additionalOptions:
-    # Only keep CLI toggles that are still missing strongly typed equivalents in
-    # the v2alpha1 Keycloak CR. Hostname strictness and the database URL now rely
-    # on the dedicated spec fields instead of the legacy CLI overrides.
-    # Enable Quarkus health/metrics endpoints so Kubernetes and the operator
-    # can call `/health/ready` during startup and surface Keycloak readiness to
-    # Argo CD's health checks.
     - name: health-enabled
       value: "true"
     - name: metrics-enabled
       value: "true"
-    # Keycloak still lacks a typed knob for KC_HOSTNAME_STRICT_HTTPS, so retain
-    # the CLI switch to allow the demo ingress to terminate TLS in front of the
-    # pod while the runtime continues to serve plain HTTP.
     - name: hostname-strict-https
       value: "false"
-  # Pin the operator's feature list to a known good entry so it does not inject
-  # the legacy "health" feature into KC_FEATURES. Keycloak 26 removed that flag
-  # and will crash if we request it, so we enable the health endpoints via
-  # KC_HEALTH_ENABLED instead. The operator still adds "health" when the
-  # enabled list is empty, so explicitly enable a harmless feature to keep
-  # KC_FEATURES stable.
   features:
     enabled:
       - token-exchange
   db:
-    # Drive the database configuration through the strongly typed fields so the
-    # operator does not have to fall back to the deprecated CLI flags (Keycloak
-    # 26.x fails hard when `--db-url` is provided). CloudNativePG defaults to
-    # TLS and Keycloak negotiates it automatically, so the generated JDBC URL
-    # works without extra query parameters.
     vendor: postgres
     host: iam-db-rw.iam.svc.cluster.local
     port: 5432
     database: keycloak
-    # Keycloak defaults to the "public" schema when connecting to PostgreSQL.
-    # Declare it explicitly so future operator releases do not infer a schema
-    # switch that would force us back to the deprecated `--db-url` CLI flag.
     schema: public
     usernameSecret:
       name: keycloak-db-app
@@ -55,27 +32,12 @@ spec:
   http:
     httpEnabled: true
   hostname:
-    # Default hostname is overridden by kustomize replacements using values
-    # from k8s/apps/params.env during the build.
     hostname: kc.127.0.0.1.nip.io
-    # Allow the demo ingress to terminate HTTP without Keycloak rejecting the
-    # host/scheme. The nip.io address changes every time the AKS load balancer
-    # IP changes, so keep hostname checks disabled via the typed spec field
-    # instead of the deprecated CLI toggle.
     strict: false
-    # Relax backchannel hostname verification with the strongly typed knob so
-    # we do not have to fall back to the legacy `--hostname-strict` CLI flag
-    # that Keycloak 26 rejects.
     strictBackchannel: false
   ingress:
     enabled: true
-    # Ingress class is overridden at build time by kustomize replacements using
-    # the Git-managed value in k8s/apps/params.env. The configure_demo_hosts
-    # workflow only updates the hosts so the class stays declarative.
     className: nginx
-    # Force the operator-managed ingress to proxy Keycloak over HTTP. The
-    # operator defaults to HTTPS backends, which breaks the demo's plain-HTTP
-    # routing through ingress-nginx.
     annotations:
       nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
       nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
@@ -87,14 +49,6 @@ spec:
     limits:
       cpu: "1"
       memory: "2Gi"
-  # The v2alpha1 CRD now provides a typed `spec.startupProbe`. The controller
-  # rejects unknown fields when reconciling through Server-Side Apply, so keep
-  # the probe configuration inside the supported schema rather than the
-  # `unsupported.podTemplate` escape hatch. The operator still defaults to the
-  # management port, but enabling the Quarkus health endpoints above keeps the
-  # `/health/ready` handler available during bootstrap. The CRD currently lacks
-  # an `initialDelaySeconds` knob, so we rely on a more permissive probe
-  # threshold to keep Keycloak alive while it performs the initial augmentation.
   startupProbe:
     periodSeconds: 5
     failureThreshold: 12
