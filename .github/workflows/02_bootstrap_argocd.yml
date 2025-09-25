@@ -1238,6 +1238,7 @@ jobs:
           set -euo pipefail
 
           kubectl -n ${{ inputs.NAMESPACE_IAM }} create secret generic midpoint-admin \
+            --from-literal=username=administrator \
             --from-literal=password="$MIDPOINT_ADMIN_PASSWORD" \
             --dry-run=client -o yaml | kubectl apply -f -
       - name: Wait for Keycloak operator CRDs

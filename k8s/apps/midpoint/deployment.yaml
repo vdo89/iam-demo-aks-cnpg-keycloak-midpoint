@@ -514,8 +514,11 @@ spec:
             - configMapRef:
                 name: midpoint-env
           env:
-            - name: MP_SET_midpoint_administrator_initialPassword_FILE
-              value: /var/run/secrets/midpoint-admin/password
+            - name: MP_SET_midpoint_administrator_initialPassword
+              valueFrom:
+                secretKeyRef:
+                  name: midpoint-admin
+                  key: password
             - name: MP_SET_midpoint_administrator_userId
               valueFrom:
                 secretKeyRef:
