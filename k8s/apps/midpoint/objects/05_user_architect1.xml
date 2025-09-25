@@ -1,12 +1,13 @@
 <object xmlns="http://midpoint.evolveum.com/xml/ns/public/common/common-3">
   <user>
+    <oid>55555555-5555-5555-5555-555555555555</oid>
     <name>architect1</name>
     <fullName>Architect Demo</fullName>
     <activation>
       <administrativeStatus>enabled</administrativeStatus>
     </activation>
     <assignment>
-      <targetRef oid="ORG-ARCH" type="OrgType"/>
+      <targetRef oid="33333333-3333-3333-3333-333333333333" type="OrgType"/>
     </assignment>
   </user>
 </object>

@@ -1,5 +1,6 @@
 <object xmlns="http://midpoint.evolveum.com/xml/ns/public/common/common-3">
   <user>
+    <oid>66666666-6666-6666-6666-666666666666</oid>
     <name>po1</name>
     <fullName>Product Owner Demo</fullName>
     <activation>

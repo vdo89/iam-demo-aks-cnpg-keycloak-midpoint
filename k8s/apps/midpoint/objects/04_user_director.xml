@@ -1,5 +1,6 @@
 <object xmlns="http://midpoint.evolveum.com/xml/ns/public/common/common-3">
   <user>
+    <oid>44444444-4444-4444-4444-444444444444</oid>
     <name>director1</name>
     <fullName>Directeur Demo</fullName>
     <givenName>Directeur</givenName>
