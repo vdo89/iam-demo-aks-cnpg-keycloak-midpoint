@@ -96,9 +96,9 @@ jobs:
           fi
           tmp_file=$(mktemp)
           cat >"${tmp_file}" <<EOF
-# storageAccount is set by the bootstrap workflow from the STORAGE_ACCOUNT input.
-storageAccount=${storage_account_input}
-EOF
+          # storageAccount is set by the bootstrap workflow from the STORAGE_ACCOUNT input.
+          storageAccount=${storage_account_input}
+          EOF
           mv "${tmp_file}" "${config_file}"
 
       - name: Create IAM namespace early
