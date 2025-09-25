@@ -324,29 +324,6 @@ jobs:
           kubectl -n argocd get application cnpg-operator -o yaml || true
           exit 1
 
-      - name: Wait for keycloak-operator Argo CD application
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "Waiting for Argo CD application keycloak-operator to be created..."
-          for attempt in $(seq 1 20); do
-            if kubectl -n argocd get application keycloak-operator >/dev/null 2>&1; then
-              sync_status=$(kubectl -n argocd get application keycloak-operator -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")
-              health_status=$(kubectl -n argocd get application keycloak-operator -o jsonpath='{.status.health.status}' 2>/dev/null || echo "")
-              if [ "$sync_status" = "Synced" ] && [ "$health_status" = "Healthy" ]; then
-                echo "keycloak-operator application is synced and healthy"
-                exit 0
-              fi
-              echo "keycloak-operator status: sync=${sync_status:-<unknown>} health=${health_status:-<unknown>} (attempt ${attempt}/20)"
-            else
-              echo "Application keycloak-operator not found yet (attempt ${attempt}/20)"
-            fi
-            sleep 10
-          done
-          echo "Timed out waiting for keycloak-operator Argo CD application to become healthy"
-          kubectl -n argocd get application keycloak-operator -o yaml || true
-          exit 1
-
       - name: Wait for CNPG operator CRDs
         shell: bash
         run: |
