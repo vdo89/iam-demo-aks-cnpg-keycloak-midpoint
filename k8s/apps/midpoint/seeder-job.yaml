@@ -15,29 +15,37 @@ spec:
         - name: seed
           image: curlimages/curl:8.9.1
           env:
-            - name: MIDPOINT_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: midpoint-admin
-                  key: password
             - name: MIDPOINT_URL
               value: "http://midpoint:8080/midpoint"
           volumeMounts:
             - name: objs
               mountPath: /objects
+            - name: midpoint-admin-secret
+              mountPath: /var/run/secrets/midpoint-admin
+              readOnly: true
           command:
             - /bin/sh
             - -ec
             - |
               set -euo pipefail
-              if [ -z "${MIDPOINT_PASSWORD:-}" ]; then
-                echo "MIDPOINT_PASSWORD is empty; aborting" >&2
+              password_file="/var/run/secrets/midpoint-admin/password"
+              if [ ! -r "${password_file}" ]; then
+                echo "ERROR: midpoint admin password file ${password_file} is not readable" >&2
                 exit 1
               fi
+
+              MIDPOINT_PASSWORD="$(tr -d '\r\n' <"${password_file}")"
+
+              if [ -z "${MIDPOINT_PASSWORD:-}" ]; then
+                echo "ERROR: midpoint admin password from ${password_file} is empty" >&2
+                exit 1
+              fi
+
+              midpoint_username="${MIDPOINT_USERNAME:-administrator}"
               MP_URL="${MIDPOINT_URL:-http://midpoint:8080/midpoint}"
               echo "Using midPoint at: $MP_URL"
 
-              auth="administrator:${MIDPOINT_PASSWORD}"
+              auth="${midpoint_username}:${MIDPOINT_PASSWORD}"
 
               wait_attempts="${MIDPOINT_WAIT_MAX_ATTEMPTS:-30}"
               wait_sleep="${MIDPOINT_WAIT_SLEEP_SECONDS:-10}"
@@ -122,3 +130,6 @@ spec:
                 path: 06_user_po1.xml
               - key: 07_user_dev1.xml
                 path: 07_user_dev1.xml
+        - name: midpoint-admin-secret
+          secret:
+            secretName: midpoint-admin
