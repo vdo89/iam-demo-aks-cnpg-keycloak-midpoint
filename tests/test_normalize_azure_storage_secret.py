@@ -71,6 +71,15 @@ def test_parse_sas_connection_string():
     assert "QueueEndpoint=https://example.queue.core.windows.net/" in cred.connection_string
 
 
+def test_parse_sas_url():
+    token = "sv=2021-10-04&sig=fake"
+    url = f"https://cnpgdemo.blob.core.windows.net/backups?{token}"
+    cred = parse_credential(url, "ignored")
+    assert cred.storage_account == "cnpgdemo"
+    assert cred.sas_token == token
+    assert "BlobEndpoint=https://cnpgdemo.blob.core.windows.net/" in cred.connection_string
+
+
 def test_parse_connection_string_json_wrapper():
     raw = '{"connectionString": "DefaultEndpointsProtocol=https;AccountName=cnpgdemo;AccountKey=abcd;EndpointSuffix=core.windows.net"}'
     cred = parse_credential(raw, "ignored")

@@ -6,6 +6,7 @@ import argparse
 import json
 import re
 import subprocess
+from urllib.parse import urlparse
 from dataclasses import dataclass
 
 
@@ -86,6 +87,38 @@ def parse_credential(raw: str, storage_account: str) -> AzureCredential:
             account_key=account_key,
             sas_token=sas,
         )
+
+    parsed_url = urlparse(value)
+    url_query = parsed_url.query
+    if not url_query and parsed_url.path and "?" in parsed_url.path:
+        path, _, query = parsed_url.path.partition("?")
+        parsed_url = parsed_url._replace(path=path)
+        url_query = query
+
+    if parsed_url.scheme and url_query:
+        query_items = url_query.lower()
+        if "sig=" in query_items and "sv=" in query_items:
+            token = url_query
+            account = storage_account
+            if parsed_url.hostname:
+                match = re.match(r"^(?P<name>[^.]+)\.blob\.core\.windows\.net$", parsed_url.hostname)
+                if match:
+                    account = match.group("name")
+            if parsed_url.hostname:
+                blob_endpoint = f"{parsed_url.scheme}://{parsed_url.hostname}/"
+            else:
+                blob_endpoint = f"https://{account}.blob.core.windows.net/"
+            connection_string = (
+                "DefaultEndpointsProtocol=https;"
+                f"AccountName={account};"
+                f"BlobEndpoint={blob_endpoint};"
+                f"SharedAccessSignature={token}"
+            )
+            return AzureCredential(
+                storage_account=account,
+                connection_string=connection_string,
+                sas_token=token,
+            )
 
     token = value.lstrip("?")
     token_lower = token.lower()
