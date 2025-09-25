@@ -29,3 +29,10 @@ patches:
                     value: iam,keycloak
                   - name: QUARKUS_OPERATOR_SDK_GENERATE_WITH_WATCHED_NAMESPACES
                     value: iam,keycloak
+patchesJson6902:
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: ClusterRole
+      name: keycloakcontroller-cluster-role
+    path: patch-clusterrole-networkpolicies.yaml
