@@ -1,0 +1,5 @@
+varReference:
+  - kind: Application
+    path: spec/source/repoURL
+  - kind: Application
+    path: spec/source/targetRevision

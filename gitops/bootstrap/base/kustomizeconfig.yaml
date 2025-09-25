@@ -1,0 +1,9 @@
+varReference:
+  - kind: ApplicationSet
+    path: spec/generators/0/git/repoURL
+  - kind: ApplicationSet
+    path: spec/generators/0/git/revision
+  - kind: ApplicationSet
+    path: spec/template/spec/source/repoURL
+  - kind: ApplicationSet
+    path: spec/template/spec/source/targetRevision

@@ -7,9 +7,8 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-body-size: "16m"
 spec:
   # Default ingress class/host values are overridden by kustomize replacements
-  # at build time using the values from k8s/apps/params.env. The helper workflow
-  # only rotates the hosts; change ingressClass in Git when targeting a
-  # different controller.
+  # using the values declared in gitops/iam/base/params.env (and overridden
+  # by overlays). Update them in Git when switching ingress controllers.
   ingressClassName: nginx
   rules:
     - host: mp.127.0.0.1.nip.io

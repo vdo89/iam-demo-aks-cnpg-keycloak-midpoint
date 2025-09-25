@@ -7,19 +7,32 @@ resources:
   - keycloak/rws-realm.yaml
   - midpoint
 
+configurations:
+  - cnpg/kustomizeconfig.yaml
+
 generatorOptions:
   disableNameSuffixHash: true
 
 configMapGenerator:
-  - name: iam-ingress-settings
+  - name: iam-cluster-settings
     namespace: iam
+    behavior: merge
     envs:
       - params.env
+
+vars:
+  - name: CNPG_STORAGE_ACCOUNT
+    objref:
+      apiVersion: v1
+      kind: ConfigMap
+      name: iam-cluster-settings
+    fieldref:
+      fieldPath: data.cnpgStorageAccount
 
 replacements:
   - source:
       kind: ConfigMap
-      name: iam-ingress-settings
+      name: iam-cluster-settings
       fieldPath: data.ingressClass
     targets:
       - select:
@@ -34,7 +47,7 @@ replacements:
           - spec.ingressClassName
   - source:
       kind: ConfigMap
-      name: iam-ingress-settings
+      name: iam-cluster-settings
       fieldPath: data.keycloakHost
     targets:
       - select:
@@ -44,7 +57,7 @@ replacements:
           - spec.hostname.hostname
   - source:
       kind: ConfigMap
-      name: iam-ingress-settings
+      name: iam-cluster-settings
       fieldPath: data.midpointHost
     targets:
       - select:

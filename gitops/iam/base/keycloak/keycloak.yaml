@@ -4,7 +4,7 @@ metadata:
   name: rws-keycloak
   namespace: iam
 spec:
-  image: quay.io/keycloak/keycloak:26.3.4
+  image: quay.io/keycloak/keycloak:26.3.5
   instances: 1
   startOptimized: false
   additionalOptions:
@@ -56,7 +56,7 @@ spec:
     httpEnabled: true
   hostname:
     # Default hostname is overridden by kustomize replacements using values
-    # from k8s/apps/params.env during the build.
+    # from gitops/iam/base/params.env during the build.
     hostname: kc.127.0.0.1.nip.io
     # Allow the demo ingress to terminate HTTP without Keycloak rejecting the
     # host/scheme. The nip.io address changes every time the AKS load balancer
@@ -70,8 +70,8 @@ spec:
   ingress:
     enabled: true
     # Ingress class is overridden at build time by kustomize replacements using
-    # the Git-managed value in k8s/apps/params.env. The configure_demo_hosts
-    # workflow only updates the hosts so the class stays declarative.
+    # the Git-managed value in gitops/iam/base/params.env. Cluster overlays update
+    # the hosts in Git (see gitops/iam/overlays/*) instead of using imperative scripts.
     className: nginx
     # Force the operator-managed ingress to proxy Keycloak over HTTP. The
     # operator defaults to HTTPS backends, which breaks the demo's plain-HTTP
