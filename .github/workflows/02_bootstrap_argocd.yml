@@ -82,31 +82,24 @@ jobs:
             --dry-run=client -o yaml | kubectl apply -f -
           kubectl -n argocd label secret "${secret_name}" argocd.argoproj.io/secret-type=repository --overwrite
 
-      - name: Validate CNPG storage account configuration
+      - name: Render CNPG storage account configuration
         shell: bash
         env:
           STORAGE_ACCOUNT_INPUT: ${{ inputs.STORAGE_ACCOUNT }}
         run: |
           set -euo pipefail
           config_file="gitops/apps/iam/cnpg/params.env"
-          if [ ! -f "${config_file}" ]; then
-            echo "${config_file} is missing. Commit it with the Terraform storage account output before running this workflow."
-            exit 1
-          fi
-          storage_account_git=$(grep -E '^storageAccount=' "${config_file}" | tail -n1 | cut -d'=' -f2- | tr -d ' \t\r\n')
-          if [ -z "${storage_account_git}" ] || [ "${storage_account_git}" = "changeme" ]; then
-            echo "storageAccount in ${config_file} must be set to the Terraform storage_account_name output."
-            exit 1
-          fi
           storage_account_input=$(printf '%s' "${STORAGE_ACCOUNT_INPUT}" | tr -d ' \t\r\n')
           if [ -z "${storage_account_input}" ]; then
             echo "STORAGE_ACCOUNT input must not be empty."
             exit 1
           fi
-          if [ "${storage_account_git,,}" != "${storage_account_input,,}" ]; then
-            echo "storageAccount (${storage_account_git}) does not match workflow input (${storage_account_input})."
-            exit 1
-          fi
+          tmp_file=$(mktemp)
+          cat >"${tmp_file}" <<EOF
+# storageAccount is set by the bootstrap workflow from the STORAGE_ACCOUNT input.
+storageAccount=${storage_account_input}
+EOF
+          mv "${tmp_file}" "${config_file}"
 
       - name: Create IAM namespace early
         shell: bash

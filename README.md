@@ -28,7 +28,7 @@ requirements-dev.txt     # Python tooling for unit tests and scripts
    - *(optional, only for private repositories)* `ARGOCD_REPO_USERNAME` and `ARGOCD_REPO_TOKEN`
 4. Update the GitOps configuration:
    - Set `data.repoURL` (and optionally `data.targetRevision`) in [`gitops/clusters/aks/context.yaml`](gitops/clusters/aks/context.yaml) to point at **your** repository.
-   - Replace the placeholder storage account value in [`gitops/apps/iam/cnpg/params.env`](gitops/apps/iam/cnpg/params.env) with the `storage_account_name` Terraform output before bootstrapping.
+   - Provide the CloudNativePG backup storage account to the bootstrap workflow via its `STORAGE_ACCOUNT` input (the workflow now writes [`gitops/apps/iam/cnpg/params.env`](gitops/apps/iam/cnpg/params.env) for you).
 
 ## 1. Provision AKS with Terraform
 
@@ -38,8 +38,7 @@ Trigger the workflow **“01 - Provision AKS with Terraform”** (`.github/wor
 
 ## 2. Bootstrap Argo CD and the demo stack
 
-1. Ensure [`gitops/apps/iam/cnpg/params.env`](gitops/apps/iam/cnpg/params.env) contains the Terraform storage account name.
-2. Run the workflow **“02 - Bootstrap GitOps stack”** (`.github/workflows/02_bootstrap_argocd.yml`). It will:
+1. Run the workflow **“02 - Bootstrap GitOps stack”** (`.github/workflows/02_bootstrap_argocd.yml`). Provide the `STORAGE_ACCOUNT` input so the job can render the CNPG backup configuration. It will:
    - Apply the Argo CD bootstrap kustomization pinned to `v3.1.7`.
    - Optionally configure repository credentials when the repo is private.
    - Create the database and admin secrets in the `iam` namespace.
