@@ -1,4 +1,4 @@
-name: "04 - Configure demo hosts (nip.io) & Ingresses"
+name: "03 - Configure demo hosts (nip.io) & Ingresses"
 
 on:
   workflow_dispatch:
