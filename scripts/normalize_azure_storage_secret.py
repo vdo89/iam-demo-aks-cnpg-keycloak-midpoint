@@ -26,7 +26,16 @@ def parse_credential(raw: str, storage_account: str) -> AzureCredential:
         raise ValueError("Credential must not be empty")
 
     normalized_value = value.replace("\r\n", "\n").replace("\r", "\n")
-    if "=" in normalized_value and (";" in normalized_value or "\n" in normalized_value):
+    if "=" in normalized_value and (
+        ";" in normalized_value
+        or "\n" in normalized_value
+        or re.search(
+            r"\b(accountname|accountkey|sharedaccesssignature|defaultendpointsprotocol|"
+            r"blobendpoint|queueendpoint|tableendpoint|fileendpoint|endpointsuffix)=",
+            normalized_value,
+            flags=re.IGNORECASE,
+        )
+    ):
         parts: dict[str, tuple[str, str]] = {}
         for segment in re.split(r"[;\n]+", normalized_value):
             if not segment or "=" not in segment:
