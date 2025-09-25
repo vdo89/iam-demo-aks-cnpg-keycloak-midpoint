@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 from dataclasses import dataclass
@@ -105,6 +106,38 @@ def parse_credential(raw: str, storage_account: str) -> AzureCredential:
             "EndpointSuffix=core.windows.net"
         )
         return AzureCredential(storage_account=storage_account, connection_string=connection_string, account_key=value)
+
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError:
+        decoded = None
+    if decoded:
+        candidates: list[str] = []
+        if isinstance(decoded, dict):
+            for key in ("connectionString", "connection_string", "value"):
+                candidate = decoded.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    candidates.append(candidate.strip())
+            keys_field = decoded.get("keys")
+            if isinstance(keys_field, list):
+                for item in keys_field:
+                    if isinstance(item, dict):
+                        candidate = item.get("value")
+                        if isinstance(candidate, str) and candidate.strip():
+                            candidates.append(candidate.strip())
+        elif isinstance(decoded, list):
+            for item in decoded:
+                if isinstance(item, dict):
+                    candidate = item.get("value")
+                    if isinstance(candidate, str) and candidate.strip():
+                        candidates.append(candidate.strip())
+        for candidate in candidates:
+            if candidate == value:
+                continue
+            try:
+                return parse_credential(candidate, storage_account)
+            except ValueError:
+                continue
 
     raise ValueError("Unable to detect credential type. Provide an account key, SAS token, or connection string.")
 

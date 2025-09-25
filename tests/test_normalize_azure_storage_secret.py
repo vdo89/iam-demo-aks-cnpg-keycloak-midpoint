@@ -69,3 +69,22 @@ def test_parse_sas_connection_string():
     assert cred.sas_token == "sv=2021-10-04&sig=fake"
     assert "BlobEndpoint=https://example.blob.core.windows.net/" in cred.connection_string
     assert "QueueEndpoint=https://example.queue.core.windows.net/" in cred.connection_string
+
+
+def test_parse_connection_string_json_wrapper():
+    raw = '{"connectionString": "DefaultEndpointsProtocol=https;AccountName=cnpgdemo;AccountKey=abcd;EndpointSuffix=core.windows.net"}'
+    cred = parse_credential(raw, "ignored")
+    assert cred.storage_account == "cnpgdemo"
+    assert cred.account_key == "abcd"
+
+
+def test_parse_key_list_json_wrapper():
+    raw = '[{"value": "ZmFrZUFjY291bnRLZXkxMjM0NTY="}]'
+    cred = parse_credential(raw, "demoacct")
+    assert cred.account_key == "ZmFrZUFjY291bnRLZXkxMjM0NTY="
+
+
+def test_parse_key_dict_with_keys_field():
+    raw = '{"keys": [{"value": "ZmFrZUFjY291bnRLZXkxMjM0NTY="}]}'
+    cred = parse_credential(raw, "demoacct")
+    assert cred.account_key == "ZmFrZUFjY291bnRLZXkxMjM0NTY="
