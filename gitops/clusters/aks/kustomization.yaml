@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - context.yaml
+  - projects
+  - apps
+vars:
+  - name: GITOPS_REPO_URL
+    objref:
+      apiVersion: v1
+      kind: ConfigMap
+      name: gitops-context
+    fieldref:
+      fieldPath: data.repoURL
+  - name: GITOPS_TARGET_REVISION
+    objref:
+      apiVersion: v1
+      kind: ConfigMap
+      name: gitops-context
+    fieldref:
+      fieldPath: data.targetRevision

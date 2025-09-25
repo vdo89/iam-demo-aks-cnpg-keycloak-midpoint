@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MANIFEST = REPO_ROOT / "k8s/apps/keycloak/keycloak.yaml"
+MANIFEST = REPO_ROOT / "gitops/apps/iam/keycloak/keycloak.yaml"
 
 BANNED_ADDITIONAL_OPTIONS = {
     re.compile(r"^\s*-?\s*name:\s*db-url\s*$", re.MULTILINE): "--db-url",

@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: iam
+  namespace: argocd
+spec:
+  description: Identity workloads (CloudNativePG, Keycloak, midPoint).
+  sourceRepos:
+    - $(GITOPS_REPO_URL)
+  destinations:
+    - namespace: iam
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: '*'
+      kind: '*'
+  namespaceResourceWhitelist:
+    - group: '*'
+      kind: '*'
+  orphanedResources:
+    warn: true

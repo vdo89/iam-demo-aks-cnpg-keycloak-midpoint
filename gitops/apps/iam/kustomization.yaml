@@ -3,8 +3,7 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - cnpg
-  - keycloak/keycloak.yaml
-  - keycloak/rws-realm.yaml
+  - keycloak
   - midpoint
 
 generatorOptions:

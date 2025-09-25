@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: argocd
+spec:
+  description: Core cluster addons managed as Helm releases.
+  sourceRepos:
+    - $(GITOPS_REPO_URL)
+    - https://charts.jetstack.io
+    - https://cloudnative-pg.github.io/charts
+    - https://kubernetes.github.io/ingress-nginx
+  destinations:
+    - namespace: '*'
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: '*'
+      kind: '*'
+  namespaceResourceWhitelist:
+    - group: '*'
+      kind: '*'
+  orphanedResources:
+    warn: true
