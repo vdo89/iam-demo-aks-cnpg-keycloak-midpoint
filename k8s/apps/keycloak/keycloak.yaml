@@ -70,8 +70,8 @@ spec:
   ingress:
     enabled: true
     # Ingress class is overridden at build time by kustomize replacements using
-    # the detected value written to k8s/apps/params.env by
-    # scripts/configure_demo_hosts.sh.
+    # the Git-managed value in k8s/apps/params.env. The configure_demo_hosts
+    # workflow only updates the hosts so the class stays declarative.
     className: nginx
     # Force the operator-managed ingress to proxy Keycloak over HTTP. The
     # operator defaults to HTTPS backends, which breaks the demo's plain-HTTP

@@ -37,8 +37,7 @@ spec:
                     service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: /is-dynamic-lb-initialized
                   type: LoadBalancer
                 # Treat the ingress-nginx class as default so Keycloak's operator-managed ingress
-                # (which initially shipped without an explicit class) is reconciled even before the
-                # configure_demo_hosts workflow rewrites the manifests with the detected class.
+                # reconciles even before the Git-managed parameters explicitly set the class.
                 watchIngressWithoutClass: true
                 ingressClassResource:
                   default: true
