@@ -1,0 +1,10 @@
+controller:
+  service:
+    annotations:
+      service.beta.kubernetes.io/azure-load-balancer-resource-group: changeme-rg
+      service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: /is-dynamic-lb-initialized
+    loadBalancerIP: 0.0.0.0
+    type: LoadBalancer
+  watchIngressWithoutClass: true
+  ingressClassResource:
+    default: true

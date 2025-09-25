@@ -49,6 +49,15 @@ resource "azurerm_storage_container" "cnpg" {
   container_access_type = "private"
 }
 
+resource "azurerm_public_ip" "ingress" {
+  name                = "${var.prefix}-ingress"
+  location            = local.resource_group_location
+  resource_group_name = local.resource_group_name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+  tags                = local.tags
+}
+
 # AKS (defaults sized for Keycloak + midPoint demo workloads)
 resource "azurerm_kubernetes_cluster" "aks" {
   name                = "${var.prefix}-aks"

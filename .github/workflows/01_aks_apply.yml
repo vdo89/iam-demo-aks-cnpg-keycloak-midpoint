@@ -1,49 +1,26 @@
-name: 01 - Provision AKS with Terraform
+name: 01 - Provision AKS
 
 on:
   workflow_dispatch:
     inputs:
-      TF_ACTION:
-        description: 'apply or destroy'
+      ACTION:
+        description: Terraform action (apply or destroy)
         required: true
-        default: 'apply'
+        default: apply
         type: choice
         options: [apply, destroy]
       LOCATION:
-        description: 'Azure region'
-        required: false
-        default: 'westeurope'
+        description: Azure region
+        required: true
+        default: westeurope
       RESOURCE_PREFIX:
-        description: 'Prefix for resource names'
-        required: false
-        default: 'rwsdemo'
-      RESOURCE_GROUP_NAME:
-        description: 'Resource group to create or reuse (defaults to "<prefix>-rg")'
-        required: false
-        default: ''
-      AKS_NODE_VM_SIZE:
-        description: 'VM size for the default AKS node pool'
-        required: false
-        default: 'Standard_B2ms'
-      AKS_NODE_COUNT:
-        description: 'Node count for the default AKS node pool'
-        required: false
-        default: 1
-        type: number
-      AKS_SKU_TIER:
-        description: 'AKS control plane tier (Free or Paid)'
-        required: false
-        default: 'Free'
-        type: choice
-        options: [Free, Paid]
+        description: Resource prefix for Azure resources
+        required: true
+        default: rwsdemo
 
 permissions:
   id-token: write
   contents: read
-
-concurrency:
-  group: ${{ format('{0}-terraform-{1}', github.repository_id, inputs.RESOURCE_PREFIX != '' && inputs.RESOURCE_PREFIX || 'rwsdemo') }}
-  cancel-in-progress: false
 
 jobs:
   terraform:
@@ -55,459 +32,50 @@ jobs:
       TF_IN_AUTOMATION: "true"
     steps:
       - uses: actions/checkout@v4
-
-      - name: Azure Login (OIDC)
-        uses: azure/login@v2
+      - uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-
-      - name: Ensure Terraform state storage
-        id: tfstate
-        shell: bash
-        working-directory: infra/azure/terraform
+      - uses: hashicorp/setup-terraform@v3
+      - name: Ensure remote state backend
         env:
+          RG: ${{ inputs.RESOURCE_PREFIX }}-tfstate
+          SA: ${{ inputs.RESOURCE_PREFIX }}tfstate
           LOCATION: ${{ inputs.LOCATION }}
-          RESOURCE_PREFIX: ${{ inputs.RESOURCE_PREFIX }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
-          set -euo pipefail
-          STATE_RG="${RESOURCE_PREFIX}-tfstate-rg"
-          HASH="$(echo -n "${AZURE_SUBSCRIPTION_ID}" | sha256sum | cut -c1-8)"
-          STATE_SA_BASE="${RESOURCE_PREFIX}tf${HASH}"
-          STATE_SA="${STATE_SA_BASE:0:24}"
-
-          echo "Ensuring Terraform backend storage account ${STATE_SA} in resource group ${STATE_RG}."
-          az group create --name "${STATE_RG}" --location "${LOCATION}" --output none
-          if ! az storage account show --name "${STATE_SA}" --resource-group "${STATE_RG}" >/dev/null 2>&1; then
-            echo "Creating storage account ${STATE_SA} for Terraform state."
-            az storage account create \
-              --name "${STATE_SA}" \
-              --resource-group "${STATE_RG}" \
-              --location "${LOCATION}" \
-              --sku Standard_LRS \
-              --kind StorageV2 \
-              --min-tls-version TLS1_2 \
-              --allow-blob-public-access false \
-              --output none
-          else
-            echo "Storage account ${STATE_SA} already exists."
-          fi
-
-          ACCOUNT_KEY="$(az storage account keys list --resource-group "${STATE_RG}" --account-name "${STATE_SA}" --query '[0].value' -o tsv)"
-          if [[ -z "${ACCOUNT_KEY}" ]]; then
-            echo "Failed to retrieve storage account key for ${STATE_SA}." >&2
-            exit 1
-          fi
-          echo "::add-mask::${ACCOUNT_KEY}"
-
-          az storage container create \
-            --name tfstate \
-            --account-name "${STATE_SA}" \
-            --account-key "${ACCOUNT_KEY}" \
-            --public-access off \
-            --output none
-
-          echo "resource_group=${STATE_RG}" >> "${GITHUB_OUTPUT}"
-          echo "storage_account=${STATE_SA}" >> "${GITHUB_OUTPUT}"
-          echo "storage_account_key=${ACCOUNT_KEY}" >> "${GITHUB_OUTPUT}"
-
-      - name: Terraform Init
+          az group create --name "$RG" --location "$LOCATION" --only-show-errors
+          az storage account create \
+            --name "$SA" \
+            --resource-group "$RG" \
+            --location "$LOCATION" \
+            --sku Standard_LRS \
+            --kind StorageV2 \
+            --https-only true \
+            --allow-blob-public-access false \
+            --only-show-errors
+          az storage container create --name tfstate --account-name "$SA" --auth-mode login --only-show-errors
+          ACCOUNT_KEY=$(az storage account keys list --resource-group "$RG" --account-name "$SA" --query '[0].value' -o tsv)
+          echo "ARM_ACCESS_KEY=$ACCOUNT_KEY" >> "$GITHUB_ENV"
+      - name: Terraform init
         working-directory: infra/azure/terraform
-        shell: bash
-        env:
-          ARM_ACCESS_KEY: ${{ steps.tfstate.outputs.storage_account_key }}
         run: |
-          set -euo pipefail
           terraform init -input=false \
-            -backend-config="resource_group_name=${{ steps.tfstate.outputs.resource_group }}" \
-            -backend-config="storage_account_name=${{ steps.tfstate.outputs.storage_account }}" \
+            -backend-config="resource_group_name=${{ inputs.RESOURCE_PREFIX }}-tfstate" \
+            -backend-config="storage_account_name=${{ inputs.RESOURCE_PREFIX }}tfstate" \
             -backend-config="container_name=tfstate" \
             -backend-config="key=${{ inputs.RESOURCE_PREFIX }}.tfstate"
-
-      - name: Break stale Terraform state lock
-        shell: bash
+      - name: Terraform fmt
+        working-directory: infra/azure/terraform
+        run: terraform fmt -check
+      - name: Terraform plan/apply
         working-directory: infra/azure/terraform
         env:
-          ARM_ACCESS_KEY: ${{ steps.tfstate.outputs.storage_account_key }}
-          STORAGE_ACCOUNT: ${{ steps.tfstate.outputs.storage_account }}
-          STORAGE_ACCOUNT_KEY: ${{ steps.tfstate.outputs.storage_account_key }}
-          RESOURCE_PREFIX: ${{ inputs.RESOURCE_PREFIX }}
-          STALE_LOCK_MAX_AGE_SECONDS: 3600
+          TF_VAR_location: ${{ inputs.LOCATION }}
+          TF_VAR_prefix: ${{ inputs.RESOURCE_PREFIX }}
         run: |
-          set -euo pipefail
-          if [[ -z "${STORAGE_ACCOUNT:-}" || -z "${STORAGE_ACCOUNT_KEY:-}" ]]; then
-            echo "Storage account details unavailable; skipping lock maintenance."
-            exit 0
-          fi
-
-          STATE_BLOB="${RESOURCE_PREFIX}.tfstate"
-          echo "Checking for stale Terraform state lock on blob ${STATE_BLOB}."
-
-          BLOB_INFO="$(az storage blob show \
-            --container-name tfstate \
-            --name "${STATE_BLOB}" \
-            --account-name "${STORAGE_ACCOUNT}" \
-            --account-key "${STORAGE_ACCOUNT_KEY}" \
-            -o json 2>/dev/null || true)"
-
-          if [[ -z "${BLOB_INFO}" || "${BLOB_INFO}" == "null" ]]; then
-            echo "State blob ${STATE_BLOB} not found; skipping lock maintenance."
-            exit 0
-          fi
-
-          PY_OUTPUT="$(printf '%s' "${BLOB_INFO}" | python - <<'PY'
-          import json
-          import sys
-
-          raw = sys.stdin.read()
-          text = raw.strip()
-
-          data = {}
-          if text and text.lower() != "null":
-              try:
-                  parsed = json.loads(text)
-              except json.JSONDecodeError as exc:  # pragma: no cover - defensive logging
-                  print(f"Failed to decode blob metadata JSON: {exc}", file=sys.stderr)
-              else:
-                  if isinstance(parsed, dict):
-                      data = parsed
-                  else:  # pragma: no cover - defensive logging
-                      print(
-                          "Unexpected JSON type for blob metadata; expected an object.",
-                          file=sys.stderr,
-                      )
-
-          if not isinstance(data, dict):
-              data = {}
-
-          properties = data.get("properties")
-          if not isinstance(properties, dict):
-              properties = {}
-          lease_state = properties.get("leaseState", "") or ""
-
-          metadata = data.get("metadata")
-          if not isinstance(metadata, dict):
-              metadata = {}
-          lock_json = metadata.get("terraformlockid") or metadata.get("terraform-lock-id") or ""
-
-          print(lease_state)
-          print(lock_json)
-          PY
-          )"
-
-          IFS=$'\n' read -r LEASE_STATE LOCK_JSON <<<"${PY_OUTPUT}" || true
-          LEASE_STATE="${LEASE_STATE:-}"
-          LOCK_JSON="${LOCK_JSON:-}"
-
-          if [[ "${LEASE_STATE}" != "leased" ]]; then
-            echo "No active lease detected on state blob."
-            exit 0
-          fi
-
-          if [[ -z "${LOCK_JSON}" ]]; then
-            echo "State blob is leased but missing Terraform lock metadata; manual unlock may be required."
-            exit 0
-          fi
-
-          export LOCK_JSON
-          PY_LOCK="$(python - <<'PY'
-          import datetime
-          import json
-          import os
-          import sys
-
-          lock_json = os.environ.get("LOCK_JSON", "")
-          lock_id = ""
-          lock_age = ""
-
-          if lock_json:
-              try:
-                  info = json.loads(lock_json)
-              except json.JSONDecodeError as exc:  # pragma: no cover - defensive logging
-                  print(f"Failed to decode lock metadata JSON: {exc}", file=sys.stderr)
-              else:
-                  lock_id = info.get("ID") or ""
-                  created_raw = (info.get("Created") or "").strip()
-
-                  def _normalize_fraction(value: str) -> str:
-                      dot_index = value.find(".")
-                      if dot_index == -1:
-                          return value
-                      end_index = dot_index + 1
-                      length = len(value)
-                      while end_index < length and value[end_index].isdigit():
-                          end_index += 1
-                      digits = value[dot_index + 1 : end_index]
-                      remainder = value[end_index:]
-                      if not digits:
-                          return value[:dot_index] + remainder
-                      trimmed = digits[:6]
-                      return value[: dot_index + 1] + trimmed + remainder
-
-                  def _parse_created(value: str):
-                      text = (value or "").strip().replace(" UTC", "")
-                      if not text:
-                          return None
-                      if text.endswith(("Z", "z")):
-                          text = text[:-1] + "+00:00"
-
-                      normalized = _normalize_fraction(text)
-                      candidates = []
-                      seen_candidates = set()
-
-                      def _add_candidate(candidate: str):
-                          candidate = _normalize_fraction(candidate.strip())
-                          if not candidate or candidate in seen_candidates:
-                              return
-                          seen_candidates.add(candidate)
-                          candidates.append(candidate)
-
-                      _add_candidate(normalized)
-                      if "T" in normalized:
-                          _add_candidate(normalized.replace("T", " ", 1))
-
-                      tz_index = -1
-                      for idx in range(len(normalized) - 1, -1, -1):
-                          if normalized[idx] in "+-":
-                              tz_index = idx
-                              break
-
-                      if tz_index != -1:
-                          prefix = normalized[:tz_index]
-                          tz_part = normalized[tz_index:]
-                          if ":" in tz_part:
-                              _add_candidate(prefix + tz_part.replace(":", ""))
-                          else:
-                              if len(tz_part) == 3 and tz_part[1:].isdigit():
-                                  tz_part = tz_part + "00"
-                              if len(tz_part) >= 5 and tz_part[1:3].isdigit() and tz_part[3:].isdigit():
-                                  colonised = tz_part[:3] + ":" + tz_part[3:]
-                                  _add_candidate(prefix + colonised)
-
-                      for candidate in candidates:
-                          for fmt in (
-                              "%Y-%m-%d %H:%M:%S.%f %z",
-                              "%Y-%m-%d %H:%M:%S.%f%z",
-                              "%Y-%m-%d %H:%M:%S %z",
-                              "%Y-%m-%dT%H:%M:%S.%f%z",
-                              "%Y-%m-%dT%H:%M:%S.%f %z",
-                              "%Y-%m-%dT%H:%M:%S%z",
-                              "%Y-%m-%dT%H:%M:%S %z",
-                              "%Y-%m-%d %H:%M:%S.%f",
-                              "%Y-%m-%d %H:%M:%S",
-                          ):
-                              try:
-                                  return datetime.datetime.strptime(candidate, fmt)
-                              except ValueError:
-                                  continue
-                      return None
-
-                  created_dt = _parse_created(created_raw)
-                  if created_dt is not None:
-                      age_seconds = int(
-                          (datetime.datetime.now(datetime.timezone.utc) - created_dt.astimezone(datetime.timezone.utc)).total_seconds()
-                      )
-                      lock_age = str(max(age_seconds, 0))
-
-          print(lock_id)
-          print(lock_age)
-          PY
-          )"
-
-          IFS=$'\n' read -r LOCK_ID LOCK_AGE <<<"${PY_LOCK}" || true
-          LOCK_ID="${LOCK_ID:-}"
-          LOCK_AGE="${LOCK_AGE:-}"
-
-          if [[ -z "${LOCK_ID}" ]]; then
-            echo "Unable to determine lock ID; skipping automatic unlock."
-            exit 0
-          fi
-
-          if [[ -z "${LOCK_AGE}" || ! "${LOCK_AGE}" =~ ^[0-9]+$ ]]; then
-            echo "Could not determine lock age for ${LOCK_ID}; skipping automatic unlock."
-            exit 0
-          fi
-
-          THRESHOLD="${STALE_LOCK_MAX_AGE_SECONDS:-3600}"
-          if [[ -z "${THRESHOLD}" || ! "${THRESHOLD}" =~ ^[0-9]+$ ]]; then
-            echo "Invalid STALE_LOCK_MAX_AGE_SECONDS value (${THRESHOLD}); defaulting to 3600 seconds." >&2
-            THRESHOLD=3600
-          fi
-
-          if (( LOCK_AGE < THRESHOLD )); then
-            echo "Terraform lock ${LOCK_ID} is ${LOCK_AGE}s old; below threshold ${THRESHOLD}s."
-            exit 0
-          fi
-
-          echo "Terraform lock ${LOCK_ID} appears stale (${LOCK_AGE}s >= ${THRESHOLD}s); attempting force-unlock."
-          set +e
-          terraform force-unlock -force "${LOCK_ID}"
-          UNLOCK_EXIT=$?
-          set -e
-
-          if [[ ${UNLOCK_EXIT} -eq 0 ]]; then
-            echo "Successfully released stale Terraform lock ${LOCK_ID}."
-            exit 0
-          fi
-
-          echo "terraform force-unlock failed with exit code ${UNLOCK_EXIT}; attempting to break Azure Storage lease directly." >&2
-          az storage blob lease break \
-            --container-name tfstate \
-            --blob-name "${STATE_BLOB}" \
-            --account-name "${STORAGE_ACCOUNT}" \
-            --account-key "${STORAGE_ACCOUNT_KEY}" \
-            --break-period 0 \
-            --output none
-          echo "Azure Storage lease break invoked for ${STATE_BLOB}. Continuing with Terraform operations."
-
-      - name: Determine resource configuration
-        id: rg
-        shell: bash
-        working-directory: infra/azure/terraform
-        env:
-          RESOURCE_PREFIX: ${{ inputs.RESOURCE_PREFIX }}
-          RESOURCE_GROUP_NAME_INPUT: ${{ inputs.RESOURCE_GROUP_NAME }}
-        run: |
-          set -euo pipefail
-          RG_NAME="${RESOURCE_GROUP_NAME_INPUT:-}"
-          if [[ -z "${RG_NAME}" ]]; then
-            RG_NAME="${RESOURCE_PREFIX}-rg"
-          fi
-
-          AKS_NAME="${RESOURCE_PREFIX}-aks"
-
-          CREATE_RG="true"
-          if terraform state show azurerm_resource_group.rg[0] >/dev/null 2>&1; then
-            echo "Terraform state already tracks resource group ${RG_NAME}; keeping create_resource_group=true."
+          if [ "${{ inputs.ACTION }}" = "destroy" ]; then
+            terraform destroy -auto-approve
           else
-            if az group exists --name "${RG_NAME}" | grep -qi true; then
-              CREATE_RG="false"
-              echo "Resource group ${RG_NAME} already exists; Terraform will reuse it."
-            else
-              echo "Resource group ${RG_NAME} does not exist; Terraform will create it."
-            fi
+            terraform apply -auto-approve
           fi
-
-          echo "resource_group_name=${RG_NAME}" >> "${GITHUB_OUTPUT}"
-          echo "create_resource_group=${CREATE_RG}" >> "${GITHUB_OUTPUT}"
-          echo "aks_name=${AKS_NAME}" >> "${GITHUB_OUTPUT}"
-
-      - name: Import existing Azure resources (if needed)
-        if: inputs.TF_ACTION == 'apply'
-        shell: bash
-        working-directory: infra/azure/terraform
-        env:
-          RESOURCE_PREFIX: ${{ inputs.RESOURCE_PREFIX }}
-          RESOURCE_GROUP_NAME: ${{ steps.rg.outputs.resource_group_name }}
-          AKS_NAME: ${{ steps.rg.outputs.aks_name }}
-        run: |
-          set -euo pipefail
-
-          if terraform state show azurerm_storage_account.sa >/dev/null 2>&1; then
-            echo "Storage account already tracked in Terraform state."
-          else
-            SA_PREFIX="${RESOURCE_PREFIX}sa"
-            EXISTING_SA="$(az storage account list --resource-group "${RESOURCE_GROUP_NAME}" --query "[?starts_with(name, '${SA_PREFIX}')].name | [0]" -o tsv 2>/dev/null || true)"
-            if [[ -n "${EXISTING_SA}" ]]; then
-              echo "Importing storage account ${EXISTING_SA} into Terraform state."
-              SA_SUFFIX="${EXISTING_SA#${SA_PREFIX}}"
-              if [[ -n "${SA_SUFFIX}" ]]; then
-                terraform import random_string.sa_suffix "${SA_SUFFIX}"
-              else
-                echo "Existing storage account ${EXISTING_SA} does not match expected prefix ${SA_PREFIX}; skipping random suffix import." >&2
-              fi
-              terraform import azurerm_storage_account.sa "/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP_NAME}/providers/Microsoft.Storage/storageAccounts/${EXISTING_SA}"
-              set +e
-              terraform import azurerm_storage_container.cnpg "https://${EXISTING_SA}.blob.core.windows.net/cnpg-backups"
-              STATUS=$?
-              set -e
-              if [[ ${STATUS} -ne 0 ]]; then
-                echo "Storage container cnpg-backups not found; Terraform will create it."
-              fi
-            else
-              echo "No existing storage account with prefix ${SA_PREFIX} detected; Terraform will create one."
-            fi
-          fi
-
-          if terraform state show azurerm_kubernetes_cluster.aks >/dev/null 2>&1; then
-            echo "AKS cluster already tracked in Terraform state."
-          else
-            if az aks show --name "${AKS_NAME}" --resource-group "${RESOURCE_GROUP_NAME}" >/dev/null 2>&1; then
-              echo "Importing existing AKS cluster ${AKS_NAME} into Terraform state."
-              terraform import azurerm_kubernetes_cluster.aks "/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP_NAME}/providers/Microsoft.ContainerService/managedClusters/${AKS_NAME}"
-            else
-              echo "AKS cluster ${AKS_NAME} not found; Terraform will create it."
-            fi
-          fi
-
-      - name: Terraform Plan
-        if: inputs.TF_ACTION == 'apply'
-        working-directory: infra/azure/terraform
-        shell: bash
-        run: |
-          set -euo pipefail
-          ./scripts/terraform_with_lock_retry.sh plan -input=false \
-            -var="location=${{ inputs.LOCATION }}" \
-            -var="prefix=${{ inputs.RESOURCE_PREFIX }}" \
-            -var="aks_default_node_vm_size=${{ inputs.AKS_NODE_VM_SIZE }}" \
-            -var="aks_default_node_count=${{ inputs.AKS_NODE_COUNT }}" \
-            -var="aks_sku_tier=${{ inputs.AKS_SKU_TIER }}" \
-            -var="resource_group_name=${{ steps.rg.outputs.resource_group_name }}" \
-            -var="create_resource_group=${{ steps.rg.outputs.create_resource_group }}"
-
-      - name: Terraform Apply
-        if: inputs.TF_ACTION == 'apply'
-        working-directory: infra/azure/terraform
-        shell: bash
-        run: |
-          set -euo pipefail
-          ./scripts/terraform_with_lock_retry.sh apply -auto-approve -input=false \
-            -var="location=${{ inputs.LOCATION }}" \
-            -var="prefix=${{ inputs.RESOURCE_PREFIX }}" \
-            -var="aks_default_node_vm_size=${{ inputs.AKS_NODE_VM_SIZE }}" \
-            -var="aks_default_node_count=${{ inputs.AKS_NODE_COUNT }}" \
-            -var="aks_sku_tier=${{ inputs.AKS_SKU_TIER }}" \
-            -var="resource_group_name=${{ steps.rg.outputs.resource_group_name }}" \
-            -var="create_resource_group=${{ steps.rg.outputs.create_resource_group }}"
-
-      - name: Terraform Destroy
-        if: inputs.TF_ACTION == 'destroy'
-        working-directory: infra/azure/terraform
-        shell: bash
-        run: |
-          set -euo pipefail
-          ./scripts/terraform_with_lock_retry.sh destroy -auto-approve -input=false \
-            -var="location=${{ inputs.LOCATION }}" \
-            -var="prefix=${{ inputs.RESOURCE_PREFIX }}" \
-            -var="aks_default_node_vm_size=${{ inputs.AKS_NODE_VM_SIZE }}" \
-            -var="aks_default_node_count=${{ inputs.AKS_NODE_COUNT }}" \
-            -var="aks_sku_tier=${{ inputs.AKS_SKU_TIER }}" \
-            -var="resource_group_name=${{ steps.rg.outputs.resource_group_name }}" \
-            -var="create_resource_group=${{ steps.rg.outputs.create_resource_group }}"
-
-      - name: Terraform Outputs
-        if: inputs.TF_ACTION == 'apply'
-        id: tfout
-        working-directory: infra/azure/terraform
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "RG=$(terraform output -raw resource_group)" >> $GITHUB_OUTPUT
-          echo "AKS=$(terraform output -raw aks_name)" >> $GITHUB_OUTPUT
-          echo "SA=$(terraform output -raw storage_account_name)" >> $GITHUB_OUTPUT
-          echo "BLOB_ENDPOINT=$(terraform output -raw storage_blob_endpoint)" >> $GITHUB_OUTPUT
-
-      - name: Show outputs
-        if: inputs.TF_ACTION == 'apply'
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "Resource Group: ${{ steps.tfout.outputs.RG }}"
-          echo "AKS: ${{ steps.tfout.outputs.AKS }}"
-          echo "Storage Account: ${{ steps.tfout.outputs.SA }}"
-          echo "Blob Endpoint: ${{ steps.tfout.outputs.BLOB_ENDPOINT }}"

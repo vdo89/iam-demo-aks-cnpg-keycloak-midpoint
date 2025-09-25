@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: addons
+  name: apps
   namespace: argocd
 spec:
   project: default
@@ -11,10 +11,24 @@ spec:
   source:
     repoURL: https://github.com/${REPO_OWNER}/${REPO_NAME}
     targetRevision: main
-    path: k8s/addons
+    path: clusters/aks/apps
+  ignoreDifferences:
+    - group: k8s.keycloak.org
+      kind: KeycloakRealmImport
+      name: rws-realm-import
+      namespace: iam
+      jsonPointers:
+        - /spec/realm
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
+    retry:
+      limit: 6
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
     syncOptions:
       - CreateNamespace=true
+      - ServerSideApply=true
