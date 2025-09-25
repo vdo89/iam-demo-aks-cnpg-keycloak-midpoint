@@ -22,3 +22,16 @@ def test_parse_sas_token():
     cred = parse_credential(token, "demoacct")
     assert cred.sas_token == token.lstrip("?")
     assert "SharedAccessSignature=" in cred.connection_string
+
+
+def test_parse_sas_connection_string():
+    raw = (
+        "BlobEndpoint=https://example.blob.core.windows.net/;"
+        "QueueEndpoint=https://example.queue.core.windows.net/;"
+        "SharedAccessSignature=sv=2021-10-04&sig=fake"
+    )
+    cred = parse_credential(raw, "demoacct")
+    assert cred.storage_account == "demoacct"
+    assert cred.sas_token == "sv=2021-10-04&sig=fake"
+    assert "BlobEndpoint=https://example.blob.core.windows.net/" in cred.connection_string
+    assert "QueueEndpoint=https://example.queue.core.windows.net/" in cred.connection_string

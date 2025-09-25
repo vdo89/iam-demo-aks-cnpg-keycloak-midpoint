@@ -21,37 +21,56 @@ def parse_credential(raw: str, storage_account: str) -> AzureCredential:
     if not value:
         raise ValueError("Credential must not be empty")
 
-    if "DefaultEndpointsProtocol=" in value:
-        parts: dict[str, str] = {}
+    if ";" in value and "=" in value:
+        parts: dict[str, tuple[str, str]] = {}
         for segment in value.split(";"):
-            if not segment:
-                continue
-            if "=" not in segment:
+            if not segment or "=" not in segment:
                 continue
             key, val = segment.split("=", 1)
-            parts[key.strip().lower()] = val.strip()
-        account = parts.get("accountname", storage_account)
-        account_key = parts.get("accountkey")
-        sas = parts.get("sharedaccesssignature")
-        if not account:
-            account = storage_account
-        connection = [
-            "DefaultEndpointsProtocol=https",
-            f"AccountName={account}",
-        ]
+            parts[key.strip().lower()] = (key.strip(), val.strip())
+
+        account = parts.get("accountname", ("AccountName", storage_account))[1]
+        account_key = parts.get("accountkey", ("AccountKey", None))[1]
+        sas = parts.get("sharedaccesssignature", ("SharedAccessSignature", None))[1]
+
+        connection: list[str] = []
+        if "defaultendpointsprotocol" in parts:
+            original_key, proto = parts["defaultendpointsprotocol"]
+            connection.append(f"{original_key}={proto}")
+        else:
+            connection.append("DefaultEndpointsProtocol=https")
+
+        if account:
+            connection.append(f"AccountName={account}")
+
         blob_endpoint = parts.get("blobendpoint")
         if blob_endpoint:
-            connection.append(f"BlobEndpoint={blob_endpoint}")
+            connection.append(f"{blob_endpoint[0]}={blob_endpoint[1]}")
+
         if account_key:
             connection.append(f"AccountKey={account_key}")
+
         if sas:
             connection.append(f"SharedAccessSignature={sas}")
+
         if "endpointsuffix" in parts:
-            connection.append(f"EndpointSuffix={parts['endpointsuffix']}")
+            suffix_key, suffix_val = parts["endpointsuffix"]
+            connection.append(f"{suffix_key}={suffix_val}")
         elif not blob_endpoint:
             connection.append("EndpointSuffix=core.windows.net")
+
+        for endpoint_key in ("queueendpoint", "tableendpoint", "fileendpoint"):
+            if endpoint_key in parts:
+                original_key, val = parts[endpoint_key]
+                connection.append(f"{original_key}={val}")
+
         connection_string = ";".join(connection)
-        return AzureCredential(storage_account=account, connection_string=connection_string, account_key=account_key, sas_token=sas)
+        return AzureCredential(
+            storage_account=account or storage_account,
+            connection_string=connection_string,
+            account_key=account_key,
+            sas_token=sas,
+        )
 
     token = value.lstrip("?")
     if token.lower().startswith("sv=") and "sig=" in token:
