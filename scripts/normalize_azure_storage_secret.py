@@ -25,9 +25,10 @@ def parse_credential(raw: str, storage_account: str) -> AzureCredential:
     if not value:
         raise ValueError("Credential must not be empty")
 
-    if ";" in value and "=" in value:
+    normalized_value = value.replace("\r\n", "\n").replace("\r", "\n")
+    if "=" in normalized_value and (";" in normalized_value or "\n" in normalized_value):
         parts: dict[str, tuple[str, str]] = {}
-        for segment in value.split(";"):
+        for segment in re.split(r"[;\n]+", normalized_value):
             if not segment or "=" not in segment:
                 continue
             key, val = segment.split("=", 1)
@@ -87,7 +88,7 @@ def parse_credential(raw: str, storage_account: str) -> AzureCredential:
         )
         return AzureCredential(storage_account=storage_account, connection_string=connection_string, sas_token=token)
 
-    if re.fullmatch(r"[A-Za-z0-9+/=]{20,}" , value):
+    if re.fullmatch(r"[A-Za-z0-9+/=]{20,}", value):
         connection_string = (
             "DefaultEndpointsProtocol=https;"
             f"AccountName={storage_account};"
