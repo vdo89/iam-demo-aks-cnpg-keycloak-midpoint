@@ -20,7 +20,6 @@ PARAMS_ENV_FILE="${PARAMS_ENV_FILE:-k8s/apps/params.env}"
 INGRESS_CLASS_NAME="${INGRESS_CLASS_NAME:-}"
 
 require_cmd kubectl
-require_cmd jq
 require_cmd python3
 
 write_ingress_params() {
@@ -32,7 +31,8 @@ write_ingress_params() {
   log "Writing ingress parameters to ${file}..."
   cat <<EOF >"${file}"
 # Ingress parameters for the IAM demo environment.
-# Updated by scripts/configure_demo_hosts.sh.
+# Hosts rotate via scripts/configure_demo_hosts.sh; update ingressClass here if
+# your cluster uses a different controller.
 ingressClass=${ingress_class}
 keycloakHost=${keycloak_host}
 midpointHost=${midpoint_host}
@@ -40,57 +40,22 @@ EOF
   log "Ingress parameters updated. Commit and push this change so Argo CD reconciles the new hosts."
 }
 
-# Ensure the GitOps manifests target the ingress-nginx controller that actually
-# exists in the cluster. Some environments publish the class as "nginx", others
-# as "ingress-nginx" (or mark an internal/external variant as default). Auto-
-# detecting the class prevents the "IngressClass <name> not found" events the
-# user reported when the script or manifests point at the wrong name.
-detect_ingress_class() {
-  local json=""
-  local detected=""
-
-  if [[ -n "${INGRESS_CLASS_NAME}" ]]; then
-    if kubectl get ingressclass "${INGRESS_CLASS_NAME}" >/dev/null 2>&1; then
-      log "Using ingress class ${INGRESS_CLASS_NAME} from INGRESS_CLASS_NAME."
-      return
-    fi
-
-    log "ERROR: IngressClass ${INGRESS_CLASS_NAME} not found in the cluster."
-    kubectl get ingressclass || true
-    exit 1
-  fi
-
-  log "Auto-detecting ingress-nginx IngressClass..."
-  if ! json=$(kubectl get ingressclass -o json 2>/dev/null); then
-    log "ERROR: Failed to list IngressClass resources."
-    exit 1
-  fi
-
-  detected=$(jq -r '
-    .items
-    | map(select(.spec.controller == "k8s.io/ingress-nginx"))
-    | (map(select((.metadata.annotations["ingressclass.kubernetes.io/is-default-class"] // "") == "true"))[0]?.metadata.name
-       // .[0]?.metadata.name
-       // empty)
-  ' <<<"${json}" | tr -d '\r\n')
-
-  if [[ -z "${detected}" ]]; then
-    log "ERROR: Could not find an IngressClass managed by ingress-nginx."
-    kubectl get ingressclass || true
-    exit 1
-  fi
-
-  INGRESS_CLASS_NAME="${detected}"
-  log "Detected ingress class: ${INGRESS_CLASS_NAME}"
-}
-
 update_gitops_manifests() {
-  if [[ -z "${INGRESS_CLASS_NAME}" ]]; then
-    log "ERROR: Ingress class name is not set."
-    exit 1
+  local ingress_class
+  ingress_class="${INGRESS_CLASS_NAME:-}"
+
+  if [[ -z "${ingress_class}" && -f "${PARAMS_ENV_FILE}" ]]; then
+    ingress_class=$(grep -E '^ingressClass=' "${PARAMS_ENV_FILE}" | tail -n1 | cut -d'=' -f2- | tr -d '\r\n')
   fi
 
-  write_ingress_params "${PARAMS_ENV_FILE}" "${INGRESS_CLASS_NAME}" "${KC_HOST}" "${MP_HOST}"
+  if [[ -z "${ingress_class}" ]]; then
+    ingress_class="nginx"
+    log "ingressClass not set in ${PARAMS_ENV_FILE}; defaulting to ${ingress_class}. Update the file if your controller uses a different class."
+  else
+    log "Reusing ingressClass ${ingress_class} from Git-managed parameters."
+  fi
+
+  write_ingress_params "${PARAMS_ENV_FILE}" "${ingress_class}" "${KC_HOST}" "${MP_HOST}"
 }
 
 resolve_ingress_ip() {
@@ -181,7 +146,6 @@ wait_for_ingress_controller() {
 
 main() {
   wait_for_ingress_controller
-  detect_ingress_class
   resolve_ingress_ip
   update_gitops_manifests
   log "✅ GitOps parameters updated in ${PARAMS_ENV_FILE}."
