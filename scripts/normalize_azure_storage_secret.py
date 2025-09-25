@@ -73,7 +73,8 @@ def parse_credential(raw: str, storage_account: str) -> AzureCredential:
         )
 
     token = value.lstrip("?")
-    if token.lower().startswith("sv=") and "sig=" in token:
+    token_lower = token.lower()
+    if "sig=" in token_lower and "sv=" in token_lower:
         connection_string = (
             "DefaultEndpointsProtocol=https;"
             f"AccountName={storage_account};"

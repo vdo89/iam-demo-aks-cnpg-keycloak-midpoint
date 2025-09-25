@@ -24,6 +24,13 @@ def test_parse_sas_token():
     assert "SharedAccessSignature=" in cred.connection_string
 
 
+def test_parse_sas_token_with_different_order():
+    token = "sp=racwdl&st=2024-01-01T00%3A00%3A00Z&se=2024-12-31T23%3A59%3A59Z&sv=2021-10-04&sig=anotherfake"
+    cred = parse_credential(token, "demoacct")
+    assert cred.sas_token == token
+    assert "SharedAccessSignature=" in cred.connection_string
+
+
 def test_parse_sas_connection_string():
     raw = (
         "BlobEndpoint=https://example.blob.core.windows.net/;"
