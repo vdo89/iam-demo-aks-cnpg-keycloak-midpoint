@@ -30,6 +30,20 @@ def test_parse_connection_string_with_newlines():
     assert "EndpointSuffix=core.windows.net" in cred.connection_string
 
 
+def test_parse_single_account_key_pair():
+    raw = "AccountKey=ZmFrZUFjY291bnRLZXkxMjM0NTY="
+    cred = parse_credential(raw, "demoacct")
+    assert cred.account_key == "ZmFrZUFjY291bnRLZXkxMjM0NTY="
+    assert cred.storage_account == "demoacct"
+
+
+def test_parse_single_sas_pair():
+    raw = "SharedAccessSignature=sv=2021-10-04&sig=fake"
+    cred = parse_credential(raw, "demoacct")
+    assert cred.sas_token == "sv=2021-10-04&sig=fake"
+    assert "SharedAccessSignature=sv=2021-10-04&sig=fake" in cred.connection_string
+
+
 def test_parse_sas_token():
     token = "?sv=2021-10-04&ss=bf&srt=sco&sp=rl&sig=fakesignature"
     cred = parse_credential(token, "demoacct")
