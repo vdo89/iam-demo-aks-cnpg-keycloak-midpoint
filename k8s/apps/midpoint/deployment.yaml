@@ -516,6 +516,12 @@ spec:
           env:
             - name: MP_SET_midpoint_administrator_initialPassword_FILE
               value: /var/run/secrets/midpoint-admin/password
+            - name: MP_SET_midpoint_administrator_userId
+              valueFrom:
+                secretKeyRef:
+                  name: midpoint-admin
+                  key: username
+                  optional: true
             - name: MP_MEM_INIT
               value: "768M"
             - name: MP_MEM_MAX
