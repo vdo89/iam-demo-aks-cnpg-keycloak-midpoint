@@ -91,9 +91,9 @@ spec:
   # the probe configuration inside the supported schema rather than the
   # `unsupported.podTemplate` escape hatch. The operator still defaults to the
   # management port, but enabling the Quarkus health endpoints above keeps the
-  # `/health/ready` handler available during bootstrap. Relax the thresholds so
-  # Keycloak can finish the initial augmentation without the pod cycling.
+  # `/health/ready` handler available during bootstrap. The CRD currently lacks
+  # an `initialDelaySeconds` knob, so we rely on a more permissive probe
+  # threshold to keep Keycloak alive while it performs the initial augmentation.
   startupProbe:
-    initialDelaySeconds: 30
     periodSeconds: 5
     failureThreshold: 12
