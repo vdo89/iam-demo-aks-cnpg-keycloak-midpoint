@@ -1475,7 +1475,7 @@ jobs:
             exit 1
           fi
 
-          timeout_seconds=${ARGOCD_APPS_TIMEOUT_SECONDS:-900}
+          timeout_seconds=${ARGOCD_APPS_TIMEOUT_SECONDS:-90}
           interval_seconds=10
           max_attempts=$((timeout_seconds / interval_seconds))
           echo "Waiting for Argo CD application 'apps' to reach Synced/Healthy (timeout ${timeout_seconds}s)"
