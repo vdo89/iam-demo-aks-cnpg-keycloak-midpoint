@@ -1,50 +1,16 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
 namespace: iam
 
-resources:
-  - deployment.yaml
-  - ingress.yaml
-  - seeder-job.yaml
+resources: [deployment.yaml, ingress.yaml, seeder-job.yaml]
+
+generatorOptions:
+  disableNameSuffixHash: true
 
 configMapGenerator:
   - name: midpoint-config
-    files:
-      - config.xml
-    options:
-      disableNameSuffixHash: true
+    files: [config.xml]
   - name: midpoint-env
-    literals:
-      - MP_NO_ENV_COMPAT=1
-      - MP_UNSET_midpoint_repository_database=1
-      - MP_UNSET_midpoint_repository_jdbcUrl=1
-      - MP_UNSET_midpoint_repository_hibernateHbm2ddl=1
-      - MP_UNSET_midpoint_repository_initializationFailTimeout=1
-      - MP_UNSET_midpoint_repository_missingSchemaAction=1
-      - MP_UNSET_midpoint_repository_upgradeableSchemaAction=1
-      - MP_UNSET_midpoint_repository_jdbcUsername=1
-      - MP_UNSET_midpoint_repository_jdbcPassword=1
-      - MP_UNSET_midpoint_repository_username=1
-      - MP_UNSET_midpoint_repository_password=1
-      - MP_UNSET_midpoint_administrator_initialPassword_FILE=1
-      - MP_UNSET_midpoint_administrator_userId_FILE=1
-      - MIDPOINT_DB_HOST=iam-db-rw.iam.svc.cluster.local
-      - MIDPOINT_DB_PORT=5432
-      - MIDPOINT_DB_NAME=midpoint
-      - MIDPOINT_DB_WAIT_MAX_ATTEMPTS=60
-      - MIDPOINT_DB_WAIT_SLEEP_SECONDS=5
-    options:
-      disableNameSuffixHash: true
+    literals: [MP_NO_ENV_COMPAT=1, MP_UNSET_midpoint_repository_database=1, MP_UNSET_midpoint_repository_jdbcUrl=1, MP_UNSET_midpoint_repository_hibernateHbm2ddl=1, MP_UNSET_midpoint_repository_initializationFailTimeout=1, MP_UNSET_midpoint_repository_missingSchemaAction=1, MP_UNSET_midpoint_repository_upgradeableSchemaAction=1, MP_UNSET_midpoint_repository_jdbcUsername=1, MP_UNSET_midpoint_repository_jdbcPassword=1, MP_UNSET_midpoint_repository_username=1, MP_UNSET_midpoint_repository_password=1, MP_UNSET_midpoint_administrator_initialPassword_FILE=1, MP_UNSET_midpoint_administrator_userId_FILE=1, MIDPOINT_DB_HOST=iam-db-rw.iam.svc.cluster.local, MIDPOINT_DB_PORT=5432, MIDPOINT_DB_NAME=midpoint, MIDPOINT_DB_WAIT_MAX_ATTEMPTS=60, MIDPOINT_DB_WAIT_SLEEP_SECONDS=5]
   - name: midpoint-objects
-    files:
-      - objects/01_org_rws.xml
-      - objects/02_role_project_admin.xml
-      - objects/03_org_architects.xml
-      - objects/04_user_director.xml
-      - objects/05_user_architect1.xml
-      - objects/06_user_po1.xml
-      - objects/07_user_dev1.xml
-    options:
-      disableNameSuffixHash: true
+    files: [objects/01_org_rws.xml, objects/02_role_project_admin.xml, objects/03_org_architects.xml, objects/04_user_director.xml, objects/05_user_architect1.xml, objects/06_user_po1.xml, objects/07_user_dev1.xml]
