@@ -46,16 +46,11 @@ jobs:
           resource-group: ${{ inputs.RESOURCE_GROUP }}
           cluster-name: ${{ inputs.AKS_NAME }}
 
-      - name: Create namespaces
+      - name: Ensure Argo CD namespace exists
         shell: bash
         run: |
           set -euo pipefail
-          kubectl create ns argocd --dry-run=client -o yaml | kubectl apply -f -
-          kubectl create ns ingress-nginx --dry-run=client -o yaml | kubectl apply -f -
-          kubectl create ns cert-manager --dry-run=client -o yaml | kubectl apply -f -
-          kubectl create ns keycloak --dry-run=client -o yaml | kubectl apply -f -
-          kubectl create ns cnpg-system --dry-run=client -o yaml | kubectl apply -f -
-          kubectl create ns ${{ inputs.NAMESPACE_IAM }} --dry-run=client -o yaml | kubectl apply -f -
+          kubectl apply -f k8s/argocd/namespace.yaml
 
       - name: Install Argo CD (stable manifest)
         shell: bash
