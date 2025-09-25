@@ -1,5 +1,6 @@
 <object xmlns="http://midpoint.evolveum.com/xml/ns/public/common/common-3">
   <role>
+    <oid>22222222-2222-2222-2222-222222222222</oid>
     <name>Project Admin</name>
     <description>Role that grants project-admin permissions in the demo.</description>
     <policyRule>

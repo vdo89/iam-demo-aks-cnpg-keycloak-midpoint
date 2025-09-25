@@ -1,5 +1,6 @@
 <object xmlns="http://midpoint.evolveum.com/xml/ns/public/common/common-3">
   <org>
+    <oid>11111111-1111-1111-1111-111111111111</oid>
     <name>RWS</name>
     <displayName>Rijkswaterstaat</displayName>
     <identifier>ORG-RWS</identifier>
