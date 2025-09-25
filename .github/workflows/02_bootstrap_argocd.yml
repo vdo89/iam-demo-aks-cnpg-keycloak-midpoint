@@ -46,16 +46,11 @@ jobs:
           resource-group: ${{ inputs.RESOURCE_GROUP }}
           cluster-name: ${{ inputs.AKS_NAME }}
 
-      - name: Create namespaces
+      - name: Create Argo CD namespace
         shell: bash
         run: |
           set -euo pipefail
           kubectl create ns argocd --dry-run=client -o yaml | kubectl apply -f -
-          kubectl create ns ingress-nginx --dry-run=client -o yaml | kubectl apply -f -
-          kubectl create ns cert-manager --dry-run=client -o yaml | kubectl apply -f -
-          kubectl create ns keycloak --dry-run=client -o yaml | kubectl apply -f -
-          kubectl create ns cnpg-system --dry-run=client -o yaml | kubectl apply -f -
-          kubectl create ns ${{ inputs.NAMESPACE_IAM }} --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Install Argo CD (stable manifest)
         shell: bash
@@ -327,6 +322,29 @@ jobs:
           done
           echo "Timed out waiting for cnpg-operator Argo CD application to become healthy"
           kubectl -n argocd get application cnpg-operator -o yaml || true
+          exit 1
+
+      - name: Wait for keycloak-operator Argo CD application
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Waiting for Argo CD application keycloak-operator to be created..."
+          for attempt in $(seq 1 20); do
+            if kubectl -n argocd get application keycloak-operator >/dev/null 2>&1; then
+              sync_status=$(kubectl -n argocd get application keycloak-operator -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")
+              health_status=$(kubectl -n argocd get application keycloak-operator -o jsonpath='{.status.health.status}' 2>/dev/null || echo "")
+              if [ "$sync_status" = "Synced" ] && [ "$health_status" = "Healthy" ]; then
+                echo "keycloak-operator application is synced and healthy"
+                exit 0
+              fi
+              echo "keycloak-operator status: sync=${sync_status:-<unknown>} health=${health_status:-<unknown>} (attempt ${attempt}/20)"
+            else
+              echo "Application keycloak-operator not found yet (attempt ${attempt}/20)"
+            fi
+            sleep 10
+          done
+          echo "Timed out waiting for keycloak-operator Argo CD application to become healthy"
+          kubectl -n argocd get application keycloak-operator -o yaml || true
           exit 1
 
       - name: Wait for CNPG operator CRDs
@@ -1221,15 +1239,6 @@ jobs:
 
           echo "cnpg-webhook-service ready endpoints: ${ready_endpoints:-<unknown>}"
 
-      - name: Install Keycloak Operator (CRDs + operator Deployment)
-        shell: bash
-        run: |
-          set -euo pipefail
-          kubectl apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/26.3.4/kubernetes/keycloaks.k8s.keycloak.org-v1.yml
-          kubectl apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/26.3.4/kubernetes/keycloakrealmimports.k8s.keycloak.org-v1.yml
-          echo "Applying Keycloak operator controller manifests into namespace keycloak"
-          kubectl apply --namespace keycloak -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/26.3.4/kubernetes/kubernetes.yml
-
       - name: Prepare midPoint config and admin secret
         shell: bash
         env:
@@ -1254,191 +1263,6 @@ jobs:
               break
             fi
           done
-
-      - name: Grant Keycloak operator access to IAM namespace
-        shell: bash
-        env:
-          IAM_NAMESPACE: ${{ inputs.NAMESPACE_IAM }}
-        run: |
-          set -euo pipefail
-
-          target_ns="${IAM_NAMESPACE}"
-          if [ -z "${target_ns}" ]; then
-            echo "IAM_NAMESPACE input must not be empty"
-            exit 1
-          fi
-
-          operator_namespace=""
-          for candidate in keycloak keycloak-system default; do
-            if kubectl -n "${candidate}" get deployment keycloak-operator >/dev/null 2>&1; then
-              operator_namespace="${candidate}"
-              break
-            fi
-          done
-
-          if [ -z "${operator_namespace}" ]; then
-            echo "Unable to determine the namespace where keycloak-operator is running"
-            kubectl get deployments -A || true
-            exit 1
-          fi
-
-          if [ "${target_ns}" = "${operator_namespace}" ]; then
-            echo "Keycloak operator already runs in namespace ${target_ns}; no cross-namespace RBAC changes required."
-          else
-            operator_service_account="keycloak-operator"
-            echo "Ensuring service account ${operator_namespace}/${operator_service_account} can manage Keycloak resources in namespace ${target_ns}"
-
-            ensure_cluster_role_binding() {
-              local binding_name="$1"
-              local cluster_role="$2"
-
-              if ! kubectl get clusterrole "${cluster_role}" >/dev/null 2>&1; then
-                echo "ClusterRole ${cluster_role} not found; cannot create RoleBinding ${binding_name}"
-                return 1
-              fi
-
-              echo "Applying RoleBinding ${binding_name} -> ClusterRole ${cluster_role} in namespace ${target_ns}"
-              kubectl -n "${target_ns}" create rolebinding "${binding_name}" \
-                --clusterrole="${cluster_role}" \
-                --serviceaccount="${operator_namespace}:${operator_service_account}" \
-                --dry-run=client -o yaml | kubectl apply -f -
-            }
-
-            ensure_cluster_role_binding "keycloak-operator-controller-${target_ns}" "keycloakcontroller-cluster-role"
-            ensure_cluster_role_binding "keycloak-operator-realm-${target_ns}" "keycloakrealmimportcontroller-cluster-role"
-            ensure_cluster_role_binding "keycloak-operator-view-${target_ns}" "view"
-
-            echo "Confirmed Keycloak operator RBAC for namespace ${target_ns}"
-          fi
-
-      - name: Configure Keycloak operator watch namespaces
-        shell: bash
-        env:
-          IAM_NAMESPACE: ${{ inputs.NAMESPACE_IAM }}
-        run: |
-          set -euo pipefail
-
-          operator_namespace=""
-          for ns in keycloak keycloak-system default; do
-            if kubectl -n "${ns}" get deployment keycloak-operator >/dev/null 2>&1; then
-              operator_namespace="${ns}"
-              break
-            fi
-          done
-
-          if [ -z "${operator_namespace}" ]; then
-            echo "Unable to locate keycloak-operator deployment in expected namespaces (keycloak, keycloak-system, default)."
-            echo "Available deployments:" || true
-            kubectl get deployments -A || true
-            exit 1
-          fi
-
-          watch_namespaces="${IAM_NAMESPACE}"
-          if [ "${IAM_NAMESPACE}" != "${operator_namespace}" ]; then
-            watch_namespaces="${watch_namespaces},${operator_namespace}"
-          fi
-
-          watch_namespaces="$(python3 -c 'import sys; raw = sys.argv[1]; parts = [part.strip() for part in raw.split(",") if part.strip()]; print(",".join(dict.fromkeys(parts)))' "$watch_namespaces")"
-
-          if [ -z "${watch_namespaces}" ]; then
-            echo "Computed watch namespace list is empty; refusing to update keycloak-operator configuration."
-            exit 1
-          fi
-
-          canonicalize_csv() {
-            local raw="$1"
-            python3 -c 'import sys; raw = sys.argv[1]; parts = sorted({part.strip() for part in raw.split(",") if part.strip()}); print(",".join(parts))' "$raw"
-          }
-
-          get_env_value() {
-            local env_name="$1"
-            kubectl -n "${operator_namespace}" get deployment keycloak-operator -o json \
-              | jq -r --arg name "${env_name}" '
-                (
-                  [
-                    .spec.template.spec.containers[]
-                    | select(.name == "keycloak-operator")
-                    | (.env // [])
-                    | .[]
-                    | select(.name == $name)
-                    | .value
-                  ][0]
-                ) // ""
-              '
-          }
-
-          desired_canonical="$(canonicalize_csv "${watch_namespaces}")"
-          current_namespaces_raw="$(get_env_value "QUARKUS_OPERATOR_SDK_NAMESPACES")"
-          current_generate_raw="$(get_env_value "QUARKUS_OPERATOR_SDK_GENERATE_WITH_WATCHED_NAMESPACES")"
-          current_namespaces_canonical="$(canonicalize_csv "${current_namespaces_raw}")"
-          current_generate_canonical="$(canonicalize_csv "${current_generate_raw}")"
-
-          if [ "${current_namespaces_canonical}" = "${desired_canonical}" ] && \
-             [ "${current_generate_canonical}" = "${desired_canonical}" ]; then
-            echo "Keycloak operator already configured to watch namespaces: ${current_namespaces_raw:-<unset>}"
-            exit 0
-          fi
-
-          echo "Configuring keycloak-operator in namespace ${operator_namespace} to watch: ${watch_namespaces}"
-          kubectl -n "${operator_namespace}" set env deployment/keycloak-operator \
-            QUARKUS_OPERATOR_SDK_NAMESPACES="${watch_namespaces}" \
-            QUARKUS_OPERATOR_SDK_GENERATE_WITH_WATCHED_NAMESPACES="${watch_namespaces}" \
-            --overwrite
-
-          wait_for_rollout() {
-            local timeout_value="$1"
-            set +e
-            kubectl -n "${operator_namespace}" rollout status deployment/keycloak-operator --timeout="${timeout_value}"
-            local status=$?
-            set -e
-            return "${status}"
-          }
-
-          if wait_for_rollout 300s; then
-            echo "keycloak-operator deployment rollout completed successfully."
-            exit 0
-          fi
-
-          echo "Initial rollout did not complete within the expected time; gathering diagnostics."
-          kubectl -n "${operator_namespace}" get pods -l app.kubernetes.io/name=keycloak-operator -o wide || true
-
-          mapfile -t terminating_pods < <(
-            kubectl -n "${operator_namespace}" get pods -l app.kubernetes.io/name=keycloak-operator -o json \
-              | jq -r '.items[] | select(.metadata.deletionTimestamp != null) | .metadata.name'
-          )
-
-          if [ "${#terminating_pods[@]}" -gt 0 ]; then
-            echo "Force-deleting stuck terminating keycloak-operator pods: ${terminating_pods[*]}"
-            for pod in "${terminating_pods[@]}"; do
-              kubectl -n "${operator_namespace}" delete pod "${pod}" --force --grace-period=0 || true
-            done
-
-            if wait_for_rollout 240s; then
-              echo "keycloak-operator deployment rollout completed after removing terminating pods."
-              exit 0
-            fi
-
-            echo "Rollout still failing after retry; collecting detailed diagnostics."
-          else
-            echo "No terminating pods detected; collecting detailed diagnostics for failed rollout."
-          fi
-
-          kubectl -n "${operator_namespace}" describe deployment keycloak-operator || true
-          kubectl -n "${operator_namespace}" get pods -l app.kubernetes.io/name=keycloak-operator -o yaml || true
-
-          mapfile -t operator_pods < <(
-            kubectl -n "${operator_namespace}" get pods -l app.kubernetes.io/name=keycloak-operator -o json \
-              | jq -r '.items[] | .metadata.name'
-          )
-
-          if [ "${#operator_pods[@]}" -gt 0 ]; then
-            for pod in "${operator_pods[@]}"; do
-              echo "Logs for pod ${pod}:"
-              kubectl -n "${operator_namespace}" logs "${pod}" || true
-            done
-          fi
-
-          exit 1
 
       - name: Create Argo CD application for iam apps (Keycloak + midPoint)
         shell: bash
