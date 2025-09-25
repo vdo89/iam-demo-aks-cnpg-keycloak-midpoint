@@ -26,6 +26,9 @@ permissions:
 jobs:
   bootstrap:
     runs-on: ubuntu-latest
+    env:
+      ARGOCD_REPO_USERNAME: ${{ secrets.ARGOCD_REPO_USERNAME }}
+      ARGOCD_REPO_TOKEN: ${{ secrets.ARGOCD_REPO_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -59,12 +62,12 @@ jobs:
           kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=300s
 
       - name: Configure Argo CD repository credentials (private repos only)
-        if: ${{ secrets.ARGOCD_REPO_USERNAME != '' && secrets.ARGOCD_REPO_TOKEN != '' }}
+        if: ${{ env.ARGOCD_REPO_USERNAME != '' && env.ARGOCD_REPO_TOKEN != '' }}
         shell: bash
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
-          ARGOCD_REPO_USERNAME: ${{ secrets.ARGOCD_REPO_USERNAME }}
-          ARGOCD_REPO_TOKEN: ${{ secrets.ARGOCD_REPO_TOKEN }}
+          ARGOCD_REPO_USERNAME: ${{ env.ARGOCD_REPO_USERNAME }}
+          ARGOCD_REPO_TOKEN: ${{ env.ARGOCD_REPO_TOKEN }}
         run: |
           set -euo pipefail
           owner="${GITHUB_REPOSITORY%%/*}"
