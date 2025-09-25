@@ -11,18 +11,6 @@ on:
         description: 'AKS cluster name (from TF outputs)'
         required: true
         default: 'rwsdemo-aks'
-      NAMESPACE_IAM:
-        description: 'Namespace for IAM stack (Keycloak + midPoint)'
-        required: true
-        default: 'iam'
-      KEYCLOAK_SERVICE_NAME:
-        description: 'Keycloak Service name (check kubectl -n <ns> get svc)'
-        required: true
-        default: 'rws-keycloak-service'
-      KEYCLOAK_SERVICE_PORT:
-        description: 'Keycloak Service port (8080 for httpEnabled=true)'
-        required: true
-        default: '8080'
 
 permissions:
   id-token: write
@@ -50,13 +38,9 @@ jobs:
       - name: Configure demo ingress hosts
         id: configure
         shell: bash
-        env:
-          NAMESPACE_IAM: ${{ inputs.NAMESPACE_IAM }}
-          KEYCLOAK_SERVICE_NAME: ${{ inputs.KEYCLOAK_SERVICE_NAME }}
-          KEYCLOAK_SERVICE_PORT: ${{ inputs.KEYCLOAK_SERVICE_PORT }}
         run: |
           set -euo pipefail
-          bash scripts/configure_demo_hosts.sh
+          python3 scripts/configure_demo_hosts.py --params-file gitops/apps/iam/params.env
 
       - name: Commit ingress host parameters
         shell: bash
@@ -65,12 +49,12 @@ jobs:
           KC_HOST_VALUE="${KC_HOST:-}"
           MP_HOST_VALUE="${MP_HOST:-}"
           BRANCH_REF="${GITHUB_REF:-}"
-          if git diff --quiet --exit-code -- k8s/apps/params.env; then
+          if git diff --quiet --exit-code -- gitops/apps/iam/params.env; then
             echo "Ingress host parameters already up to date; skipping commit."
           else
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add k8s/apps/params.env
+            git add gitops/apps/iam/params.env
             git commit -m "Update demo ingress hosts to ${KC_HOST_VALUE} and ${MP_HOST_VALUE}"
             if [[ "${BRANCH_REF}" == refs/heads/* ]]; then
               BRANCH_NAME="${BRANCH_REF#refs/heads/}"

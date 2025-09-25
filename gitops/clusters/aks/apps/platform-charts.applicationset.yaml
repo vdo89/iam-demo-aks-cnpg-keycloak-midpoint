@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: addons-charts
+  name: platform-addons
   namespace: argocd
 spec:
   goTemplate: true
@@ -12,51 +12,49 @@ spec:
             namespace: cert-manager
             repoURL: https://charts.jetstack.io
             chart: cert-manager
-            targetRevision: v1.15.1
-            releaseName: cert-manager
-            values: '{"installCRDs":true,"prometheus":{"enabled":false}}'
-          - name: cnpg-operator
+            targetRevision: v1.18.2
+            values:
+              installCRDs: true
+              prometheus:
+                enabled: false
+          - name: cloudnative-pg
             namespace: cnpg-system
             repoURL: https://cloudnative-pg.github.io/charts
             chart: cloudnative-pg
             targetRevision: 0.26.0
-            releaseName: cnpg
-            values: '{"crds":{"create":true}}'
+            values:
+              crds:
+                create: true
           - name: ingress-nginx
             namespace: ingress-nginx
             repoURL: https://kubernetes.github.io/ingress-nginx
             chart: ingress-nginx
-            targetRevision: 4.10.1
-            releaseName: ingress-nginx
-            # Use the built-in status endpoint exposed on the default server so Azure probes
-            # get HTTP 200s even before any ingress rules exist.
-            values: |
+            targetRevision: 4.13.2
+            values:
               controller:
                 service:
                   annotations:
                     service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: /is-dynamic-lb-initialized
                   type: LoadBalancer
-                # Treat the ingress-nginx class as default so Keycloak's operator-managed ingress
-                # reconciles even before the Git-managed parameters explicitly set the class.
                 watchIngressWithoutClass: true
                 ingressClassResource:
                   default: true
   template:
     metadata:
       name: '{{.name}}'
-      namespace: argocd
     spec:
-      project: default
+      project: platform
       destination:
-        server: https://kubernetes.default.svc
         namespace: '{{.namespace}}'
+        server: https://kubernetes.default.svc
       source:
         repoURL: '{{.repoURL}}'
         chart: '{{.chart}}'
         targetRevision: '{{.targetRevision}}'
         helm:
-          releaseName: '{{.releaseName}}'
-          values: '{{.values}}'
+          releaseName: '{{.name}}'
+          values: |
+{{ toYaml .values | indent 12 }}
       syncPolicy:
         automated:
           prune: true
@@ -67,9 +65,6 @@ spec:
     {{- if eq .name "cert-manager" }}
     spec:
       ignoreDifferences:
-        # cert-manager injects webhook and APIService CA bundles at runtime, so
-        # ignore those controller-managed fields to keep Argo CD from reporting
-        # perpetual drift.
         - group: admissionregistration.k8s.io
           kind: MutatingWebhookConfiguration
           jqPathExpressions:
@@ -86,7 +81,7 @@ spec:
         syncOptions:
           - CreateNamespace=true
           - ServerSideApply=true
-    {{- else if eq .name "cnpg-operator" }}
+    {{- else if eq .name "cloudnative-pg" }}
     spec:
       source:
         helm:
@@ -95,4 +90,9 @@ spec:
         syncOptions:
           - CreateNamespace=true
           - ServerSideApply=true
+    {{- else }}
+    spec:
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true
     {{- end }}

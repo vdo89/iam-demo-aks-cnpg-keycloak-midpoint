@@ -1,25 +1,21 @@
-name: 02 - Bootstrap ArgoCD, Addons, DB, Keycloak, midPoint
+name: 02 - Bootstrap GitOps stack
 
 on:
   workflow_dispatch:
     inputs:
-      LOCATION:
-        description: 'Azure region'
-        required: false
-        default: 'westeurope'
       RESOURCE_GROUP:
-        description: 'Resource Group name (output of TF)'
+        description: 'Resource Group name (Terraform output)'
         required: true
         default: 'rwsdemo-rg'
       AKS_NAME:
-        description: 'AKS cluster name (output of TF)'
+        description: 'AKS cluster name (Terraform output)'
         required: true
         default: 'rwsdemo-aks'
       STORAGE_ACCOUNT:
-        description: 'Azure Storage Account name for CNPG backups (output of TF)'
+        description: 'Azure Storage Account name for CNPG backups (Terraform output)'
         required: true
       NAMESPACE_IAM:
-        description: 'Namespace for IAM stack (Keycloak + midPoint + DB)'
+        description: 'Namespace for IAM workloads (Keycloak + midPoint + CNPG)'
         required: false
         default: 'iam'
 
@@ -46,61 +42,24 @@ jobs:
           resource-group: ${{ inputs.RESOURCE_GROUP }}
           cluster-name: ${{ inputs.AKS_NAME }}
 
-      - name: Create Argo CD namespace
+      - name: Install Argo CD (kustomize bootstrap)
         shell: bash
         run: |
           set -euo pipefail
-          kubectl create ns argocd --dry-run=client -o yaml | kubectl apply -f -
-
-      - name: Install Argo CD (stable manifest)
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          ARGOCD_VERSION="v3.1.6"
-          ARGOCD_MANIFEST_URL="https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/install.yaml"
-
-          echo "Downloading Argo CD install manifest ${ARGOCD_VERSION} from ${ARGOCD_MANIFEST_URL}"
-          manifest_path=$(mktemp)
-          cleanup() {
-            rm -f "${manifest_path}"
-          }
-          trap cleanup EXIT
-
-          for attempt in $(seq 1 5); do
-            rm -f "${manifest_path}"
-            if curl -fsSLo "${manifest_path}" --connect-timeout 10 --max-time 120 \
-              --retry 3 --retry-delay 5 --retry-all-errors \
-              "${ARGOCD_MANIFEST_URL}"; then
-              if [ -s "${manifest_path}" ]; then
-                echo "Downloaded Argo CD manifest to ${manifest_path}"
-                break
-              fi
-              echo "Downloaded file is empty; retrying"
-            else
-              echo "Failed to download Argo CD manifest from ${ARGOCD_MANIFEST_URL} (attempt ${attempt}/5)"
-            fi
-
-            if [ "${attempt}" -eq 5 ]; then
-              echo "Unable to download Argo CD manifest after ${attempt} attempts"
-              exit 1
-            fi
-
-            echo "Retrying download in 5 seconds"
-            sleep 5
-          done
-
-          echo "Applying Argo CD manifest ${ARGOCD_VERSION} into namespace argocd"
-          kubectl apply -n argocd -f "${manifest_path}"
-          echo "Waiting for Argo CD core components to become ready..."
-          for workload in deploy/argocd-server deploy/argocd-repo-server deploy/argocd-redis deploy/argocd-dex-server; do
+          kubectl apply -k gitops/clusters/aks/bootstrap
+          echo "Waiting for Argo CD control plane to become ready"
+          for workload in \
+            deploy/argocd-server \
+            deploy/argocd-repo-server \
+            deploy/argocd-redis \
+            deploy/argocd-dex-server; do
             echo "Waiting for rollout of ${workload}"
-            kubectl -n argocd rollout status "$workload" --timeout=300s
+            kubectl -n argocd rollout status "${workload}" --timeout=300s
           done
-          echo "Waiting for Argo CD application controller statefulset"
           kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=300s
 
-      - name: Configure Argo CD repository credentials
+      - name: Configure Argo CD repository credentials (private repos only)
+        if: ${{ secrets.ARGOCD_REPO_USERNAME != '' && secrets.ARGOCD_REPO_TOKEN != '' }}
         shell: bash
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -108,1478 +67,163 @@ jobs:
           ARGOCD_REPO_TOKEN: ${{ secrets.ARGOCD_REPO_TOKEN }}
         run: |
           set -euo pipefail
-
-          REPO_OWNER="${GITHUB_REPOSITORY%%/*}"
-          REPO_NAME="${GITHUB_REPOSITORY##*/}"
-          if [ -z "${ARGOCD_REPO_USERNAME}" ] || [ -z "${ARGOCD_REPO_TOKEN}" ]; then
-            echo "Secrets ARGOCD_REPO_USERNAME and ARGOCD_REPO_TOKEN not provided; checking if repository is public..."
-            if curl -sS "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}" | jq -e '.private == false' >/dev/null; then
-              echo "Repository is public; skipping Argo CD repository secret."
-              exit 0
-            fi
-            echo "Repository appears to be private. Provide ARGOCD_REPO_USERNAME and ARGOCD_REPO_TOKEN secrets so Argo CD can sync."
-            exit 1
-          fi
-
-          sanitized=$(printf '%s' "${REPO_OWNER}-${REPO_NAME}" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed 's/^-*//;s/-*$//')
-          if [ -z "${sanitized}" ]; then
-            sanitized="repo"
-          fi
-          SECRET_NAME="repo-${sanitized}"
-
-          kubectl -n argocd create secret generic "${SECRET_NAME}" \
+          owner="${GITHUB_REPOSITORY%%/*}"
+          repo="${GITHUB_REPOSITORY##*/}"
+          sanitized=$(printf '%s' "${owner}-${repo}" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed 's/^-*//;s/-*$//')
+          secret_name="repo-${sanitized:-repo}"
+          kubectl -n argocd create secret generic "${secret_name}" \
             --type=Opaque \
-            --from-literal=url="https://github.com/${REPO_OWNER}/${REPO_NAME}" \
+            --from-literal=url="https://github.com/${owner}/${repo}" \
             --from-literal=username="${ARGOCD_REPO_USERNAME}" \
             --from-literal=password="${ARGOCD_REPO_TOKEN}" \
             --dry-run=client -o yaml | kubectl apply -f -
-          kubectl -n argocd label secret "${SECRET_NAME}" \
-            argocd.argoproj.io/secret-type=repository --overwrite
-          echo "Configured Argo CD repository credentials in secret ${SECRET_NAME}"
+          kubectl -n argocd label secret "${secret_name}" argocd.argoproj.io/secret-type=repository --overwrite
 
-      - name: Pre-install CloudNativePG CRDs (server-side apply)
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if ! command -v helm >/dev/null 2>&1; then
-            echo "Helm not found on runner; installing Helm 3"
-            curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-          fi
-
-          CNPG_CHART_NAME="cloudnative-pg"
-          CNPG_CHART_VERSION="0.26.0"
-          CNPG_CHART_REF="cloudnative-pg/${CNPG_CHART_NAME}"
-
-          echo "Adding CloudNativePG Helm repository"
-          helm repo add cloudnative-pg https://cloudnative-pg.github.io/charts --force-update >/dev/null 2>&1 || true
-
-          echo "Updating CloudNativePG Helm repository index"
-          for attempt in $(seq 1 5); do
-            if helm repo update cloudnative-pg >/dev/null 2>&1; then
-              echo "Helm repository index refreshed"
-              break
-            fi
-            if [ "${attempt}" -eq 5 ]; then
-              echo "Failed to update CloudNativePG Helm repository after ${attempt} attempts"
-              exit 1
-            fi
-            echo "Helm repo update failed (attempt ${attempt}/5); retrying in 5 seconds"
-            sleep 5
-          done
-
-          echo "Downloading CloudNativePG chart ${CNPG_CHART_REF} (version ${CNPG_CHART_VERSION})"
-          chart_work_dir=$(mktemp -d)
-          trap 'rm -rf "${chart_work_dir}"' EXIT
-          for attempt in $(seq 1 5); do
-            rm -rf "${chart_work_dir:?}/${CNPG_CHART_NAME}" "${chart_work_dir:?}/${CNPG_CHART_NAME}-${CNPG_CHART_VERSION}.tgz"
-            if helm pull "${CNPG_CHART_REF}" \
-              --version "${CNPG_CHART_VERSION}" \
-              --destination "${chart_work_dir}" \
-              --untar \
-              --untardir "${chart_work_dir}"; then
-              echo "Downloaded CloudNativePG chart"
-              break
-            fi
-            if [ "${attempt}" -eq 5 ]; then
-              echo "Failed to download CloudNativePG chart after ${attempt} attempts"
-              exit 1
-            fi
-            echo "helm pull failed (attempt ${attempt}/5); retrying in 10 seconds"
-            sleep 10
-          done
-
-          chart_path="${chart_work_dir}/${CNPG_CHART_NAME}"
-
-          echo "Rendering CloudNativePG CRDs for version ${CNPG_CHART_VERSION}"
-          if ! helm show crds "${chart_path}" > /tmp/cloudnative-pg-crds.yaml; then
-            echo "'helm show crds' against the local chart failed"
-          fi
-
-          if [ ! -s /tmp/cloudnative-pg-crds.yaml ]; then
-            echo "No CRDs were returned by 'helm show crds'; falling back to helm template rendering"
-            helm template cloudnative-pg-crds "${chart_path}" \
-              --include-crds \
-              --namespace cnpg-system > /tmp/cloudnative-pg-crds-rendered.yaml
-
-            python3 <<'PY'
-          import pathlib
-          import sys
-
-          rendered_path = pathlib.Path("/tmp/cloudnative-pg-crds-rendered.yaml")
-          output_path = pathlib.Path("/tmp/cloudnative-pg-crds.yaml")
-
-          if not rendered_path.exists():
-              print("Rendered CRD manifest not found", file=sys.stderr)
-              sys.exit(1)
-
-          docs = []
-          current = []
-          for line in rendered_path.read_text().splitlines():
-              if line.strip() == '---':
-                  if current:
-                      docs.append('\n'.join(current).strip())
-                      current = []
-                  continue
-              current.append(line)
-          if current:
-              docs.append('\n'.join(current).strip())
-
-          crd_docs = []
-          for doc in docs:
-              for line in doc.splitlines():
-                  stripped = line.strip()
-                  if stripped.startswith('kind:'):
-                      if stripped.split(':', 1)[1].strip() == 'CustomResourceDefinition':
-                          crd_docs.append(doc)
-                      break
-
-          if not crd_docs:
-              print("No CustomResourceDefinition documents found in rendered template", file=sys.stderr)
-              sys.exit(1)
-
-          # Ensure each CRD document is separated by a YAML document marker on its
-          # own line. Joining with "\n---\n" avoids concatenating the marker onto
-          # the last line of the previous document when that document does not end
-          # with a trailing newline (which would create invalid YAML like
-          # "metadata:...---" and trigger kubectl parsing errors).
-          output_path.write_text('\n---\n'.join(crd_docs) + '\n')
-
-          PY
-          fi
-
-          if [ ! -s /tmp/cloudnative-pg-crds.yaml ]; then
-            echo "Failed to render CloudNativePG CRDs"
-            ls -l /tmp/cloudnative-pg-crds*
-            exit 1
-          fi
-
-          echo "Applying CloudNativePG CRDs with server-side apply"
-          kubectl apply --server-side -f /tmp/cloudnative-pg-crds.yaml
-
-          echo "Removing potential last-applied annotations that exceed Kubernetes limits"
-          for crd in \
-            backups.postgresql.cnpg.io \
-            clusterimagecatalogs.postgresql.cnpg.io \
-            clusters.postgresql.cnpg.io \
-            imagecatalogs.postgresql.cnpg.io \
-            poolers.postgresql.cnpg.io \
-            scheduledbackups.postgresql.cnpg.io; do
-            if kubectl get crd "${crd}" >/dev/null 2>&1; then
-              kubectl annotate crd "${crd}" kubectl.kubernetes.io/last-applied-configuration- >/dev/null 2>&1 || true
-            fi
-          done
-
-      - name: Sync addons via Argo (Ingress-NGINX, cert-manager, CNPG operator)
-        shell: bash
-        run: |
-          set -euo pipefail
-          export REPO_OWNER="${GITHUB_REPOSITORY%%/*}"
-          export REPO_NAME="${GITHUB_REPOSITORY##*/}"
-          envsubst < k8s/argocd/root-apps.yaml | kubectl apply -f -
-          echo "Waiting for Argo CD application 'addons' to be created and synced"
-          addons_ready=0
-          for attempt in $(seq 1 10); do
-            if kubectl -n argocd get application addons >/dev/null 2>&1; then
-              sync_status=$(kubectl -n argocd get application addons -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")
-              health_status=$(kubectl -n argocd get application addons -o jsonpath='{.status.health.status}' 2>/dev/null || echo "")
-              if [ "$sync_status" = "Synced" ] && [ "$health_status" = "Healthy" ]; then
-                echo "addons application is synced and healthy"
-                addons_ready=1
-                break
-              fi
-              echo "addons application status: sync=${sync_status:-<unknown>} health=${health_status:-<unknown>} (attempt ${attempt}/20)"
-            else
-              echo "addons application not found yet (attempt ${attempt}/20)"
-            fi
-            sleep 10
-          done
-          if [ "$addons_ready" -ne 1 ]; then
-            echo "Timed out waiting for addons application to become healthy"
-            kubectl -n argocd get application addons -o yaml || true
-            exit 1
-          fi
-          kubectl -n argocd get application addons
-
-      - name: Wait for cnpg-operator Argo CD application
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "Waiting for Argo CD application cnpg-operator to be created..."
-          for attempt in $(seq 1 20); do
-            if kubectl -n argocd get application cnpg-operator >/dev/null 2>&1; then
-              sync_status=$(kubectl -n argocd get application cnpg-operator -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")
-              health_status=$(kubectl -n argocd get application cnpg-operator -o jsonpath='{.status.health.status}' 2>/dev/null || echo "")
-              if [ "$sync_status" = "Synced" ] && [ "$health_status" = "Healthy" ]; then
-                echo "cnpg-operator application is synced and healthy"
-                exit 0
-              fi
-              echo "cnpg-operator status: sync=${sync_status:-<unknown>} health=${health_status:-<unknown>} (attempt ${attempt}/20)"
-            else
-              echo "Application cnpg-operator not found yet (attempt ${attempt}/20)"
-            fi
-            sleep 10
-          done
-          echo "Timed out waiting for cnpg-operator Argo CD application to become healthy"
-          kubectl -n argocd get application cnpg-operator -o yaml || true
-          exit 1
-
-      - name: Wait for CNPG operator CRDs
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "Waiting for CloudNativePG CRDs to become available..."
-          for attempt in $(seq 1 30); do
-            if kubectl get crd clusters.postgresql.cnpg.io >/dev/null 2>&1; then
-              if kubectl wait --for=condition=Established crd/clusters.postgresql.cnpg.io --timeout=60s; then
-                if kubectl -n cnpg-system get deployment cnpg-cloudnative-pg >/dev/null 2>&1; then
-                  if kubectl -n cnpg-system wait --for=condition=Available deployment/cnpg-cloudnative-pg --timeout=300s; then
-                    echo "CloudNativePG operator deployment is available"
-                    exit 0
-                  else
-                    echo "Deployment cnpg-cloudnative-pg exists but is not yet available (attempt ${attempt}/30)"
-                  fi
-                else
-                  echo "Deployment cnpg-cloudnative-pg not found yet (attempt ${attempt}/30)"
-                fi
-              else
-                echo "CRD clusters.postgresql.cnpg.io exists but is not yet established (attempt ${attempt}/30)"
-              fi
-            else
-              echo "CRD clusters.postgresql.cnpg.io not found yet (attempt ${attempt}/30)"
-            fi
-            sleep 10
-          done
-          echo "Timed out waiting for CloudNativePG CRDs"
-          exit 1
-
-      - name: Validate CNPG storage account config matches Git
+      - name: Validate CNPG storage account configuration
         shell: bash
         env:
           STORAGE_ACCOUNT_INPUT: ${{ inputs.STORAGE_ACCOUNT }}
         run: |
           set -euo pipefail
-
-          config_file="k8s/apps/cnpg/params.env"
+          config_file="gitops/apps/iam/cnpg/params.env"
           if [ ! -f "${config_file}" ]; then
-            echo "Configuration file ${config_file} not found. Commit the file with the Terraform output first."
+            echo "${config_file} is missing. Commit it with the Terraform storage account output before running this workflow."
             exit 1
           fi
-
-          storage_account_git=$(grep -E '^storageAccount=' "${config_file}" | tail -n 1 | cut -d'=' -f2- | tr -d ' \t\r\n')
-          if [ -z "${storage_account_git}" ]; then
-            echo "storageAccount entry in ${config_file} is empty. Set it to the Terraform storage_account_name output."
+          storage_account_git=$(grep -E '^storageAccount=' "${config_file}" | tail -n1 | cut -d'=' -f2- | tr -d ' \t\r\n')
+          if [ -z "${storage_account_git}" ] || [ "${storage_account_git}" = "changeme" ]; then
+            echo "storageAccount in ${config_file} must be set to the Terraform storage_account_name output."
             exit 1
           fi
-
-          if [ "${storage_account_git}" = "changeme" ]; then
-            echo "storageAccount in ${config_file} is still set to the placeholder 'changeme'. Update it before running this workflow."
-            exit 1
-          fi
-
-          storage_account_input="$(printf '%s' "${STORAGE_ACCOUNT_INPUT:-}" | tr -d ' \t\r\n')"
+          storage_account_input=$(printf '%s' "${STORAGE_ACCOUNT_INPUT}" | tr -d ' \t\r\n')
           if [ -z "${storage_account_input}" ]; then
             echo "STORAGE_ACCOUNT input must not be empty."
             exit 1
           fi
-
           if [ "${storage_account_git,,}" != "${storage_account_input,,}" ]; then
-            echo "storageAccount value '${storage_account_git}' in ${config_file} does not match STORAGE_ACCOUNT input '${storage_account_input}'."
+            echo "storageAccount (${storage_account_git}) does not match workflow input (${storage_account_input})."
             exit 1
           fi
 
-          echo "storageAccount configuration matches workflow input."
-
-      - name: Create CNPG secrets (DB users + superuser)
+      - name: Create IAM namespace early
         shell: bash
         run: |
           set -euo pipefail
+          kubectl create namespace "${{ inputs.NAMESPACE_IAM }}" --dry-run=client -o yaml | kubectl apply -f -
 
-          ns="${{ inputs.NAMESPACE_IAM }}"
-
-          if [ -z "${ns}" ]; then
-            echo "NAMESPACE_IAM input must not be empty"
-            exit 1
-          fi
-
-          ensure_secret_type() {
-            local secret_name="$1"
-            local expected_type="$2"
-
-            if kubectl -n "${ns}" get secret "${secret_name}" >/dev/null 2>&1; then
-              local current_type
-              current_type=$(kubectl -n "${ns}" get secret "${secret_name}" -o jsonpath='{.type}')
-
-              if [ "${current_type}" != "${expected_type}" ]; then
-                echo "Secret ${secret_name} exists with type ${current_type}; recreating with type ${expected_type}"
-                kubectl -n "${ns}" delete secret "${secret_name}" --wait=false --ignore-not-found
-                echo "Waiting for secret ${secret_name} to be fully removed before recreating"
-                for attempt in $(seq 1 12); do
-                  if ! kubectl -n "${ns}" get secret "${secret_name}" >/dev/null 2>&1; then
-                    echo "Secret ${secret_name} removed"
-                    break
-                  fi
-
-                  if [ "${attempt}" -eq 12 ]; then
-                    echo "Secret ${secret_name} still present after waiting; aborting"
-                    exit 1
-                  fi
-
-                  sleep 5
-                done
-              fi
-            fi
-          }
-
-          apply_basic_auth_secret() {
-            local secret_name="$1"
-            local username="$2"
-            local password="$3"
-            local password_source="$4"
-
-            if [ -z "${password}" ]; then
-              echo "ERROR: password value for secret ${secret_name} is empty (expected GitHub secret ${password_source})"
-              exit 1
-            fi
-
-            ensure_secret_type "${secret_name}" "kubernetes.io/basic-auth"
-
-            kubectl -n "${ns}" create secret generic "${secret_name}" \
-              --type=kubernetes.io/basic-auth \
-              --from-literal=username="${username}" \
-              --from-literal=password="${password}" \
-              --dry-run=client -o yaml | kubectl apply -f -
-
-            echo "Secret ${secret_name} ensured with type kubernetes.io/basic-auth"
-          }
-
-          apply_basic_auth_secret "cnpg-superuser" "postgres" "${{ secrets.POSTGRES_SUPERUSER_PASSWORD }}" "POSTGRES_SUPERUSER_PASSWORD"
-          apply_basic_auth_secret "keycloak-db-app" "keycloak" "${{ secrets.KEYCLOAK_DB_PASSWORD }}" "KEYCLOAK_DB_PASSWORD"
-          apply_basic_auth_secret "midpoint-db-app" "midpoint" "${{ secrets.MIDPOINT_DB_PASSWORD }}" "MIDPOINT_DB_PASSWORD"
-
-      - name: Create Azure Blob secret for CNPG backups (connection string or key)
+      - name: Seed database credentials
         shell: bash
         env:
-          AZURE_STORAGE_ACCOUNT: ${{ inputs.STORAGE_ACCOUNT }}
-          AZURE_STORAGE_KEY: ${{ secrets.AZURE_STORAGE_KEY }}
+          NAMESPACE_IAM: ${{ inputs.NAMESPACE_IAM }}
+          POSTGRES_SUPERUSER_PASSWORD: ${{ secrets.POSTGRES_SUPERUSER_PASSWORD }}
+          KEYCLOAK_DB_PASSWORD: ${{ secrets.KEYCLOAK_DB_PASSWORD }}
+          MIDPOINT_DB_PASSWORD: ${{ secrets.MIDPOINT_DB_PASSWORD }}
         run: |
           set -euo pipefail
-
-          AZURE_STORAGE_ACCOUNT_RAW="${AZURE_STORAGE_ACCOUNT:-}"
-          AZURE_STORAGE_ACCOUNT="$(python3 -c "import os; print(os.environ.get('AZURE_STORAGE_ACCOUNT', '').strip())")"
-
-          if [ -n "${AZURE_STORAGE_ACCOUNT_RAW}" ] && [ "${AZURE_STORAGE_ACCOUNT_RAW}" != "${AZURE_STORAGE_ACCOUNT}" ]; then
-            echo "Trimmed leading/trailing whitespace from AZURE_STORAGE_ACCOUNT input"
-          fi
-
-          AZURE_STORAGE_KEY_RAW="${AZURE_STORAGE_KEY:-}"
-          AZURE_STORAGE_KEY="$(python3 -c "import os; print(os.environ.get('AZURE_STORAGE_KEY', '').strip())")"
-
-          if [ -z "${AZURE_STORAGE_ACCOUNT}" ]; then
-            echo "AZURE_STORAGE_ACCOUNT input must not be empty"
+          if [ -z "${POSTGRES_SUPERUSER_PASSWORD}" ] || [ -z "${KEYCLOAK_DB_PASSWORD}" ] || [ -z "${MIDPOINT_DB_PASSWORD}" ]; then
+            echo "Database credentials are required (POSTGRES_SUPERUSER_PASSWORD, KEYCLOAK_DB_PASSWORD, MIDPOINT_DB_PASSWORD)."
             exit 1
           fi
-
-          if [ -z "${AZURE_STORAGE_KEY}" ]; then
-            echo "AZURE_STORAGE_KEY secret is required for demo backup. Add it in repo secrets."
-            exit 1
-          fi
-
-          if [ "${AZURE_STORAGE_KEY_RAW}" != "${AZURE_STORAGE_KEY}" ]; then
-            echo "Trimmed leading/trailing whitespace from AZURE_STORAGE_KEY secret value"
-          fi
-
-          _AZ_PARSE_CODE=$'import os\nimport urllib.parse\n\nvalue = os.environ.get("AZURE_STORAGE_KEY", "")\ntrimmed = value.strip()\nif not trimmed:\n    key_type = "empty"\n    account_key = ""\n    account_name = ""\n    sas_token = ""\n    connection_string = ""\nelse:\n    lowered = trimmed.lower()\n    account_key = ""\n    account_name = ""\n    sas_token = ""\n    key_type = ""\n    connection_string = ""\n    ordered_parts = []\n    if (("accountkey=" in lowered) or ("sharedaccesssignature" in lowered)) and (\n        ("accountname" in lowered) or ("blobendpoint" in lowered) or ("defaultendpointsprotocol" in lowered)\n    ):\n        parts = {}\n        for part in trimmed.split(";"):\n            if not part or "=" not in part:\n                continue\n            key, val = part.split("=", 1)\n            key_clean = key.strip()\n            val_clean = val.strip()\n            lower_key = key_clean.lower()\n            parts[lower_key] = val_clean\n            ordered_parts.append((key_clean, lower_key, val_clean))\n        account_key = parts.get("accountkey", "")\n        account_name = parts.get("accountname", "")\n        shared_sig = parts.get("sharedaccesssignature", "")\n        if shared_sig:\n            sas_token = shared_sig.lstrip(" ?")\n        if account_key:\n            key_type = "connection_string"\n        elif shared_sig:\n            key_type = "connection_string_sas"\n        else:\n            key_type = "connection_string"\n        sanitized_parts = []\n        used_shared_sig = False\n        for original_key, lower_key, value in ordered_parts:\n            if lower_key == "sharedaccesssignature" and sas_token:\n                sanitized_parts.append(f"{original_key}={sas_token}")\n                used_shared_sig = True\n            else:\n                sanitized_parts.append(f"{original_key}={value}")\n        if sas_token and not used_shared_sig:\n            sanitized_parts.append(f"SharedAccessSignature={sas_token}")\n        if sanitized_parts:\n            connection_string = ";".join(sanitized_parts)\n    if not key_type or key_type == "empty":\n        candidate = trimmed\n        if candidate.lower().startswith("https://"):\n            try:\n                parsed = urllib.parse.urlparse(candidate)\n            except Exception:\n                parsed = None\n            if parsed:\n                if parsed.query:\n                    candidate = parsed.query\n                elif parsed.fragment:\n                    candidate = parsed.fragment\n                elif parsed.path:\n                    candidate = parsed.path\n        candidate = candidate.lstrip("/?")\n        lowered_candidate = candidate.lower()\n        if "sig=" in lowered_candidate and ("se=" in lowered_candidate or "expiry=" in lowered_candidate):\n            sas_token = candidate\n            key_type = "sas"\n    if not key_type:\n        key_type = "account_key"\n    if key_type not in ("connection_string", "connection_string_sas"):\n        connection_string = ""\n\nprint(trimmed)\nprint(key_type)\nprint(account_key)\nprint(account_name)\nprint(sas_token)\nprint(connection_string)\n'
-          mapfile -t _AZ_STORAGE_INFO < <(python3 -c "$_AZ_PARSE_CODE")
-          unset _AZ_PARSE_CODE
-          AZURE_STORAGE_KEY_SANITIZED="${_AZ_STORAGE_INFO[0]-}"
-          storage_key_type="${_AZ_STORAGE_INFO[1]-}"
-          connection_account_key="${_AZ_STORAGE_INFO[2]-}"
-          connection_account_name="${_AZ_STORAGE_INFO[3]-}"
-          sanitized_sas_token="${_AZ_STORAGE_INFO[4]-}"
-          connection_string_normalized="${_AZ_STORAGE_INFO[5]-}"
-          unset _AZ_STORAGE_INFO
-
-          if [ -n "${connection_string_normalized}" ]; then
-            AZURE_STORAGE_KEY="${connection_string_normalized}"
-          fi
-
-          secret_account="${AZURE_STORAGE_ACCOUNT}"
-          if [ -n "${connection_account_name}" ]; then
-            if [ -n "${secret_account}" ] && [ "${secret_account}" != "${connection_account_name}" ]; then
-              echo "AZURE_STORAGE_ACCOUNT input (${secret_account}) differs from credentials account name (${connection_account_name}); using the credential value."
-            fi
-            secret_account="${connection_account_name}"
-          fi
-
-          if [ -z "${secret_account}" ]; then
-            echo "Unable to determine Azure storage account name from input or credentials."
-            exit 1
-          fi
-
-          declare -a secret_args=()
-          secret_args+=("--from-literal=AZURE_STORAGE_ACCOUNT=${secret_account}")
-          connection_string_literal="${connection_string_normalized}"
-
-          case "${storage_key_type}" in
-            connection_string|connection_string_sas)
-              if [ -n "${connection_account_key}" ]; then
-                secret_args+=("--from-literal=AZURE_STORAGE_KEY=${connection_account_key}")
-                echo "Detected Azure storage account key in connection string credentials."
-              fi
-              if [ -n "${sanitized_sas_token}" ]; then
-                secret_args+=("--from-literal=AZURE_STORAGE_SAS_TOKEN=${sanitized_sas_token}")
-                echo "Detected Azure SAS token in connection string credentials."
-              fi
-              if [ -z "${connection_account_key}" ] && [ -z "${sanitized_sas_token}" ]; then
-                echo "Unable to extract storage account key or SAS token from AZURE_STORAGE_KEY secret."
-                exit 1
-              fi
-              if [ -n "${connection_account_key}" ] && [ -n "${sanitized_sas_token}" ]; then
-                echo "Storing both storage account key and SAS token extracted from connection string."
-              elif [ -n "${connection_account_key}" ]; then
-                echo "Using Azure storage account key credentials for CNPG backups."
-              else
-                echo "Using Azure SAS token credentials for CNPG backups."
-              fi
-              if [ -z "${connection_string_literal}" ]; then
-                connection_string_literal="${AZURE_STORAGE_KEY_SANITIZED}"
-              fi
-              ;;
-            sas)
-              if [ -z "${sanitized_sas_token}" ]; then
-                echo "Parsed SAS credential type but token value is empty."
-                exit 1
-              fi
-              secret_args+=("--from-literal=AZURE_STORAGE_SAS_TOKEN=${sanitized_sas_token}")
-              echo "Using Azure SAS token credentials for CNPG backups."
-              connection_string_literal="DefaultEndpointsProtocol=https;AccountName=${secret_account};BlobEndpoint=https://${secret_account}.blob.core.windows.net/;SharedAccessSignature=${sanitized_sas_token}"
-              ;;
-            account_key|*)
-              if [ -z "${AZURE_STORAGE_KEY_SANITIZED}" ]; then
-                echo "AZURE_STORAGE_KEY secret is empty after trimming; provide a storage account key, SAS token, or connection string."
-                exit 1
-              fi
-              secret_args+=("--from-literal=AZURE_STORAGE_KEY=${AZURE_STORAGE_KEY_SANITIZED}")
-              echo "Using Azure storage account key credentials for CNPG backups."
-              connection_string_literal="DefaultEndpointsProtocol=https;AccountName=${secret_account};AccountKey=${AZURE_STORAGE_KEY_SANITIZED};EndpointSuffix=core.windows.net"
-              ;;
-          esac
-
-          connection_string_literal="$(CONNECTION_STRING_VALUE="${connection_string_literal}" python3 -c 'import os; print(os.environ.get("CONNECTION_STRING_VALUE", "").strip())')"
-
-          if [ -z "${connection_string_literal}" ]; then
-            echo "Failed to compute a normalized Azure storage connection string from the provided credentials."
-            exit 1
-          fi
-
-          secret_args+=("--from-literal=AZURE_CONNECTION_STRING=${connection_string_literal}")
-          echo "Storing normalized Azure connection string for CNPG backups."
-
-          echo "Creating or updating cnpg-azure-backup secret with normalized Azure credentials"
-          kubectl -n ${{ inputs.NAMESPACE_IAM }} create secret generic cnpg-azure-backup \
-            "${secret_args[@]}" \
+          kubectl -n "${NAMESPACE_IAM}" create secret generic cnpg-superuser \
+            --type=kubernetes.io/basic-auth \
+            --from-literal=username=postgres \
+            --from-literal=password="${POSTGRES_SUPERUSER_PASSWORD}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n "${NAMESPACE_IAM}" create secret generic keycloak-db-app \
+            --type=kubernetes.io/basic-auth \
+            --from-literal=username=keycloak \
+            --from-literal=password="${KEYCLOAK_DB_PASSWORD}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n "${NAMESPACE_IAM}" create secret generic midpoint-db-app \
+            --type=kubernetes.io/basic-auth \
+            --from-literal=username=midpoint \
+            --from-literal=password="${MIDPOINT_DB_PASSWORD}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Verify cnpg-azure-backup secret contains required keys
+      - name: Create midPoint administrator secret
         shell: bash
         env:
           NAMESPACE_IAM: ${{ inputs.NAMESPACE_IAM }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "${NAMESPACE_IAM:-}" ]; then
-            echo "NAMESPACE_IAM input must not be empty"
-            exit 1
-          fi
-
-          if ! kubectl -n "${NAMESPACE_IAM}" get secret cnpg-azure-backup >/dev/null 2>&1; then
-            echo "Secret cnpg-azure-backup was not created in namespace ${NAMESPACE_IAM}."
-            exit 1
-          fi
-
-          get_secret_field() {
-            local field="$1"
-            local value
-            value=$(kubectl -n "${NAMESPACE_IAM}" get secret cnpg-azure-backup -o jsonpath="{.data.${field}}" || true)
-            if [ -z "${value}" ]; then
-              echo "Secret cnpg-azure-backup is missing required key ${field}."
-              exit 1
-            fi
-            if [ -z "$(printf '%s' "${value}" | base64 --decode | tr -d '\n')" ]; then
-              echo "Secret cnpg-azure-backup key ${field} is empty after base64 decoding."
-              exit 1
-            fi
-          }
-
-          get_secret_field "AZURE_CONNECTION_STRING"
-          get_secret_field "AZURE_STORAGE_ACCOUNT"
-
-          echo "cnpg-azure-backup secret contains AZURE_CONNECTION_STRING and AZURE_STORAGE_ACCOUNT keys."
-
-      - name: Purge existing CNPG Azure backup prefix
-        shell: bash
-        env:
-          AZURE_STORAGE_ACCOUNT: ${{ inputs.STORAGE_ACCOUNT }}
-          AZURE_STORAGE_KEY: ${{ secrets.AZURE_STORAGE_KEY }}
-          RESOURCE_GROUP: ${{ inputs.RESOURCE_GROUP }}
-          NAMESPACE_IAM: ${{ inputs.NAMESPACE_IAM }}
-        run: |
-          set -euo pipefail
-
-          container="cnpg-backups"
-          prefix="iam-db"
-
-          prefix_raw="${prefix}"
-          prefix="${prefix_raw%/}"
-          if [ -z "${prefix}" ]; then
-            echo "Azure backup prefix must not be empty"
-            exit 1
-          fi
-          if [ "${prefix}" != "${prefix_raw}" ]; then
-            echo "Normalized Azure backup prefix from '${prefix_raw}' to '${prefix}'"
-          fi
-          prefix_with_slash="${prefix}/"
-
-          AZURE_STORAGE_ACCOUNT_RAW="${AZURE_STORAGE_ACCOUNT:-}"
-          AZURE_STORAGE_ACCOUNT="$(python3 -c "import os; print(os.environ.get('AZURE_STORAGE_ACCOUNT', '').strip())")"
-          AZURE_STORAGE_ACCOUNT_INPUT="${AZURE_STORAGE_ACCOUNT}"
-
-          if [ -n "${AZURE_STORAGE_ACCOUNT_RAW}" ] && [ "${AZURE_STORAGE_ACCOUNT_RAW}" != "${AZURE_STORAGE_ACCOUNT}" ]; then
-            echo "Trimmed leading/trailing whitespace from AZURE_STORAGE_ACCOUNT input"
-          fi
-
-          AZURE_STORAGE_KEY_RAW="${AZURE_STORAGE_KEY:-}"
-          _AZ_PARSE_CODE=$'import os\nimport urllib.parse\n\nvalue = os.environ.get("AZURE_STORAGE_KEY", "")\ntrimmed = value.strip()\nif not trimmed:\n    key_type = "empty"\n    account_key = ""\n    account_name = ""\n    sas_token = ""\n    connection_string = ""\nelse:\n    lowered = trimmed.lower()\n    account_key = ""\n    account_name = ""\n    sas_token = ""\n    key_type = ""\n    connection_string = ""\n    ordered_parts = []\n    if (("accountkey=" in lowered) or ("sharedaccesssignature=" in lowered)) and (\n        ("accountname=" in lowered) or ("blobendpoint=" in lowered) or ("defaultendpointsprotocol=" in lowered)\n    ):\n        parts = {}\n        for part in trimmed.split(";"):\n            if not part or "=" not in part:\n                continue\n            key, val = part.split("=", 1)\n            key_clean = key.strip()\n            val_clean = val.strip()\n            lower_key = key_clean.lower()\n            parts[lower_key] = val_clean\n            ordered_parts.append((key_clean, lower_key, val_clean))\n        account_key = parts.get("accountkey", "")\n        account_name = parts.get("accountname", "")\n        shared_sig = parts.get("sharedaccesssignature", "")\n        if shared_sig:\n            sas_token = shared_sig.lstrip(" ?")\n        if account_key:\n            key_type = "connection_string"\n        elif shared_sig:\n            key_type = "connection_string_sas"\n        else:\n            key_type = "connection_string"\n        sanitized_parts = []\n        used_shared_sig = False\n        for original_key, lower_key, value in ordered_parts:\n            if lower_key == "sharedaccesssignature" and sas_token:\n                sanitized_parts.append(f"{original_key}={sas_token}")\n                used_shared_sig = True\n            else:\n                sanitized_parts.append(f"{original_key}={value}")\n        if sas_token and not used_shared_sig:\n            sanitized_parts.append(f"SharedAccessSignature={sas_token}")\n        if sanitized_parts:\n            connection_string = ";".join(sanitized_parts)\n    if not key_type or key_type == "empty":\n        candidate = trimmed\n        if candidate.lower().startswith("https://"):\n            try:\n                parsed = urllib.parse.urlparse(candidate)\n            except Exception:\n                parsed = None\n            if parsed:\n                if parsed.query:\n                    candidate = parsed.query\n                elif parsed.fragment:\n                    candidate = parsed.fragment\n                elif parsed.path:\n                    candidate = parsed.path\n        candidate = candidate.lstrip("/?")\n        lowered_candidate = candidate.lower()\n        if "sig=" in lowered_candidate and ("se=" in lowered_candidate or "expiry=" in lowered_candidate):\n            sas_token = candidate\n            key_type = "sas"\n    if not key_type:\n        key_type = "account_key"\n    if key_type not in ("connection_string", "connection_string_sas"):\n        connection_string = ""\n\nprint(trimmed)\nprint(key_type)\nprint(account_key)\nprint(account_name)\nprint(sas_token)\nprint(connection_string)\n'
-          mapfile -t _AZ_STORAGE_INFO < <(python3 -c "$_AZ_PARSE_CODE")
-          unset _AZ_PARSE_CODE
-          AZURE_STORAGE_KEY_PARSED="${_AZ_STORAGE_INFO[0]-}"
-          storage_key_type="${_AZ_STORAGE_INFO[1]-}"
-          connection_account_key="${_AZ_STORAGE_INFO[2]-}"
-          connection_account_name="${_AZ_STORAGE_INFO[3]-}"
-          sanitized_sas_token="${_AZ_STORAGE_INFO[4]-}"
-          connection_string_normalized="${_AZ_STORAGE_INFO[5]-}"
-          unset _AZ_STORAGE_INFO
-
-          AZURE_STORAGE_KEY="${AZURE_STORAGE_KEY_PARSED}"
-
-          if [ -n "${connection_string_normalized}" ]; then
-            AZURE_STORAGE_KEY="${connection_string_normalized}"
-          fi
-
-          if [ -n "${connection_account_name}" ]; then
-            if [ -n "${AZURE_STORAGE_ACCOUNT_INPUT}" ] && [ "${AZURE_STORAGE_ACCOUNT_INPUT,,}" != "${connection_account_name,,}" ]; then
-              echo "AZURE_STORAGE_ACCOUNT input (${AZURE_STORAGE_ACCOUNT_INPUT}) differs from AccountName (${connection_account_name}) parsed from AZURE_STORAGE_KEY; using credential account name."
-            elif [ -z "${AZURE_STORAGE_ACCOUNT_INPUT}" ]; then
-              echo "Derived storage account name ${connection_account_name} from AZURE_STORAGE_KEY secret"
-            fi
-            AZURE_STORAGE_ACCOUNT="${connection_account_name}"
-          fi
-
-          if [ -z "${AZURE_STORAGE_ACCOUNT}" ]; then
-            echo "STORAGE_ACCOUNT input must not be empty"
-            exit 1
-          fi
-
-          RESOURCE_GROUP_RAW="${RESOURCE_GROUP:-}"
-          RESOURCE_GROUP="$(python3 -c "import os; print(os.environ.get('RESOURCE_GROUP', '').strip())")"
-
-          if [ -n "${RESOURCE_GROUP_RAW}" ] && [ "${RESOURCE_GROUP_RAW}" != "${RESOURCE_GROUP}" ]; then
-            echo "Trimmed leading/trailing whitespace from RESOURCE_GROUP input"
-          fi
-
-          NAMESPACE_IAM_RAW="${NAMESPACE_IAM:-}"
-          NAMESPACE_IAM="$(python3 -c "import os; print(os.environ.get('NAMESPACE_IAM', '').strip())")"
-
-          if [ -n "${NAMESPACE_IAM_RAW}" ] && [ "${NAMESPACE_IAM_RAW}" != "${NAMESPACE_IAM}" ]; then
-            echo "Trimmed leading/trailing whitespace from NAMESPACE_IAM input"
-          fi
-
-          user_supplied_key=1
-          if [ -z "${AZURE_STORAGE_KEY}" ]; then
-            user_supplied_key=0
-          fi
-
-          if [ "${AZURE_STORAGE_KEY_RAW}" != "${AZURE_STORAGE_KEY_PARSED}" ] && [ "${user_supplied_key}" -eq 1 ]; then
-            echo "Trimmed leading/trailing whitespace from AZURE_STORAGE_KEY secret"
-          fi
-
-          account_key_for_cli=""
-          if [ -n "${connection_account_key}" ]; then
-            account_key_for_cli="${connection_account_key}"
-          elif [ "${storage_key_type}" = "account_key" ] && [ -n "${AZURE_STORAGE_KEY}" ]; then
-            account_key_for_cli="${AZURE_STORAGE_KEY}"
-          fi
-
-          account_key_source="provided"
-          if [ "${user_supplied_key}" -eq 0 ]; then
-            account_key_source="missing"
-            echo "AZURE_STORAGE_KEY secret not provided; attempting to use Azure AD authentication or retrieve a key dynamically."
-          fi
-
-          resource_group_available=0
-          if [ -n "${RESOURCE_GROUP}" ]; then
-            resource_group_available=1
-          fi
-
-          attempt_storage_auth_methods() {
-            local methods=("$@")
-            for method in "${methods[@]}"; do
-              local current_args=()
-              local method_description=""
-              case "${method}" in
-                connection-string)
-                  current_args=("--connection-string" "${AZURE_STORAGE_KEY}")
-                  method_description="connection string"
-                  ;;
-                sas-token)
-                  current_args=("--account-name" "${AZURE_STORAGE_ACCOUNT}" "--sas-token" "${sanitized_sas_token}")
-                  method_description="SAS token"
-                  ;;
-                account-key)
-                  if [ -z "${account_key_for_cli}" ]; then
-                    continue
-                  fi
-                  current_args=("--account-name" "${AZURE_STORAGE_ACCOUNT}" "--account-key" "${account_key_for_cli}")
-                  if [ "${account_key_source}" = "fetched" ]; then
-                    method_description="account key (fetched from Azure)"
-                  else
-                    method_description="account key"
-                  fi
-                  ;;
-                login)
-                  current_args=("--account-name" "${AZURE_STORAGE_ACCOUNT}" "--auth-mode" "login")
-                  method_description="Azure AD login"
-                  ;;
-                *)
-                  continue
-                  ;;
-              esac
-
-              local err_file
-              err_file=$(mktemp)
-              set +e
-              local exists_output
-              exists_output=$(az storage container exists --name "${container}" "${current_args[@]}" --query exists -o tsv 2>"${err_file}")
-              local status=$?
-              set -e
-
-              if [ "${status}" -eq 0 ]; then
-                rm -f "${err_file}"
-                az_auth_args=("${current_args[@]}")
-                selected_method="${method}"
-                container_exists="${exists_output:-false}"
-                return 0
-              fi
-
-              local err_output=""
-              if [ -s "${err_file}" ]; then
-                err_output="$(cat "${err_file}")"
-              fi
-              rm -f "${err_file}"
-
-              echo "Azure Storage authentication attempt using ${method_description} credentials failed (exit code ${status})."
-              if [ -n "${err_output}" ]; then
-                echo "${err_output}"
-              fi
-
-              if [ "${method}" = "account-key" ] && [ "${account_key_source}" != "fetched" ] && grep -qi 'account key may be not valid' <<<"${err_output}"; then
-                echo "The provided AZURE_STORAGE_KEY value does not appear to be a valid storage account key."
-              fi
-
-              if [ "${method}" = "login" ] && grep -qi 'AuthorizationPermissionMismatch' <<<"${err_output}"; then
-                echo "Azure AD authentication succeeded but lacks data-plane permissions. Assign the Storage Blob Data Contributor role to the workflow principal or supply a valid storage access key."
-              fi
-            done
-
-            return 1
-          }
-
-          fetch_storage_account_key() {
-            if [ "${resource_group_available}" -ne 1 ]; then
-              return 1
-            fi
-            local err_file
-            err_file=$(mktemp)
-            echo "Attempting to retrieve a storage account key for ${AZURE_STORAGE_ACCOUNT} from resource group ${RESOURCE_GROUP}"
-            set +e
-            local fetched_key
-            fetched_key=$(az storage account keys list --account-name "${AZURE_STORAGE_ACCOUNT}" --resource-group "${RESOURCE_GROUP}" --query '[0].value' -o tsv 2>"${err_file}")
-            local status=$?
-            set -e
-            local err_output=""
-            if [ "${status}" -ne 0 ]; then
-              if [ -s "${err_file}" ]; then
-                err_output="$(cat "${err_file}")"
-              fi
-              rm -f "${err_file}"
-              echo "Failed to retrieve storage account key from Azure (exit code ${status})."
-              if [ -n "${err_output}" ]; then
-                echo "${err_output}"
-              fi
-              return 1
-            fi
-            rm -f "${err_file}"
-            fetched_key="$(printf '%s' "${fetched_key}" | tr -d '\r\n')"
-            if [ -z "${fetched_key}" ]; then
-              echo "Azure CLI returned an empty storage account key for ${AZURE_STORAGE_ACCOUNT}."
-              return 1
-            fi
-            account_key_for_cli="${fetched_key}"
-            AZURE_STORAGE_KEY="${fetched_key}"
-            account_key_source="fetched"
-            echo "Retrieved storage account key for ${AZURE_STORAGE_ACCOUNT} via Azure CLI."
-            if [ -n "${NAMESPACE_IAM:-}" ]; then
-              echo "Updating cnpg-azure-backup secret with refreshed credentials in namespace ${NAMESPACE_IAM}"
-              local refreshed_connection_string="DefaultEndpointsProtocol=https;AccountName=${AZURE_STORAGE_ACCOUNT};AccountKey=${AZURE_STORAGE_KEY};EndpointSuffix=core.windows.net"
-              local -a secret_update_args=(
-                "--from-literal=AZURE_STORAGE_ACCOUNT=${AZURE_STORAGE_ACCOUNT}"
-                "--from-literal=AZURE_STORAGE_KEY=${AZURE_STORAGE_KEY}"
-                "--from-literal=AZURE_CONNECTION_STRING=${refreshed_connection_string}"
-              )
-              if [ -n "${sanitized_sas_token}" ]; then
-                secret_update_args+=("--from-literal=AZURE_STORAGE_SAS_TOKEN=${sanitized_sas_token}")
-              fi
-              kubectl -n "${NAMESPACE_IAM}" create secret generic cnpg-azure-backup \
-                "${secret_update_args[@]}" \
-                --dry-run=client -o yaml | kubectl apply -f -
-            else
-              echo "WARNING: NAMESPACE_IAM environment variable is empty; skipping cnpg-azure-backup secret refresh."
-            fi
-            return 0
-          }
-
-          declare -a primary_methods=()
-          if [ "${storage_key_type}" = "connection_string" ] || [ "${storage_key_type}" = "connection_string_sas" ]; then
-            primary_methods+=("connection-string")
-          fi
-          if [ -n "${sanitized_sas_token}" ] && [ -n "${AZURE_STORAGE_ACCOUNT}" ]; then
-            primary_methods+=("sas-token")
-          fi
-          if [ -n "${account_key_for_cli}" ] && [ -n "${AZURE_STORAGE_ACCOUNT}" ]; then
-            primary_methods+=("account-key")
-          fi
-
-          declare -a az_auth_args=()
-          selected_method=""
-          container_exists="false"
-
-          if [ "${#primary_methods[@]}" -gt 0 ]; then
-            attempt_storage_auth_methods "${primary_methods[@]}" || true
-          fi
-
-          if [ -z "${selected_method}" ] && [ "${resource_group_available}" -eq 1 ]; then
-            if fetch_storage_account_key; then
-              attempt_storage_auth_methods "account-key" || true
-            elif [ "${user_supplied_key}" -eq 0 ]; then
-              echo "Unable to automatically retrieve a storage account key. Provide AZURE_STORAGE_KEY or grant the workflow principal Storage Blob Data Contributor access."
-            fi
-          fi
-
-          if [ -z "${selected_method}" ]; then
-            attempt_storage_auth_methods "login" || true
-          fi
-
-          if [ -z "${selected_method}" ]; then
-            echo "Unable to authenticate to Azure Storage with the provided credentials or Azure AD login."
-            exit 1
-          fi
-
-          case "${selected_method}" in
-            connection-string)
-              echo "Authenticated to Azure Storage using connection string credentials."
-              ;;
-            sas-token)
-              echo "Authenticated to Azure Storage using SAS token credentials."
-              ;;
-            account-key)
-              if [ "${account_key_source}" = "fetched" ]; then
-                echo "Authenticated to Azure Storage using a storage account key retrieved via Azure CLI."
-              else
-                echo "Authenticated to Azure Storage using storage account key credentials."
-              fi
-              ;;
-            login)
-              echo "Authenticated to Azure Storage using Azure AD login credentials."
-              ;;
-          esac
-
-          handle_az_storage_failure() {
-            local status="$1"
-            local err_file="$2"
-            local context="$3"
-            local stdout_capture="${4:-}"
-            local err_output=""
-            if [ -s "${err_file}" ]; then
-              err_output="$(cat "${err_file}")"
-              echo "${err_output}"
-            fi
-            rm -f "${err_file}"
-            if [ -n "${stdout_capture}" ]; then
-              echo "${stdout_capture}"
-            fi
-
-            local combined_output="${err_output}${stdout_capture}"
-            if grep -qi 'account key may be not valid' <<<"${combined_output}"; then
-              echo "Azure CLI reported invalid storage credentials while ${context}. Ensure AZURE_STORAGE_KEY contains a valid storage account key, SAS token, or connection string."
-            fi
-
-            if [[ " ${az_auth_args[*]} " == *" --auth-mode login "* ]] && grep -qi 'AuthorizationPermissionMismatch' <<<"${combined_output}"; then
-              echo "Azure AD authentication for storage lacks the necessary data-plane permissions. Assign the Storage Blob Data Contributor role to the workflow principal or provide a valid storage access key."
-            fi
-
-            exit "${status}"
-          }
-
-          run_az_storage_command() {
-            local capture="$1"
-            local context="$2"
-            shift 2
-            local err_file output status
-            err_file=$(mktemp)
-            if [ "${capture}" = "capture" ]; then
-              set +e
-              output=$(az storage "$@" "${az_auth_args[@]}" 2>"${err_file}")
-              status=$?
-              set -e
-              if [ "${status}" -ne 0 ]; then
-                handle_az_storage_failure "${status}" "${err_file}" "${context}" "${output}"
-              fi
-              rm -f "${err_file}"
-              printf '%s' "${output}"
-            else
-              set +e
-              az storage "$@" "${az_auth_args[@]}" 2>"${err_file}"
-              status=$?
-              set -e
-              if [ "${status}" -ne 0 ]; then
-                handle_az_storage_failure "${status}" "${err_file}" "${context}" ""
-              fi
-              rm -f "${err_file}"
-            fi
-          }
-
-          container_exists_normalized="$(printf '%s' "${container_exists}" | tr '[:upper:]' '[:lower:]')"
-          if [ "${container_exists_normalized}" != "true" ]; then
-            echo "Azure container ${container} not found; creating it"
-            run_az_storage_command no-capture "creating container ${container}" container create --name "${container}" --public-access off
-          fi
-
-          echo "Checking for leftover WAL/archive objects under ${container}/${prefix}"
-          existing_children="$(run_az_storage_command capture "listing blobs under ${prefix_with_slash}" blob list --container-name "${container}" --prefix "${prefix_with_slash}" --query "length(@)" -o tsv)"
-          existing_children="$(printf '%s' "${existing_children}" | tr -d '\r\n')"
-          if [ -z "${existing_children}" ]; then
-            existing_children=0
-          fi
-
-          marker_pre_exists="$(run_az_storage_command capture "checking for directory marker ${prefix}" blob exists --container-name "${container}" --name "${prefix}" --query exists -o tsv)"
-          marker_pre_exists="$(printf '%s' "${marker_pre_exists}" | tr -d '\r\n' | tr '[:upper:]' '[:lower:]')"
-          existing_total="${existing_children}"
-          if [ "${marker_pre_exists}" = "true" ]; then
-            existing_total=$((existing_total + 1))
-          fi
-
-          if [ "${existing_total}" -eq 0 ]; then
-            echo "Azure backup prefix ${prefix}/ is already empty"
-            exit 0
-          fi
-
-          echo "Deleting ${existing_total} Azure Blob object(s) under ${prefix}/ before bootstrapping CNPG"
-
-          delete_batch_flags=()
-          if az storage blob delete-batch --help 2>&1 | grep -Fq -- '--no-progress'; then
-            delete_batch_flags+=("--no-progress")
-          else
-            echo "Azure CLI delete-batch command does not support --no-progress; continuing without it."
-          fi
-
-          delete_blobs_with_delete_batch() {
-            local err_file stdout_file status err_output stdout_capture
-            err_file=$(mktemp)
-            stdout_file=$(mktemp)
-            set +e
-            az storage blob delete-batch \
-              --source "${container}" \
-              --pattern "${prefix}/*" \
-              "${delete_batch_flags[@]}" \
-              "${az_auth_args[@]}" \
-              1>"${stdout_file}" \
-              2>"${err_file}"
-            status=$?
-            set -e
-            stdout_capture=""
-            if [ -s "${stdout_file}" ]; then
-              stdout_capture="$(cat "${stdout_file}")"
-            fi
-            rm -f "${stdout_file}"
-
-            if [ "${status}" -eq 0 ]; then
-              if [ -n "${stdout_capture}" ]; then
-                printf '%s\n' "${stdout_capture}"
-              fi
-              rm -f "${err_file}"
-              return 0
-            fi
-
-            err_output=""
-            if [ -s "${err_file}" ]; then
-              err_output="$(cat "${err_file}")"
-            fi
-            rm -f "${err_file}"
-
-            if grep -qi 'cannot use a string pattern on a bytes-like object' <<<"${err_output}"; then
-              if [ -n "${stdout_capture}" ]; then
-                printf '%s\n' "${stdout_capture}"
-              fi
-              echo "Azure CLI delete-batch encountered an incompatibility with Python fnmatch; falling back to manual deletion."
-              return 2
-            fi
-
-            local re_err_file
-            re_err_file=$(mktemp)
-            printf '%s' "${err_output}" > "${re_err_file}"
-            handle_az_storage_failure "${status}" "${re_err_file}" "deleting blobs under ${prefix}/" "${stdout_capture}"
-            rm -f "${re_err_file}"
-            return 1
-          }
-
-          delete_blobs_manually() {
-            echo "Falling back to deleting blobs under ${prefix}/ individually via az storage blob delete"
-            local names_output
-            names_output="$(run_az_storage_command capture "listing blob names under ${prefix_with_slash} for manual deletion" blob list --container-name "${container}" --prefix "${prefix_with_slash}" --query "[].name" -o tsv)"
-            if [ -z "${names_output}" ]; then
-              echo "No blob names returned for manual deletion; nothing to delete."
-              return 0
-            fi
-            local -a manual_blob_names=()
-            mapfile -t manual_blob_names < <(printf '%s\n' "${names_output}" | sed '/^$/d')
-            local manual_count="${#manual_blob_names[@]}"
-            if [ "${manual_count}" -eq 0 ]; then
-              echo "No blob names returned for manual deletion after filtering; nothing to delete."
-              return 0
-            fi
-            echo "Deleting ${manual_count} blob(s) individually because delete-batch failed"
-            local blob_name
-            for blob_name in "${manual_blob_names[@]}"; do
-              if [ -z "${blob_name}" ]; then
-                continue
-              fi
-              echo "Deleting blob ${blob_name}"
-              run_az_storage_command no-capture "deleting blob ${blob_name}" blob delete --container-name "${container}" --name "${blob_name}"
-            done
-          }
-
-          if ! delete_blobs_with_delete_batch; then
-            delete_attempt_status=$?
-            if [ "${delete_attempt_status}" -eq 2 ]; then
-              delete_blobs_manually
-            else
-              exit "${delete_attempt_status}"
-            fi
-          fi
-
-          echo "Removing potential directory marker blob ${prefix}"
-          prefix_marker_exists="$(run_az_storage_command capture "checking for directory marker ${prefix}" blob exists --container-name "${container}" --name "${prefix}" --query exists -o tsv)"
-          prefix_marker_exists="$(printf '%s' "${prefix_marker_exists}" | tr -d '\r\n' | tr '[:upper:]' '[:lower:]')"
-          if [ "${prefix_marker_exists}" = "true" ]; then
-            run_az_storage_command no-capture "deleting directory marker blob ${prefix}" blob delete --container-name "${container}" --name "${prefix}"
-          fi
-
-          echo "Verifying Azure backup prefix ${prefix} is now empty"
-          remaining_children="$(run_az_storage_command capture "verifying blob cleanup under ${prefix_with_slash}" blob list --container-name "${container}" --prefix "${prefix_with_slash}" --query "length(@)" -o tsv)"
-          remaining_children="$(printf '%s' "${remaining_children}" | tr -d '\r\n')"
-          if [ -z "${remaining_children}" ]; then
-            remaining_children=0
-          fi
-
-          final_marker_exists="$(run_az_storage_command capture "re-checking for directory marker ${prefix}" blob exists --container-name "${container}" --name "${prefix}" --query exists -o tsv)"
-          final_marker_exists="$(printf '%s' "${final_marker_exists}" | tr -d '\r\n' | tr '[:upper:]' '[:lower:]')"
-          remaining_total="${remaining_children}"
-          if [ "${final_marker_exists}" = "true" ]; then
-            remaining_total=$((remaining_total + 1))
-          fi
-
-          if [ "${remaining_total}" -ne 0 ]; then
-            echo "Failed to purge Azure backup prefix ${prefix}/ (still ${remaining_total} object(s) present)"
-            exit 1
-          fi
-
-          echo "Azure backup prefix ${prefix}/ successfully emptied"
-
-      - name: Validate CNPG prerequisites
-        env:
-          NAMESPACE_IAM: ${{ inputs.NAMESPACE_IAM }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          ns="${NAMESPACE_IAM}"
-          echo "Checking required database secrets exist in namespace ${ns}"
-          missing=0
-          for secret in cnpg-superuser keycloak-db-app midpoint-db-app cnpg-azure-backup; do
-            if ! kubectl -n "${ns}" get secret "${secret}" >/dev/null 2>&1; then
-              echo "ERROR: secret ${secret} is missing from namespace ${ns}"
-              missing=1
-            fi
-          done
-
-          if [ "${missing}" -ne 0 ]; then
-            echo "One or more required secrets are missing; aborting."
-            exit 1
-          fi
-
-          check_secret_key() {
-            local secret="$1"
-            local key="$2"
-            local value
-            value=$(kubectl -n "${ns}" get secret "${secret}" -o jsonpath="{.data.${key}}" 2>/dev/null || true)
-            if [ -z "${value}" ]; then
-              echo "ERROR: secret ${secret} does not contain key ${key}"
-              missing=1
-            fi
-          }
-
-          check_secret_key cnpg-superuser username
-          check_secret_key cnpg-superuser password
-          check_secret_key keycloak-db-app username
-          check_secret_key keycloak-db-app password
-          check_secret_key midpoint-db-app username
-          check_secret_key midpoint-db-app password
-          check_secret_key cnpg-azure-backup AZURE_STORAGE_ACCOUNT
-          check_secret_key cnpg-azure-backup AZURE_CONNECTION_STRING
-
-          azure_storage_key=$(kubectl -n "${ns}" get secret cnpg-azure-backup -o jsonpath='{.data.AZURE_STORAGE_KEY}' 2>/dev/null || true)
-          azure_storage_sas=$(kubectl -n "${ns}" get secret cnpg-azure-backup -o jsonpath='{.data.AZURE_STORAGE_SAS_TOKEN}' 2>/dev/null || true)
-
-          if [ -z "${azure_storage_key}" ] && [ -z "${azure_storage_sas}" ]; then
-            echo "ERROR: secret cnpg-azure-backup must contain AZURE_STORAGE_KEY or AZURE_STORAGE_SAS_TOKEN"
-            missing=1
-          fi
-
-          if [ "${missing}" -ne 0 ]; then
-            echo "Secret validation failed; aborting."
-            exit 1
-          fi
-
-          echo "Confirming CNPG operator deployment readiness"
-          kubectl -n cnpg-system get deployment cnpg-cloudnative-pg
-          if ! kubectl -n cnpg-system rollout status deployment/cnpg-cloudnative-pg --timeout=180s; then
-            echo "WARNING: cnpg-cloudnative-pg deployment not yet available"
-          fi
-
-          echo "Inspecting CNPG webhook service endpoints"
-          if ! kubectl -n cnpg-system get service cnpg-webhook-service >/dev/null 2>&1; then
-            echo "ERROR: cnpg-webhook-service not found in cnpg-system namespace"
-            exit 1
-          fi
-
-          WEBHOOK_READY_FROM_ENDPOINTS=""
-          WEBHOOK_NOT_READY_FROM_ENDPOINTS=""
-          WEBHOOK_READY_FROM_SLICES=""
-          WEBHOOK_NOT_READY_FROM_SLICES=""
-
-          collect_webhook_status() {
-            WEBHOOK_READY_FROM_ENDPOINTS=""
-            WEBHOOK_NOT_READY_FROM_ENDPOINTS=""
-            WEBHOOK_READY_FROM_SLICES=""
-            WEBHOOK_NOT_READY_FROM_SLICES=""
-
-            if endpoints_json=$(kubectl -n cnpg-system get endpoints cnpg-webhook-service -o json 2>/dev/null); then
-              WEBHOOK_READY_FROM_ENDPOINTS=$(jq -r '[.subsets[]? | .addresses[]? | .ip] | join(" ")' <<<"${endpoints_json}" 2>/dev/null || true)
-              WEBHOOK_NOT_READY_FROM_ENDPOINTS=$(jq -r '[.subsets[]? | .notReadyAddresses[]? | .ip] | join(" ")' <<<"${endpoints_json}" 2>/dev/null || true)
-            fi
-
-            if endpointslices_json=$(kubectl -n cnpg-system get endpointslices.discovery.k8s.io -l kubernetes.io/service-name=cnpg-webhook-service -o json 2>/dev/null); then
-              WEBHOOK_READY_FROM_SLICES=$(jq -r '[.items[]? | .endpoints[]? | select(.conditions.ready == true) | .addresses[]?] | join(" ")' <<<"${endpointslices_json}" 2>/dev/null || true)
-              WEBHOOK_NOT_READY_FROM_SLICES=$(jq -r '[.items[]? | .endpoints[]? | select(.conditions.ready != true) | .addresses[]?] | join(" ")' <<<"${endpointslices_json}" 2>/dev/null || true)
-            fi
-          }
-
-          log_webhook_status() {
-            echo "cnpg-webhook-service ready IPs (Endpoints): ${WEBHOOK_READY_FROM_ENDPOINTS:-<none>}"
-            echo "cnpg-webhook-service notReady IPs (Endpoints): ${WEBHOOK_NOT_READY_FROM_ENDPOINTS:-<none>}"
-            echo "cnpg-webhook-service ready IPs (EndpointSlices): ${WEBHOOK_READY_FROM_SLICES:-<none>}"
-            echo "cnpg-webhook-service notReady IPs (EndpointSlices): ${WEBHOOK_NOT_READY_FROM_SLICES:-<none>}"
-          }
-
-          collect_webhook_status
-          log_webhook_status
-          if [ -z "${WEBHOOK_READY_FROM_ENDPOINTS}" ] && [ -z "${WEBHOOK_READY_FROM_SLICES}" ]; then
-            echo "ERROR: cnpg-webhook-service currently has no ready endpoints"
-            kubectl -n cnpg-system get endpoints cnpg-webhook-service -o yaml || true
-            kubectl -n cnpg-system get endpointslices.discovery.k8s.io -l kubernetes.io/service-name=cnpg-webhook-service -o yaml || true
-            exit 1
-          fi
-
-          ready_endpoints="${WEBHOOK_READY_FROM_ENDPOINTS:-${WEBHOOK_READY_FROM_SLICES}}"
-
-          echo "cnpg-webhook-service ready endpoints: ${ready_endpoints:-<unknown>}"
-
-      - name: Prepare midPoint config and admin secret
-        shell: bash
-        env:
           MIDPOINT_ADMIN_PASSWORD: ${{ secrets.MIDPOINT_ADMIN_PASSWORD }}
         run: |
           set -euo pipefail
-
-          kubectl -n ${{ inputs.NAMESPACE_IAM }} create secret generic midpoint-admin \
-            --from-literal=username=administrator \
-            --from-literal=password="$MIDPOINT_ADMIN_PASSWORD" \
-            --dry-run=client -o yaml | kubectl apply -f -
-      - name: Wait for Keycloak operator CRDs
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "Waiting for Keycloak CRDs to become available..."
-          for crd in keycloaks.k8s.keycloak.org keycloakrealmimports.k8s.keycloak.org; do
-            kubectl wait --for=condition=Established crd/${crd} --timeout=300s
-          done
-          for ns in keycloak-system keycloak default; do
-            if kubectl -n "$ns" get deployment keycloak-operator >/dev/null 2>&1; then
-              kubectl -n "$ns" wait --for=condition=Available deployment/keycloak-operator --timeout=300s || true
-              break
-            fi
-          done
-
-      - name: Create Argo CD application for iam apps (Keycloak + midPoint)
-        shell: bash
-        run: |
-          set -euo pipefail
-          export REPO_OWNER="${GITHUB_REPOSITORY%%/*}"
-          export REPO_NAME="${GITHUB_REPOSITORY##*/}"
-          envsubst < k8s/argocd/apps.yaml | kubectl apply -f -
-
-      - name: Wait for iam apps Argo CD application
-        shell: bash
-        env:
-          IAM_NAMESPACE: ${{ inputs.NAMESPACE_IAM }}
-        run: |
-          set -euo pipefail
-
-          iam_ns="${IAM_NAMESPACE:-iam}"
-
-          echo "Waiting for Argo CD application 'apps' to be created"
-          app_created=0
-          for attempt in $(seq 1 30); do
-            if kubectl -n argocd get application apps >/dev/null 2>&1; then
-              echo "Argo CD application 'apps' detected (attempt ${attempt}/30)"
-              app_created=1
-              break
-            fi
-            echo "Argo CD application 'apps' not found yet (attempt ${attempt}/30)"
-            sleep 10
-          done
-
-          if [ "${app_created}" -ne 1 ]; then
-            echo "Timed out waiting for Argo CD application 'apps' to be created; dumping diagnostics."
-            kubectl -n argocd get applications || true
+          if [ -z "${MIDPOINT_ADMIN_PASSWORD}" ]; then
+            echo "MIDPOINT_ADMIN_PASSWORD secret is required."
             exit 1
           fi
+          kubectl -n "${NAMESPACE_IAM}" create secret generic midpoint-admin \
+            --type=kubernetes.io/basic-auth \
+            --from-literal=username=administrator \
+            --from-literal=password="${MIDPOINT_ADMIN_PASSWORD}" \
+            --dry-run=client -o yaml | kubectl apply -f -
 
-          timeout_seconds=${ARGOCD_APPS_TIMEOUT_SECONDS:-90}
-          interval_seconds=10
-          max_attempts=$((timeout_seconds / interval_seconds))
-          echo "Waiting for Argo CD application 'apps' to reach Synced/Healthy (timeout ${timeout_seconds}s)"
+      - name: Normalize Azure Blob credentials for CNPG backups
+        shell: bash
+        env:
+          NAMESPACE_IAM: ${{ inputs.NAMESPACE_IAM }}
+          AZURE_STORAGE_ACCOUNT: ${{ inputs.STORAGE_ACCOUNT }}
+          AZURE_STORAGE_KEY: ${{ secrets.AZURE_STORAGE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${AZURE_STORAGE_KEY}" ]; then
+            echo "AZURE_STORAGE_KEY secret must provide a storage account key, SAS token, or connection string."
+            exit 1
+          fi
+          python3 scripts/normalize_azure_storage_secret.py \
+            --namespace "${NAMESPACE_IAM}" \
+            --storage-account "${AZURE_STORAGE_ACCOUNT}" \
+            --credential "${AZURE_STORAGE_KEY}"
 
-          app_ready=0
-          for attempt in $(seq 1 "${max_attempts}"); do
-            sync_status=$(kubectl -n argocd get application apps -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")
-            health_status=$(kubectl -n argocd get application apps -o jsonpath='{.status.health.status}' 2>/dev/null || echo "")
-            operation_phase=$(kubectl -n argocd get application apps -o jsonpath='{.status.operationState.phase}' 2>/dev/null || echo "")
+      - name: Apply GitOps applications
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl apply -k gitops/clusters/aks
 
-            if [ "${sync_status}" = "Synced" ] && [ "${health_status}" = "Healthy" ]; then
-              echo "Argo CD application 'apps' is Synced/Healthy"
-              app_ready=1
-              break
-            fi
-
-            echo "apps status: sync=${sync_status:-<unknown>} health=${health_status:-<unknown>} operation=${operation_phase:-<unknown>} (attempt ${attempt}/${max_attempts})"
-
-            if [ "${operation_phase}" = "Failed" ]; then
-              echo "Argo CD reports the 'apps' application operation failed; collecting diagnostics."
-              kubectl -n argocd get application apps -o yaml || true
-              if [ -n "${iam_ns}" ]; then
-                kubectl -n "${iam_ns}" describe job midpoint-seeder || true
-                kubectl -n "${iam_ns}" logs job/midpoint-seeder --all-containers || true
+      - name: Wait for platform addons
+        shell: bash
+        run: |
+          set -euo pipefail
+          for app in cert-manager cloudnative-pg ingress-nginx; do
+            echo "Waiting for Argo CD application ${app}"
+            for attempt in $(seq 1 30); do
+              sync=$(kubectl -n argocd get application "${app}" -o jsonpath='{.status.sync.status}' 2>/dev/null || true)
+              health=$(kubectl -n argocd get application "${app}" -o jsonpath='{.status.health.status}' 2>/dev/null || true)
+              if [ "${sync}" = "Synced" ] && [ "${health}" = "Healthy" ]; then
+                echo "${app} is synced and healthy"
+                break
               fi
+              if [ "${attempt}" -eq 30 ]; then
+                echo "Timed out waiting for ${app} to become healthy"
+                kubectl -n argocd get application "${app}" -o yaml || true
+                exit 1
+              fi
+              sleep 10
+            done
+          done
+
+      - name: Wait for IAM application
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            sync=$(kubectl -n argocd get application iam -o jsonpath='{.status.sync.status}' 2>/dev/null || true)
+            health=$(kubectl -n argocd get application iam -o jsonpath='{.status.health.status}' 2>/dev/null || true)
+            if [ "${sync}" = "Synced" ] && [ "${health}" = "Healthy" ]; then
+              echo "IAM application is synced and healthy"
+              exit 0
+            fi
+            if [ "${attempt}" -eq 60 ]; then
+              echo "Timed out waiting for IAM application to become healthy"
+              kubectl -n argocd get application iam -o yaml || true
               exit 1
             fi
-
-            if [ "${operation_phase}" = "Running" ] && [ -n "${iam_ns}" ] && [ $((attempt % 3)) -eq 0 ]; then
-              if kubectl -n "${iam_ns}" get job midpoint-seeder >/dev/null 2>&1; then
-                if command -v jq >/dev/null 2>&1; then
-                  job_summary=$(kubectl -n "${iam_ns}" get job midpoint-seeder -o json 2>/dev/null \
-                    | jq -r '[((.status.conditions // []) | map("\(.type)=\(.status)")[]?), "succeeded=\(.status.succeeded // 0)", "failed=\(.status.failed // 0)", "active=\(.status.active // 0)"] | join(" ")' 2>/dev/null || true)
-                else
-                  succeeded=$(kubectl -n "${iam_ns}" get job midpoint-seeder -o jsonpath='{.status.succeeded}' 2>/dev/null || echo "")
-                  failed=$(kubectl -n "${iam_ns}" get job midpoint-seeder -o jsonpath='{.status.failed}' 2>/dev/null || echo "")
-                  active=$(kubectl -n "${iam_ns}" get job midpoint-seeder -o jsonpath='{.status.active}' 2>/dev/null || echo "")
-                  job_summary="succeeded=${succeeded:-0} failed=${failed:-0} active=${active:-0}"
-                fi
-                echo "midpoint-seeder job status: ${job_summary:-<unavailable>}"
-              else
-                echo "midpoint-seeder job has not been created yet."
-              fi
-            fi
-
-            sleep "${interval_seconds}"
-          done
-
-          if [ "${app_ready}" -ne 1 ]; then
-            echo "Argo CD application 'apps' failed to reach Synced/Healthy within ${timeout_seconds}s; dumping diagnostics."
-            kubectl -n argocd get application apps -o yaml || true
-            kubectl -n argocd get applications || true
-            if [ -n "${iam_ns}" ]; then
-              kubectl -n "${iam_ns}" describe job midpoint-seeder || true
-              kubectl -n "${iam_ns}" logs job/midpoint-seeder --all-containers || true
-            fi
-            exit 1
-          fi
-
-          kubectl -n argocd get application apps
-          if [ -n "${iam_ns}" ]; then
-            kubectl -n "${iam_ns}" get job midpoint-seeder || true
-          fi
-
-      - name: Wait for Keycloak service endpoints
-        shell: bash
-        env:
-          IAM_NAMESPACE: ${{ inputs.NAMESPACE_IAM }}
-        run: |
-          set -euo pipefail
-
-          ns="${IAM_NAMESPACE}"
-          if [ -z "${ns}" ]; then
-            echo "IAM_NAMESPACE input must not be empty"
-            exit 1
-          fi
-
-          echo "Waiting for Keycloak service in namespace ${ns}"
-          service_name=""
-          service_candidates=(rws-keycloak-service rws-keycloak)
-          for attempt in $(seq 1 20); do
-            for candidate in "${service_candidates[@]}"; do
-              if kubectl -n "${ns}" get svc "${candidate}" >/dev/null 2>&1; then
-                service_name="${candidate}"
-                break
-              fi
-            done
-            if [ -n "${service_name}" ]; then
-              echo "Keycloak service ${service_name} detected"
-              break
-            fi
-            echo "Keycloak service not created yet (attempt ${attempt}/20)"
             sleep 10
           done
 
-          if [ -z "${service_name}" ]; then
-            echo "Timed out waiting for Keycloak service in namespace ${ns}" >&2
-            kubectl -n "${ns}" get keycloaks.k8s.keycloak.org rws-keycloak -o yaml || true
-            kubectl -n "${ns}" get keycloakrealmimports.k8s.keycloak.org rws-realm-import -o yaml || true
-            kubectl -n "${ns}" get pods -l app.kubernetes.io/instance=rws-keycloak -o wide || true
-            kubectl -n "${ns}" get events --sort-by=.metadata.creationTimestamp | tail -n 50 || true
-            exit 1
-          fi
-
-          echo "Ensuring Keycloak service ${service_name} publishes ready endpoints"
-
-          ready_from_endpoints=""
-          ready_from_slices=""
-          not_ready_from_endpoints=""
-          not_ready_from_slices=""
-
-          collect_service_status() {
-            ready_from_endpoints=""
-            ready_from_slices=""
-            not_ready_from_endpoints=""
-            not_ready_from_slices=""
-
-            if endpoints_json=$(kubectl -n "${ns}" get endpoints "${service_name}" -o json 2>/dev/null); then
-              ready_from_endpoints=$(jq -r '[.subsets[]? | .addresses[]? | .ip] | join(" ")' <<<"${endpoints_json}" 2>/dev/null || true)
-              not_ready_from_endpoints=$(jq -r '[.subsets[]? | .notReadyAddresses[]? | .ip] | join(" ")' <<<"${endpoints_json}" 2>/dev/null || true)
-            fi
-
-            if endpointslices_json=$(kubectl -n "${ns}" get endpointslices.discovery.k8s.io -l kubernetes.io/service-name="${service_name}" -o json 2>/dev/null); then
-              ready_from_slices=$(jq -r '[.items[]? | .endpoints[]? | select(.conditions.ready == true) | .addresses[]?] | join(" ")' <<<"${endpointslices_json}" 2>/dev/null || true)
-              not_ready_from_slices=$(jq -r '[.items[]? | .endpoints[]? | select(.conditions.ready != true) | .addresses[]?] | join(" ")' <<<"${endpointslices_json}" 2>/dev/null || true)
-            fi
-          }
-
-          log_service_status() {
-            echo "Keycloak service ready IPs (Endpoints): ${ready_from_endpoints:-<none>}"
-            echo "Keycloak service notReady IPs (Endpoints): ${not_ready_from_endpoints:-<none>}"
-            echo "Keycloak service ready IPs (EndpointSlices): ${ready_from_slices:-<none>}"
-            echo "Keycloak service notReady IPs (EndpointSlices): ${not_ready_from_slices:-<none>}"
-          }
-
-          consecutive_ready=0
-          ready_confirmed=0
-
-          for attempt in $(seq 1 45); do
-            collect_service_status
-            log_service_status
-
-            if [ -n "${ready_from_endpoints}" ] || [ -n "${ready_from_slices}" ]; then
-              consecutive_ready=$((consecutive_ready + 1))
-              echo "Ready endpoints observed for Keycloak service (confirmation ${consecutive_ready}/3)"
-              if [ "${consecutive_ready}" -ge 3 ]; then
-                ready_confirmed=1
-                echo "Keycloak service ${service_name} endpoints appear stable"
-                break
-              fi
-              sleep 5
-              continue
-            fi
-
-            echo "Keycloak service ${service_name} endpoints not ready yet (attempt ${attempt}/45)"
-            consecutive_ready=0
-            sleep 10
-          done
-
-          if [ "${ready_confirmed}" -ne 1 ]; then
-            echo "Timed out waiting for Keycloak service ${service_name} to expose ready endpoints" >&2
-            log_service_status
-            kubectl -n "${ns}" describe svc "${service_name}" || true
-            kubectl -n "${ns}" get endpoints "${service_name}" -o yaml || true
-            kubectl -n "${ns}" get endpointslices.discovery.k8s.io -l kubernetes.io/service-name="${service_name}" -o yaml || true
-            kubectl -n "${ns}" get pods -l app.kubernetes.io/instance=rws-keycloak -o wide || true
-            if pods=$(kubectl -n "${ns}" get pods -l app.kubernetes.io/instance=rws-keycloak -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); then
-              for pod in ${pods}; do
-                echo "---- Logs from pod ${pod} ----"
-                kubectl -n "${ns}" logs "${pod}" --tail=40 || true
-              done
-            fi
-            kubectl -n "${ns}" describe keycloaks.k8s.keycloak.org rws-keycloak || true
-            exit 1
-          fi
-
-          echo "Keycloak service ${service_name} is publishing ready endpoints"
-
-      - name: Wait for midPoint service endpoints
+      - name: Summary
         shell: bash
         run: |
           set -euo pipefail
-
-          ns="${{ inputs.NAMESPACE_IAM }}"
-          service_name="midpoint"
-
-          echo "Waiting for midPoint service ${service_name} in namespace ${ns}"
-          for attempt in $(seq 1 20); do
-            if kubectl -n "${ns}" get svc "${service_name}" >/dev/null 2>&1; then
-              echo "midPoint service ${service_name} detected"
-              break
-            fi
-            echo "midPoint service not created yet (attempt ${attempt}/20)"
-            sleep 10
-          done
-
-          if ! kubectl -n "${ns}" get svc "${service_name}" >/dev/null 2>&1; then
-            echo "Timed out waiting for midPoint service ${service_name} in namespace ${ns}" >&2
-            kubectl -n "${ns}" get svc -l app=midpoint -o wide || true
-            kubectl -n "${ns}" get pods -l app=midpoint -o wide || true
-            kubectl -n "${ns}" get events --sort-by=.metadata.creationTimestamp | tail -n 50 || true
-            exit 1
-          fi
-
-          ready_from_endpoints=""
-          ready_from_slices=""
-          not_ready_from_endpoints=""
-          not_ready_from_slices=""
-
-          collect_service_status() {
-            ready_from_endpoints=""
-            ready_from_slices=""
-            not_ready_from_endpoints=""
-            not_ready_from_slices=""
-
-            if endpoints_json=$(kubectl -n "${ns}" get endpoints "${service_name}" -o json 2>/dev/null); then
-              ready_from_endpoints=$(jq -r '[.subsets[]? | .addresses[]? | .ip] | join(" ")' <<<"${endpoints_json}" 2>/dev/null || true)
-              not_ready_from_endpoints=$(jq -r '[.subsets[]? | .notReadyAddresses[]? | .ip] | join(" ")' <<<"${endpoints_json}" 2>/dev/null || true)
-            fi
-
-            if endpointslices_json=$(kubectl -n "${ns}" get endpointslices.discovery.k8s.io -l kubernetes.io/service-name="${service_name}" -o json 2>/dev/null); then
-              ready_from_slices=$(jq -r '[.items[]? | .endpoints[]? | select(.conditions.ready == true) | .addresses[]?] | join(" ")' <<<"${endpointslices_json}" 2>/dev/null || true)
-              not_ready_from_slices=$(jq -r '[.items[]? | .endpoints[]? | select(.conditions.ready != true) | .addresses[]?] | join(" ")' <<<"${endpointslices_json}" 2>/dev/null || true)
-            fi
-          }
-
-          log_service_status() {
-            echo "midPoint service ready IPs (Endpoints): ${ready_from_endpoints:-<none>}"
-            echo "midPoint service notReady IPs (Endpoints): ${not_ready_from_endpoints:-<none>}"
-            echo "midPoint service ready IPs (EndpointSlices): ${ready_from_slices:-<none>}"
-            echo "midPoint service notReady IPs (EndpointSlices): ${not_ready_from_slices:-<none>}"
-          }
-
-          consecutive_ready=0
-          ready_confirmed=0
-
-          for attempt in $(seq 1 45); do
-            collect_service_status
-            log_service_status
-
-            if [ -n "${ready_from_endpoints}" ] || [ -n "${ready_from_slices}" ]; then
-              consecutive_ready=$((consecutive_ready + 1))
-              echo "Ready endpoints observed for midPoint service (confirmation ${consecutive_ready}/3)"
-              if [ "${consecutive_ready}" -ge 3 ]; then
-                ready_confirmed=1
-                echo "midPoint service ${service_name} endpoints appear stable"
-                break
-              fi
-              sleep 5
-              continue
-            fi
-
-            echo "midPoint service ${service_name} endpoints not ready yet (attempt ${attempt}/45)"
-            consecutive_ready=0
-            sleep 10
-          done
-
-          if [ "${ready_confirmed}" -ne 1 ]; then
-            echo "Timed out waiting for midPoint service ${service_name} to expose ready endpoints" >&2
-            log_service_status
-            kubectl -n "${ns}" describe svc "${service_name}" || true
-            kubectl -n "${ns}" get endpoints "${service_name}" -o yaml || true
-            kubectl -n "${ns}" get endpointslices.discovery.k8s.io -l kubernetes.io/service-name="${service_name}" -o yaml || true
-            kubectl -n "${ns}" get pods -l app=midpoint -o wide || true
-            if pods=$(kubectl -n "${ns}" get pods -l app=midpoint -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); then
-              for pod in ${pods}; do
-                echo "---- Logs from midPoint pod ${pod} ----"
-                kubectl -n "${ns}" logs "${pod}" --tail=40 || true
-              done
-            fi
-            kubectl -n "${ns}" describe deployment midpoint || true
-            exit 1
-          fi
-
-          echo "midPoint service ${service_name} is publishing ready endpoints"
-
-      - name: Show ingress endpoints (if available)
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "Ingress-NGINX service:"
-          kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide || true
-          echo "Keycloak service:"
-          {
-            tmpfile=$(mktemp)
-            trap 'rm -f "${tmpfile}"' EXIT
-
-            service_name=""
-            for candidate in rws-keycloak-service rws-keycloak; do
-              if kubectl -n ${{ inputs.NAMESPACE_IAM }} get svc "${candidate}" -o wide >"${tmpfile}" 2>/dev/null; then
-                service_name="${candidate}"
-                break
-              fi
-            done
-
-            if [ -n "${service_name}" ]; then
-              echo "(${service_name})"
-              cat "${tmpfile}"
-            else
-              echo "Service rws-keycloak-service or rws-keycloak not found even after wait step; listing services in namespace ${{ inputs.NAMESPACE_IAM }}."
-              kubectl -n ${{ inputs.NAMESPACE_IAM }} get svc -o wide || true
-            fi
-          }
-          echo "midPoint service:"
-          kubectl -n ${{ inputs.NAMESPACE_IAM }} get svc midpoint -o wide || true
+          echo "✅ Argo CD and IAM workloads are converged."
+          echo "➡️  Run the '04 - Configure demo hosts' workflow to publish nip.io hostnames."
