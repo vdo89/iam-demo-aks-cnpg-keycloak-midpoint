@@ -41,7 +41,17 @@ spec:
                 exit 1
               fi
 
+              username_file="/var/run/secrets/midpoint-admin/username"
+              if [ -z "${MIDPOINT_USERNAME:-}" ] && [ -r "${username_file}" ]; then
+                MIDPOINT_USERNAME="$(tr -d '\r\n' <"${username_file}")"
+              fi
+
               midpoint_username="${MIDPOINT_USERNAME:-administrator}"
+
+              if [ -z "${midpoint_username}" ]; then
+                echo "ERROR: midpoint admin username could not be determined" >&2
+                exit 1
+              fi
               MP_URL="${MIDPOINT_URL:-http://midpoint:8080/midpoint}"
               echo "Using midPoint at: $MP_URL"
 

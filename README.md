@@ -93,7 +93,8 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
 
 - Argo CD now runs the `midpoint-seeder` Job as a **PostSync hook** after the IAM application becomes healthy.
   The hook mounts the XML definitions from `k8s/apps/midpoint/objects/` through the `midpoint-objects` ConfigMap
-  and imports them into midPoint via its REST API using the admin password in the `midpoint-admin` Secret.
+  and imports them into midPoint via its REST API using the admin credentials from the `midpoint-admin` Secret
+  (it now consumes both `username` and `password`, defaulting to `administrator` only when the secret omits a username).
 - The Job treats existing objects as a no-op (HTTP 409), so repeated Argo CD syncs keep the demo state convergent
   without failing when objects already exist.
 - To re-run the import manually, trigger an Argo CD sync or delete the completed `midpoint-seeder` Job and Argo CD
