@@ -144,29 +144,28 @@ def parse_credential(raw: str, storage_account: str) -> AzureCredential:
         decoded = json.loads(value)
     except json.JSONDecodeError:
         decoded = None
-    if decoded:
-        candidates: list[str] = []
-        if isinstance(decoded, dict):
-            for key in ("connectionString", "connection_string", "value"):
-                candidate = decoded.get(key)
-                if isinstance(candidate, str) and candidate.strip():
-                    candidates.append(candidate.strip())
-            keys_field = decoded.get("keys")
-            if isinstance(keys_field, list):
-                for item in keys_field:
-                    if isinstance(item, dict):
-                        candidate = item.get("value")
-                        if isinstance(candidate, str) and candidate.strip():
-                            candidates.append(candidate.strip())
-        elif isinstance(decoded, list):
-            for item in decoded:
-                if isinstance(item, dict):
-                    candidate = item.get("value")
-                    if isinstance(candidate, str) and candidate.strip():
-                        candidates.append(candidate.strip())
-        for candidate in candidates:
-            if candidate == value:
+    if decoded is not None:
+        def iter_string_candidates(obj: object) -> list[str]:
+            stack: list[object] = [obj]
+            strings: list[str] = []
+            while stack:
+                current = stack.pop()
+                if isinstance(current, str):
+                    normalized = current.strip()
+                    if normalized:
+                        strings.append(normalized)
+                elif isinstance(current, dict):
+                    for child in current.values():
+                        stack.append(child)
+                elif isinstance(current, list):
+                    stack.extend(current)
+            return strings
+
+        seen: set[str] = set()
+        for candidate in iter_string_candidates(decoded):
+            if candidate == value or candidate in seen:
                 continue
+            seen.add(candidate)
             try:
                 return parse_credential(candidate, storage_account)
             except ValueError:
