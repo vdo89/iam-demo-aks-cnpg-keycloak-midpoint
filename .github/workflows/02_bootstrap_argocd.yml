@@ -22,6 +22,14 @@ on:
         description: 'Namespace for IAM stack (Keycloak + midPoint + DB)'
         required: false
         default: 'iam'
+      ARGOCD_APPS_WAIT_TIMEOUT_SECONDS:
+        description: 'Seconds to wait for the iam Argo CD application to become Synced/Healthy'
+        required: false
+        default: '600'
+      ARGOCD_APPS_WAIT_INTERVAL_SECONDS:
+        description: 'Polling interval (seconds) when waiting on the iam Argo CD application'
+        required: false
+        default: '10'
 
 permissions:
   id-token: write
@@ -1450,6 +1458,9 @@ jobs:
 
       - name: Wait for iam apps Argo CD application
         shell: bash
+        env:
+          ARGOCD_APPS_WAIT_TIMEOUT_SECONDS: ${{ inputs.ARGOCD_APPS_WAIT_TIMEOUT_SECONDS }}
+          ARGOCD_APPS_WAIT_INTERVAL_SECONDS: ${{ inputs.ARGOCD_APPS_WAIT_INTERVAL_SECONDS }}
         run: |
           set -euo pipefail
 
@@ -1471,29 +1482,55 @@ jobs:
             exit 1
           fi
 
-          timeout_seconds=120
-          interval_seconds=10
-          max_attempts=$((timeout_seconds / interval_seconds))
-          echo "Waiting for Argo CD application 'apps' to reach Synced/Healthy (timeout ${timeout_seconds}s)"
+          timeout_seconds="${ARGOCD_APPS_WAIT_TIMEOUT_SECONDS:-600}"
+          interval_seconds="${ARGOCD_APPS_WAIT_INTERVAL_SECONDS:-10}"
+
+          if ! [[ "${timeout_seconds}" =~ ^[0-9]+$ ]] || [ "${timeout_seconds}" -le 0 ]; then
+            echo "Invalid ARGOCD_APPS_WAIT_TIMEOUT_SECONDS value: ${timeout_seconds}" >&2
+            exit 1
+          fi
+
+          if ! [[ "${interval_seconds}" =~ ^[0-9]+$ ]] || [ "${interval_seconds}" -le 0 ]; then
+            echo "Invalid ARGOCD_APPS_WAIT_INTERVAL_SECONDS value: ${interval_seconds}" >&2
+            exit 1
+          fi
+
+          max_attempts=$(((timeout_seconds + interval_seconds - 1) / interval_seconds))
+          if [ "${max_attempts}" -lt 1 ]; then
+            max_attempts=1
+          fi
+
+          echo "Waiting for Argo CD application 'apps' to reach Synced/Healthy (timeout ${timeout_seconds}s, interval ${interval_seconds}s)"
 
           app_ready=0
           for attempt in $(seq 1 "${max_attempts}"); do
             sync_status=$(kubectl -n argocd get application apps -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")
             health_status=$(kubectl -n argocd get application apps -o jsonpath='{.status.health.status}' 2>/dev/null || echo "")
             operation_phase=$(kubectl -n argocd get application apps -o jsonpath='{.status.operationState.phase}' 2>/dev/null || echo "")
+            operation_message=$(kubectl -n argocd get application apps -o jsonpath='{.status.operationState.message}' 2>/dev/null || echo "")
 
-            if [ "${sync_status}" = "Synced" ] && [ "${health_status}" = "Healthy" ]; then
+            if [ "${sync_status}" = "Synced" ] && [ "${health_status}" = "Healthy" ] && [ "${operation_phase}" != "Running" ]; then
               echo "Argo CD application 'apps' is Synced/Healthy"
               app_ready=1
               break
             fi
 
-            echo "apps status: sync=${sync_status:-<unknown>} health=${health_status:-<unknown>} operation=${operation_phase:-<unknown>} (attempt ${attempt}/${max_attempts})"
+            if [ "${operation_phase}" = "Failed" ] || [ "${operation_phase}" = "Error" ]; then
+              echo "Argo CD reported operation phase ${operation_phase}; aborting wait." >&2
+              break
+            fi
+
+            status_line="apps status: sync=${sync_status:-<unknown>} health=${health_status:-<unknown>} operation=${operation_phase:-<unknown>}"
+            if [ -n "${operation_message}" ]; then
+              status_line+=" message='${operation_message}'"
+            fi
+            status_line+=" (attempt ${attempt}/${max_attempts})"
+            echo "${status_line}"
             sleep "${interval_seconds}"
           done
 
           if [ "${app_ready}" -ne 1 ]; then
-            echo "Argo CD application 'apps' failed to reach Synced/Healthy within ${timeout_seconds}s; dumping diagnostics."
+            echo "Argo CD application 'apps' did not reach Synced/Healthy within ${timeout_seconds}s; dumping diagnostics."
             kubectl -n argocd get application apps -o yaml || true
             kubectl -n argocd get applications || true
             exit 1
