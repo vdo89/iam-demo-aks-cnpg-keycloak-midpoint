@@ -39,6 +39,35 @@ spec:
 
               auth="administrator:${MIDPOINT_PASSWORD}"
 
+              wait_attempts="${MIDPOINT_WAIT_MAX_ATTEMPTS:-30}"
+              wait_sleep="${MIDPOINT_WAIT_SLEEP_SECONDS:-10}"
+              attempt=1
+              ready=0
+              while [ "${attempt}" -le "${wait_attempts}" ]; do
+                http_code="$(curl -sS -o /dev/null -u "$auth" -w '%{http_code}' \
+                  "$MP_URL/ws/rest/version" || true)"
+
+                case "${http_code}" in
+                200)
+                  echo "midPoint REST endpoint is ready (HTTP ${http_code})"
+                  ready=1
+                  break
+                  ;;
+                *)
+                  echo "midPoint not ready yet (HTTP ${http_code}) [${attempt}/${wait_attempts}]"
+                  attempt=$((attempt + 1))
+                  if [ "${attempt}" -le "${wait_attempts}" ]; then
+                    sleep "${wait_sleep}"
+                  fi
+                  ;;
+                esac
+              done
+
+              if [ "${ready}" -ne 1 ]; then
+                echo "Timed out waiting for midPoint REST API after ${wait_attempts} attempts" >&2
+                exit 1
+              fi
+
               set -- /objects/*.xml
 
               if [ "${1}" = "/objects/*.xml" ]; then
@@ -49,7 +78,7 @@ spec:
                   tmp_response="$(mktemp)"
                   http_code="$(curl -sS -u "$auth" -H "Content-Type: application/xml" \
                     -X POST "$MP_URL/ws/rest/objects" --data-binary "@$f" \
-                    -o "${tmp_response}" -w '%{http_code}')"
+                    -o "${tmp_response}" -w '%{http_code}' || echo '000')"
 
                   case "${http_code}" in
                   200|201)
