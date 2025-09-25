@@ -9,6 +9,11 @@ def test_parse_account_key():
     assert cred.sas_token is None
 
 
+def test_parse_account_key_with_quotes():
+    cred = parse_credential('"ZmFrZUFjY291bnRLZXkxMjM0NTY="', "demoacct")
+    assert cred.account_key == "ZmFrZUFjY291bnRLZXkxMjM0NTY="
+
+
 def test_parse_connection_string():
     raw = "DefaultEndpointsProtocol=https;AccountName=cnpgdemo;AccountKey=abcd;EndpointSuffix=core.windows.net"
     cred = parse_credential(raw, "ignored")

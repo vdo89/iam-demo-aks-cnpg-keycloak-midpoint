@@ -18,6 +18,10 @@ class AzureCredential:
 
 def parse_credential(raw: str, storage_account: str) -> AzureCredential:
     value = raw.strip()
+    if (value.startswith("\"") and value.endswith("\"")) or (
+        value.startswith("'") and value.endswith("'")
+    ):
+        value = value[1:-1].strip()
     if not value:
         raise ValueError("Credential must not be empty")
 
