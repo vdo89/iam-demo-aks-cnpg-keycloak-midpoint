@@ -77,7 +77,7 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
   - Converge a CloudNativePG **Database** resource alongside the managed roles so the Git-managed `midpoint` database and its
     required `pgcrypto`/`pg_trgm` extensions stay declarative.
    - Install **Keycloak Operator** then create a **Keycloak** CR bound to CNPG
-     - The workflow now reconfigures the operator deployment to watch the `iam` application namespace (in addition to its home namespace) so it publishes the generated services, such as `rws-keycloak-service`, where Argo CD manages the workloads.
+     - Argo CD now owns the Keycloak operator deployment, its cross-namespace RBAC and watch configuration straight from Git, so the workflow no longer patches the controller imperatively after bootstrap.
    - Deploy **midPoint** bound to CNPG
    - Create a Kubernetes **Secret** with Azure Blob credentials (from repo secrets) for CNPG backups
    - Purge any existing WAL/archive blobs in the Azure `cnpg-backups/iam-db` prefix so CloudNativePG can bootstrap cleanly on reruns
@@ -173,7 +173,7 @@ End-to-end demo that deploys **AKS**, **Argo CD**, **Ingress-NGINX**, **cert-man
     deprecated `--db-url`, `--hostname-strict` or `--features` flags or revives `spec.db.url`, which caused the CrashLoopBackOff
     observed in the bootstrap logs.
 
-  - The manifest pins Keycloak to **26.3.4** to stay aligned with the operator resources the workflow installs.
+  - The manifest pins Keycloak to **26.3.4** to stay aligned with the operator resources Argo CD now reconciles.
     Keycloak 26.0.0 fails to start once build-time options such as `kc.db` or `kc.health-enabled` diverge from the
     optimized image defaults, which is exactly the case for this deployment. The upstream fix (Keycloak issue #33902)
     ships in 26.3.4, so we keep the newer image to avoid the CrashLoopBackOff while matching the operator release
