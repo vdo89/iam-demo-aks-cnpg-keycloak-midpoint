@@ -1,0 +1,13 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: keycloak
+  namespace: iam
+spec:
+  cluster:
+    name: iam-db
+  name: keycloak
+  owner: keycloak
+  schemas:
+    - name: public
+      owner: keycloak
