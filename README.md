@@ -46,6 +46,10 @@ Trigger the workflow **“01 - Provision AKS with Terraform”** (`.github/wor
    - Apply the GitOps tree (`gitops/clusters/aks`) so Argo CD manages addons (cert-manager, CloudNativePG operator, ingress-nginx) and the IAM workloads (CloudNativePG cluster, Keycloak, midPoint).
    - Wait for all applications to report `Synced` and `Healthy`.
 
+### Troubleshooting: Argo CD project denies the repo
+
+If the `iam` application reports `application repo … is not permitted in project 'iam'`, make sure the AppProject allows the exact Git repository URL. The default configuration now whitelists both the templated `$(GITOPS_REPO_URL)` value used by the bootstrap workflow and the canonical `https://github.com/vdo89/iam-demo-aks-cnpg-keycloak-midpoint` remote so freshly bootstrapped clusters reconcile immediately. Adjust [`gitops/clusters/aks/projects/iam.yaml`](gitops/clusters/aks/projects/iam.yaml) if you fork the project or host the manifests elsewhere.
+
 ## 3. Publish demo ingress hostnames
 
 Run the workflow **“04 - Configure demo hosts”** after the bootstrap finishes. The job calls [`scripts/configure_demo_hosts.py`](scripts/configure_demo_hosts.py) to discover the ingress IP, updates [`gitops/apps/iam/params.env`](gitops/apps/iam/params.env) with fresh `nip.io` hostnames, commits the change and prints the URLs.

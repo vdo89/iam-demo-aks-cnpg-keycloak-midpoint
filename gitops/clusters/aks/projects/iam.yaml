@@ -6,6 +6,7 @@ metadata:
 spec:
   description: Identity workloads (CloudNativePG, Keycloak, midPoint).
   sourceRepos:
+    - https://github.com/vdo89/iam-demo-aks-cnpg-keycloak-midpoint
     - $(GITOPS_REPO_URL)
   destinations:
     - namespace: iam
