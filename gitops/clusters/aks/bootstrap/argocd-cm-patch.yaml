@@ -25,9 +25,10 @@ data:
               return hs
             end
             if condition.status == "False" then
+              local lower_reason = nil
               if condition.reason ~= nil then
-                local reason = string.lower(condition.reason)
-                if string.find(reason, "error") ~= nil or string.find(reason, "fail") ~= nil then
+                lower_reason = string.lower(condition.reason)
+                if string.find(lower_reason, "error") ~= nil or string.find(lower_reason, "fail") ~= nil then
                   hs.status = "Degraded"
                   if condition.message ~= nil and condition.message ~= "" then
                     hs.message = condition.message
@@ -36,6 +37,15 @@ data:
                   end
                   return hs
                 end
+              end
+              if lower_reason ~= nil and string.find(lower_reason, "health") ~= nil then
+                hs.status = "Degraded"
+                if condition.message ~= nil and condition.message ~= "" then
+                  hs.message = condition.message
+                else
+                  hs.message = "Keycloak health endpoint reports not ready"
+                end
+                return hs
               end
               if condition.message ~= nil and condition.message ~= "" then
                 hs.message = condition.message
