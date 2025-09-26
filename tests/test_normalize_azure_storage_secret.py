@@ -11,6 +11,13 @@ def test_parse_account_key():
     assert cred.sas_token is None
 
 
+def test_parse_account_key_without_padding():
+    key = "YWJjZGVmZ2hpams"
+    cred = parse_credential(key, "demoacct")
+    assert cred.account_key == key
+    assert "AccountKey=YWJjZGVmZ2hpams" in cred.connection_string
+
+
 def test_parse_account_key_with_quotes():
     cred = parse_credential('"ZmFrZUFjY291bnRLZXkxMjM0NTY="', "demoacct")
     assert cred.account_key == "ZmFrZUFjY291bnRLZXkxMjM0NTY="

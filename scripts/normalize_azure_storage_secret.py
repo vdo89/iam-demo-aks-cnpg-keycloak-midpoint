@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import re
 import subprocess
+from binascii import Error as BinasciiError
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -42,6 +44,17 @@ def _heuristic_summary(value: str) -> str:
         "has_sig": "sig=" in normalized_lower,
     }
     return ", ".join(f"{key}={'yes' if val else 'no'}" for key, val in heuristics.items())
+
+
+def _looks_like_account_key(value: str) -> bool:
+    if not re.fullmatch(r"[A-Za-z0-9+/=]{12,}", value):
+        return False
+    padding = "=" * ((4 - len(value) % 4) % 4)
+    try:
+        decoded = base64.b64decode(value + padding, validate=True)
+    except (BinasciiError, ValueError):
+        return False
+    return len(decoded) >= 8
 
 
 def parse_credential(raw: str, storage_account: str) -> AzureCredential:
@@ -171,7 +184,7 @@ def parse_credential(raw: str, storage_account: str) -> AzureCredential:
         )
         return AzureCredential(storage_account=storage_account, connection_string=connection_string, sas_token=token)
 
-    if re.fullmatch(r"[A-Za-z0-9+/=]{20,}", value):
+    if _looks_like_account_key(value):
         connection_string = (
             "DefaultEndpointsProtocol=https;"
             f"AccountName={storage_account};"
