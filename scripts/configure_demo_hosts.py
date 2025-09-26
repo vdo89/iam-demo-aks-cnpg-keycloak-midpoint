@@ -60,9 +60,25 @@ def resolve_ingress_ip(service: str, explicit_ip: Optional[str], explicit_hostna
             hostname = ""
 
     if not hostname:
+        status_hint = ""
+        try:
+            svc_type = run_kubectl_jsonpath(service, "{.spec.type}")
+        except KubectlError as exc:
+            svc_type = ""
+            status_hint = f" Unable to query service type: {exc}."
+        try:
+            lb_state = run_kubectl_jsonpath(service, "{.status.loadBalancer}")
+        except KubectlError as exc:
+            lb_state = ""
+            status_hint = f"{status_hint} Unable to query load balancer status: {exc}."
+        else:
+            if lb_state:
+                status_hint = f"{status_hint} Current loadBalancer status: {lb_state}."
+        if svc_type:
+            status_hint = f"{status_hint} Service type: {svc_type}."
         raise RuntimeError(
             "Ingress controller does not expose an external IP or hostname yet. "
-            "Provide --ingress-ip or wait for the service to publish an address."
+            "Provide --ingress-ip or wait for the service to publish an address." + status_hint
         )
 
     try:
