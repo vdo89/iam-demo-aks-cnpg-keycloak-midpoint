@@ -274,13 +274,34 @@ jobs:
           for attempt in $(seq 1 60); do
             sync=$(kubectl -n argocd get application iam -o jsonpath='{.status.sync.status}' 2>/dev/null || true)
             health=$(kubectl -n argocd get application iam -o jsonpath='{.status.health.status}' 2>/dev/null || true)
+            phase=$(kubectl -n argocd get application iam -o jsonpath='{.status.operationState.phase}' 2>/dev/null || true)
+            operation_message=$(kubectl -n argocd get application iam -o jsonpath='{.status.operationState.message}' 2>/dev/null || true)
+
+            echo "Attempt ${attempt} for IAM: sync='${sync}', health='${health}', phase='${phase}'"
+            if [ -n "${operation_message}" ]; then
+              echo "Last operation message: ${operation_message}"
+            fi
             if [ "${sync}" = "Synced" ] && [ "${health}" = "Healthy" ]; then
               echo "IAM application is synced and healthy"
               exit 0
             fi
             if [ "${attempt}" -eq 60 ]; then
               echo "Timed out waiting for IAM application to become healthy"
+              echo '::group::IAM Argo CD application'
               kubectl -n argocd get application iam -o yaml || true
+              echo '::endgroup::'
+              echo '::group::Keycloak custom resource'
+              kubectl -n iam get keycloak rws-keycloak -o yaml || kubectl -n iam get keycloaks.k8s.keycloak.org rws-keycloak -o yaml || true
+              echo '::endgroup::'
+              echo '::group::Keycloak describe'
+              kubectl -n iam describe keycloak rws-keycloak || kubectl -n iam describe keycloaks.k8s.keycloak.org rws-keycloak || true
+              echo '::endgroup::'
+              echo '::group::IAM namespace pods'
+              kubectl -n iam get pods -o wide || true
+              echo '::endgroup::'
+              echo '::group::Recent IAM namespace events'
+              kubectl -n iam get events --sort-by='.metadata.creationTimestamp' | tail -n 40 || true
+              echo '::endgroup::'
               exit 1
             fi
             sleep 10
