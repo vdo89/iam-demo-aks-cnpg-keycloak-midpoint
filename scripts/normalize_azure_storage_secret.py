@@ -171,14 +171,24 @@ def parse_credential(raw: str, storage_account: str) -> AzureCredential:
         )
         return AzureCredential(storage_account=storage_account, connection_string=connection_string, sas_token=token)
 
-    if re.fullmatch(r"[A-Za-z0-9+/=]{20,}", value):
+    base64_like = normalized_value.strip()
+    if (
+        base64_like
+        and not re.search(r"[;&?{}\s]", base64_like)
+        and "=" not in base64_like.rstrip("=")
+        and re.fullmatch(r"[A-Za-z0-9+/=_-]{15,}", base64_like)
+    ):
         connection_string = (
             "DefaultEndpointsProtocol=https;"
             f"AccountName={storage_account};"
             f"AccountKey={value};"
             "EndpointSuffix=core.windows.net"
         )
-        return AzureCredential(storage_account=storage_account, connection_string=connection_string, account_key=value)
+        return AzureCredential(
+            storage_account=storage_account,
+            connection_string=connection_string,
+            account_key=value,
+        )
 
     stripped = normalized_value.lstrip()
     if "\n" in normalized_value and not stripped.startswith(("{", "[")):

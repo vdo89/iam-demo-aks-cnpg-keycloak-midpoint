@@ -136,3 +136,11 @@ def test_parse_yaml_style_pairs():
     assert cred.storage_account == "cnpgdemo"
     assert cred.account_key == "abcd1234=="
     assert "BlobEndpoint=https://cnpgdemo.blob.core.windows.net/" in cred.connection_string
+
+
+def test_parse_short_account_key_without_delimiters():
+    raw = "rwsdqn2z17r0jcb"
+    cred = parse_credential(raw, "demoacct")
+    assert cred.storage_account == "demoacct"
+    assert cred.account_key == raw
+    assert f"AccountKey={raw}" in cred.connection_string
