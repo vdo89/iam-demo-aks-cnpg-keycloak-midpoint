@@ -54,7 +54,7 @@ spec:
         helm:
           releaseName: '{{.name}}'
           values: |
-{{ toYaml .values | indent 12 }}
+            {{- toYaml .values | nindent 12 }}
       syncPolicy:
         automated:
           prune: true
