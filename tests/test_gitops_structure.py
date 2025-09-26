@@ -55,6 +55,31 @@ def test_iam_application_repo_vars_are_kustomize_aware():
     assert has_var("Application", "spec/source/targetRevision")
 
 
+def test_iam_project_repo_var_is_kustomize_aware():
+    projects_dir = REPO_ROOT / "gitops/clusters/aks/projects"
+    kustomization = yaml.safe_load((REPO_ROOT / "gitops/clusters/aks/kustomization.yaml").read_text(encoding="utf-8"))
+    assert "configurations" in kustomization
+    assert "kustomizeconfig/argocd-applications.yaml" in kustomization["configurations"]
+
+    config = yaml.safe_load(
+        (REPO_ROOT / "gitops/clusters/aks/kustomizeconfig/argocd-applications.yaml").read_text(encoding="utf-8")
+    )
+    var_refs = config["varReference"]
+
+    def has_var(kind: str, path: str) -> bool:
+        return any(
+            item.get("kind") == kind
+            and item.get("path") == path
+            and item.get("group") == "argoproj.io"
+            for item in var_refs
+        )
+
+    assert has_var("AppProject", "spec/sourceRepos")
+
+    project = load_yaml(projects_dir / "iam.yaml")
+    assert "$(GITOPS_REPO_URL)" in project["spec"]["sourceRepos"]
+
+
 def test_params_env_defaults():
     params = (REPO_ROOT / "gitops/apps/iam/params.env").read_text(encoding="utf-8")
     assert "ingressClass=" in params

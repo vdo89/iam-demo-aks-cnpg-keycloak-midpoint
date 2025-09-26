@@ -56,6 +56,10 @@ Run the workflow **“04 - Configure demo hosts”** after the bootstrap finis
 - `scripts/check_keycloak_first_class_fields.py` guards against regressing to deprecated Keycloak CLI flags – run it whenever you edit the Keycloak CR.
 - Need to rotate ingress hosts manually? Execute `python3 scripts/configure_demo_hosts.py --ingress-ip <EXTERNAL-IP>` and commit the updated parameters file.
 
+### Debugging Argo CD repo permissions
+
+If the IAM application loops with `application repo ... is not permitted in project 'iam'`, ensure the kustomization rendered the `gitops/clusters/aks/projects/iam.yaml` manifest with your repository URL. The AppProject’s `spec.sourceRepos` is templated via `kustomizeconfig/argocd-applications.yaml`; reapply the bootstrap kustomization after updating [`context.yaml`](gitops/clusters/aks/context.yaml) so the ConfigMap and AppProject stay in sync.
+
 ## 5. Testing locally
 
 Install the lightweight toolchain and run the unit tests:

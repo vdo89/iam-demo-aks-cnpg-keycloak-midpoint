@@ -1,9 +1,16 @@
 varReference:
   - kind: Application
+    group: argoproj.io
     path: spec/source/repoURL
   - kind: Application
+    group: argoproj.io
     path: spec/source/targetRevision
+  - kind: AppProject
+    group: argoproj.io
+    path: spec/sourceRepos
   - kind: ApplicationSet
+    group: argoproj.io
     path: spec/template/spec/source/repoURL
   - kind: ApplicationSet
+    group: argoproj.io
     path: spec/template/spec/source/targetRevision
