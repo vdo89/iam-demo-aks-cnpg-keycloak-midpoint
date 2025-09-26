@@ -4,6 +4,8 @@ resources:
   - context.yaml
   - projects
   - apps
+configurations:
+  - kustomizeconfig/argocd-applications.yaml
 vars:
   - name: GITOPS_REPO_URL
     objref:

@@ -101,6 +101,24 @@ jobs:
           EOF
           mv "${tmp_file}" "${config_file}"
 
+      - name: Render GitOps context configuration
+        shell: bash
+        env:
+          GITOPS_REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          GITOPS_TARGET_REVISION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cat <<EOF > gitops/clusters/aks/context.yaml
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: gitops-context
+            namespace: argocd
+          data:
+            repoURL: ${GITOPS_REPO_URL}
+            targetRevision: ${GITOPS_TARGET_REVISION}
+          EOF
+
       - name: Create IAM namespace early
         shell: bash
         run: |
