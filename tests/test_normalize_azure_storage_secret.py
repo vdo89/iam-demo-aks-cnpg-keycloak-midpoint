@@ -116,3 +116,11 @@ def test_parse_nested_json_wrappers():
     cred = parse_credential(raw, "ignored")
     assert cred.storage_account == "cnpgdemo"
     assert cred.account_key == "abcd"
+
+
+def test_parse_development_storage_connection_string():
+    raw = "UseDevelopmentStorage=true"
+    cred = parse_credential(raw, "devstoreaccount1")
+    assert cred.connection_string == "UseDevelopmentStorage=true"
+    assert cred.storage_account == "devstoreaccount1"
+    assert cred.account_key is None
