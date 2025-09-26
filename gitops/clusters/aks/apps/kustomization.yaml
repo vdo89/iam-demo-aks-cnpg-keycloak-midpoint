@@ -3,3 +3,5 @@ kind: Kustomization
 resources:
   - platform-charts.applicationset.yaml
   - iam.application.yaml
+configurations:
+  - kustomizeconfig.yaml

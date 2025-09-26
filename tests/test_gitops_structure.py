@@ -34,6 +34,27 @@ def test_iam_application_uses_placeholders():
     assert app["spec"]["syncPolicy"]["automated"]["prune"] is True
 
 
+def test_iam_application_repo_vars_are_kustomize_aware():
+    apps_dir = REPO_ROOT / "gitops/clusters/aks/apps"
+    kustomization = yaml.safe_load((apps_dir / "kustomization.yaml").read_text(encoding="utf-8"))
+    assert "configurations" in kustomization
+    assert "kustomizeconfig.yaml" in kustomization["configurations"]
+
+    config = yaml.safe_load((apps_dir / "kustomizeconfig.yaml").read_text(encoding="utf-8"))
+    var_refs = config["varReference"]
+
+    def has_var(kind: str, path: str) -> bool:
+        return any(
+            item.get("kind") == kind
+            and item.get("path") == path
+            and item.get("group") == "argoproj.io"
+            for item in var_refs
+        )
+
+    assert has_var("Application", "spec/source/repoURL")
+    assert has_var("Application", "spec/source/targetRevision")
+
+
 def test_params_env_defaults():
     params = (REPO_ROOT / "gitops/apps/iam/params.env").read_text(encoding="utf-8")
     assert "ingressClass=" in params
