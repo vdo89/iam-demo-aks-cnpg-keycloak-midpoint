@@ -194,6 +194,23 @@ jobs:
           set -euo pipefail
           kubectl apply -k gitops/clusters/aks
 
+      - name: Verify Keycloak operator CRDs
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for crd in keycloaks.k8s.keycloak.org keycloakrealmimports.k8s.keycloak.org; do
+            if ! kubectl get crd "${crd}" >/dev/null 2>&1; then
+              echo "::error::Keycloak operator CRD '${crd}' is missing. Install the operator before bootstrapping."
+              missing=1
+            fi
+          done
+          if [ "${missing}" -ne 0 ]; then
+            echo "Existing Keycloak-related CRDs:" >&2
+            kubectl get crd | grep -i keycloak || true
+            exit 1
+          fi
+
       - name: Wait for platform addons
         shell: bash
         run: |
