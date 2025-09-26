@@ -28,6 +28,14 @@ def parse_credential(raw: str, storage_account: str) -> AzureCredential:
         raise ValueError("Credential must not be empty")
 
     normalized_value = value.replace("\r\n", "\n").replace("\r", "\n")
+
+    if normalized_value.lower().startswith("usedevelopmentstorage=true"):
+        parts = [segment.strip() for segment in re.split(r"[;\n]+", normalized_value) if segment.strip()]
+        connection_string = ";".join(parts)
+        return AzureCredential(
+            storage_account=storage_account,
+            connection_string=connection_string,
+        )
     if "=" in normalized_value and (
         ";" in normalized_value
         or "\n" in normalized_value
