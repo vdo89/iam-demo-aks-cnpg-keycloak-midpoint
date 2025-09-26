@@ -1,0 +1,9 @@
+varReference:
+  - kind: Application
+    path: spec/source/repoURL
+  - kind: Application
+    path: spec/source/targetRevision
+  - kind: ApplicationSet
+    path: spec/template/spec/source/repoURL
+  - kind: ApplicationSet
+    path: spec/template/spec/source/targetRevision
