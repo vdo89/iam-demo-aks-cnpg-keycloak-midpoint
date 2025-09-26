@@ -42,6 +42,73 @@ jobs:
           set -euo pipefail
           python3 scripts/configure_demo_hosts.py --params-file gitops/apps/iam/params.env
 
+      - name: Wait for ingress endpoints to become reachable
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          : "${KC_HOST:?KC_HOST was not exported by configure_demo_hosts.py}"
+          : "${MP_HOST:?MP_HOST was not exported by configure_demo_hosts.py}"
+
+          emit_diagnostics() {
+            set +e
+            echo "::group::Ingress diagnostics"
+            echo "📡 Inspecting ingress-nginx service status"
+            kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide || true
+            kubectl -n ingress-nginx describe svc ingress-nginx-controller || true
+            echo "📦 Listing ingress objects"
+            kubectl get ingress --all-namespaces || true
+            kubectl describe ingress --all-namespaces || true
+            echo "📦 Listing cert-manager resources"
+            kubectl get certificates --all-namespaces || true
+            kubectl get certificaterequests --all-namespaces || true
+            kubectl get orders.acme.cert-manager.io --all-namespaces || true
+            kubectl describe certificates --all-namespaces || true
+            kubectl describe certificaterequests --all-namespaces || true
+            kubectl describe orders.acme.cert-manager.io --all-namespaces || true
+            echo "🌐 DNS lookup"
+            if command -v dig >/dev/null 2>&1; then
+              dig +short "${KC_HOST}" || true
+            else
+              nslookup "${KC_HOST}" || true
+            fi
+            echo "🔐 TLS handshake information"
+            if command -v openssl >/dev/null 2>&1; then
+              timeout 15 openssl s_client -connect "${KC_HOST}:443" -servername "${KC_HOST}" < /dev/null || true
+            else
+              echo "openssl not available on runner"
+            fi
+            echo "::endgroup::"
+            set -e
+          }
+
+          trap 'emit_diagnostics' ERR
+
+          endpoints=(
+            "http://${KC_HOST}"
+            "http://${MP_HOST}/midpoint"
+          )
+
+          for url in "${endpoints[@]}"; do
+            echo "::group::Probing ${url}"
+            for attempt in $(seq 1 20); do
+              if curl --fail --location --show-error --silent --connect-timeout 5 --max-time 20 --output /dev/null "${url}"; then
+                http_code=$(curl --silent --show-error --write-out '%{http_code}' --output /dev/null "${url}")
+                echo "✅ ${url} responded with HTTP ${http_code} (attempt ${attempt})."
+                break
+              fi
+              echo "Attempt ${attempt} failed for ${url}; waiting 15 seconds before retrying..."
+              sleep 15
+              if [[ ${attempt} -eq 20 ]]; then
+                echo "❌ Unable to reach ${url} after ${attempt} attempts."
+                exit 1
+              fi
+            done
+            echo "::endgroup::"
+          done
+
+          trap - ERR
+
       - name: Commit ingress host parameters
         shell: bash
         run: |
@@ -71,3 +138,4 @@ jobs:
           echo "✅ Done. Open these URLs in your browser:"
           echo "🔗 Keycloak : ${{ steps.configure.outputs.keycloak_url }}"
           echo "🔗 midPoint : ${{ steps.configure.outputs.midpoint_url }}"
+          echo "🌐 External IP : ${EXTERNAL_IP:-unknown}"
