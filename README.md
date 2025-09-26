@@ -43,9 +43,9 @@ Trigger the workflow **“01 - Provision AKS with Terraform”** (`.github/wor
    - Optionally configure repository credentials when the repo is private.
    - Create the database and admin secrets in the `iam` namespace.
    - Normalise the Azure Blob credentials into the `cnpg-azure-backup` secret using `scripts/normalize_azure_storage_secret.py`.
-   - Apply the GitOps tree (`gitops/clusters/aks`) so Argo CD manages addons (cert-manager, CloudNativePG operator, ingress-nginx) and the IAM workloads (CloudNativePG cluster, Keycloak, midPoint).
+   - Apply the GitOps tree (`gitops/clusters/aks`) so Argo CD manages addons (cert-manager, CloudNativePG operator, ingress-nginx, Keycloak operator) and the IAM workloads (CloudNativePG cluster, Keycloak, midPoint).
    - Wait for all applications to report `Synced` and `Healthy`.
-   - Verify that the Keycloak operator CRDs (`keycloaks.k8s.keycloak.org`, `keycloakrealmimports.k8s.keycloak.org`) are already installed in the cluster; the workflow now fails fast if they are missing so you can install the operator before retrying.
+   - Wait for the Keycloak operator CRDs (`keycloaks.k8s.keycloak.org`, `keycloakrealmimports.k8s.keycloak.org`) to appear; the workflow now deploys the upstream manifests automatically and surfaces detailed diagnostics if the CRDs never register.
 
 ### Troubleshooting: Argo CD project denies the repo
 

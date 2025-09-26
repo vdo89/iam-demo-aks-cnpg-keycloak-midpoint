@@ -10,6 +10,7 @@ spec:
     - https://charts.jetstack.io
     - https://cloudnative-pg.github.io/charts
     - https://kubernetes.github.io/ingress-nginx
+    - https://github.com/keycloak/keycloak-k8s-resources.git
   destinations:
     - namespace: '*'
       server: https://kubernetes.default.svc
