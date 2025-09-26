@@ -124,3 +124,15 @@ def test_parse_development_storage_connection_string():
     assert cred.connection_string == "UseDevelopmentStorage=true"
     assert cred.storage_account == "devstoreaccount1"
     assert cred.account_key is None
+
+
+def test_parse_yaml_style_pairs():
+    raw = """
+    AccountName: cnpgdemo
+    AccountKey: abcd1234==
+    BlobEndpoint: https://cnpgdemo.blob.core.windows.net/
+    """
+    cred = parse_credential(raw, "fallback")
+    assert cred.storage_account == "cnpgdemo"
+    assert cred.account_key == "abcd1234=="
+    assert "BlobEndpoint=https://cnpgdemo.blob.core.windows.net/" in cred.connection_string
