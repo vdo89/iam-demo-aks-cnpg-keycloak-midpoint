@@ -48,10 +48,16 @@ def parse_credential(raw: str, storage_account: str) -> AzureCredential:
     ):
         parts: dict[str, tuple[str, str]] = {}
         for segment in re.split(r"[;\n]+", normalized_value):
-            if not segment or "=" not in segment:
+            if not segment:
                 continue
-            key, val = segment.split("=", 1)
-            parts[key.strip().lower()] = (key.strip(), val.strip())
+            match = re.match(r"\s*([^:=]+)\s*[:=]\s*(.*)\s*$", segment)
+            if not match:
+                continue
+            key = match.group(1).strip()
+            val = match.group(2).strip()
+            if not key:
+                continue
+            parts[key.lower()] = (key, val)
 
         account = parts.get("accountname", ("AccountName", storage_account))[1]
         account_key = parts.get("accountkey", ("AccountKey", None))[1]
@@ -147,6 +153,23 @@ def parse_credential(raw: str, storage_account: str) -> AzureCredential:
             "EndpointSuffix=core.windows.net"
         )
         return AzureCredential(storage_account=storage_account, connection_string=connection_string, account_key=value)
+
+    stripped = normalized_value.lstrip()
+    if "\n" in normalized_value and not stripped.startswith(("{", "[")):
+        colon_segments: list[str] = []
+        for line in normalized_value.splitlines():
+            clean_line = line.strip()
+            if not clean_line or ":" not in clean_line:
+                continue
+            key, val = clean_line.split(":", 1)
+            cleaned_val = val.strip()
+            cleaned_val = cleaned_val.split("#", 1)[0].strip().strip("\"").strip("'")
+            colon_segments.append(f"{key.strip()}={cleaned_val}")
+        if colon_segments:
+            try:
+                return parse_credential(";".join(colon_segments), storage_account)
+            except ValueError:
+                pass
 
     try:
         decoded = json.loads(value)
