@@ -194,27 +194,40 @@ jobs:
           set -euo pipefail
           kubectl apply -k gitops/clusters/aks
 
-      - name: Verify Keycloak operator CRDs
+      - name: Wait for Keycloak operator CRDs
         shell: bash
         run: |
           set -euo pipefail
-          missing_crds=()
-          for crd in keycloaks.k8s.keycloak.org keycloakrealmimports.k8s.keycloak.org; do
-            if ! kubectl get crd "${crd}" >/dev/null 2>&1; then
-              missing_crds+=("${crd}")
+          required_crds=(keycloaks.k8s.keycloak.org keycloakrealmimports.k8s.keycloak.org)
+          missing_crds=("${required_crds[@]}")
+          for attempt in $(seq 1 12); do
+            missing_crds=()
+            for crd in "${required_crds[@]}"; do
+              if ! kubectl get crd "${crd}" >/dev/null 2>&1; then
+                missing_crds+=("${crd}")
+              fi
+            done
+
+            if [ "${#missing_crds[@]}" -eq 0 ]; then
+              echo "All Keycloak operator CRDs are present."
+              exit 0
+            fi
+
+            echo "Attempt ${attempt}/12: waiting for Keycloak operator CRDs to be installed (${missing_crds[*]} still missing)..."
+            if [ "${attempt}" -lt 12 ]; then
+              sleep 10
             fi
           done
-          if [ "${#missing_crds[@]}" -ne 0 ]; then
-            printf '::error::Keycloak operator CRDs missing: %s\n' "${missing_crds[*]}"
-            echo 'kubectl api-resources --api-group=k8s.keycloak.org output:'
-            kubectl api-resources --api-group=k8s.keycloak.org || true
-            echo 'Existing Keycloak-related CRDs:'
-            kubectl get crd | grep -i keycloak || echo 'none'
-            echo 'Keycloak pods currently running:'
-            kubectl get pods -A | grep -i keycloak || echo 'none'
-            echo 'Install the Keycloak operator (https://www.keycloak.org/operator/installation) and rerun the workflow.'
-            exit 1
-          fi
+
+          printf '::error::Keycloak operator CRDs missing after wait: %s\n' "${missing_crds[*]}"
+          echo 'kubectl api-resources --api-group=k8s.keycloak.org output:'
+          kubectl api-resources --api-group=k8s.keycloak.org || true
+          echo 'Existing Keycloak-related CRDs:'
+          kubectl get crd | grep -i keycloak || echo 'none'
+          echo 'Keycloak pods currently running:'
+          kubectl get pods -A | grep -i keycloak || echo 'none'
+          echo 'Install the Keycloak operator (https://www.keycloak.org/operator/installation) and rerun the workflow.'
+          exit 1
 
       - name: Wait for platform addons
         shell: bash
