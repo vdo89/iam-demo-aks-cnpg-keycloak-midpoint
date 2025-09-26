@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
-from urllib.parse import urlparse
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 
 @dataclass
@@ -16,6 +17,31 @@ class AzureCredential:
     connection_string: str
     account_key: str | None = None
     sas_token: str | None = None
+
+
+def _redacted_preview(value: str) -> str:
+    compact = re.sub(r"\s+", " ", value.strip())
+    if not compact:
+        return "<empty>"
+    if len(compact) <= 6:
+        return "*" * len(compact)
+    prefix = compact[:4]
+    suffix = compact[-2:]
+    return f"{prefix}…{suffix}"
+
+
+def _heuristic_summary(value: str) -> str:
+    normalized_lower = value.lower()
+    heuristics = {
+        "has_equals": "=" in value,
+        "has_newlines": "\n" in value,
+        "has_question": "?" in value,
+        "looks_json": value.lstrip().startswith(("{", "[")),
+        "looks_url": bool(re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", value)),
+        "has_accountname": "accountname" in normalized_lower,
+        "has_sig": "sig=" in normalized_lower,
+    }
+    return ", ".join(f"{key}={'yes' if val else 'no'}" for key, val in heuristics.items())
 
 
 def parse_credential(raw: str, storage_account: str) -> AzureCredential:
@@ -202,7 +228,13 @@ def parse_credential(raw: str, storage_account: str) -> AzureCredential:
             except ValueError:
                 continue
 
-    raise ValueError("Unable to detect credential type. Provide an account key, SAS token, or connection string.")
+    fingerprint = hashlib.sha256(normalized_value.encode("utf-8")).hexdigest()[:12]
+    debug_hint = _heuristic_summary(normalized_value)
+    preview = _redacted_preview(normalized_value)
+    raise ValueError(
+        "Unable to detect credential type. Provide an account key, SAS token, or connection string. "
+        f"(len={len(normalized_value)}, fingerprint={fingerprint}, preview={preview}, {debug_hint})"
+    )
 
 
 def apply_secret(namespace: str, credential: AzureCredential) -> None:
