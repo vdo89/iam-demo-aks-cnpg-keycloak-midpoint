@@ -185,15 +185,31 @@ jobs:
             for attempt in $(seq 1 30); do
               sync=$(kubectl -n argocd get application "${app}" -o jsonpath='{.status.sync.status}' 2>/dev/null || true)
               health=$(kubectl -n argocd get application "${app}" -o jsonpath='{.status.health.status}' 2>/dev/null || true)
-              if [ "${sync}" = "Synced" ] && [ "${health}" = "Healthy" ]; then
+              phase=$(kubectl -n argocd get application "${app}" -o jsonpath='{.status.operationState.phase}' 2>/dev/null || true)
+
+              if [ "${phase}" = "Failed" ]; then
+                echo "${app} last sync failed"
+                kubectl -n argocd get application "${app}" -o yaml || true
+                exit 1
+              fi
+
+              if [ "${health}" = "Healthy" ] && [ "${sync}" = "Synced" ]; then
                 echo "${app} is synced and healthy"
                 break
               fi
+
+              if [ "${health}" = "Healthy" ] && [ "${sync}" = "OutOfSync" ] && [ "${phase}" = "Succeeded" ]; then
+                echo "${app} is healthy but reports sync status OutOfSync (continuing because the last operation succeeded)"
+                break
+              fi
+
               if [ "${attempt}" -eq 30 ]; then
                 echo "Timed out waiting for ${app} to become healthy"
                 kubectl -n argocd get application "${app}" -o yaml || true
                 exit 1
               fi
+
+              echo "Attempt ${attempt} for ${app}: sync='${sync}', health='${health}', phase='${phase}'"
               sleep 10
             done
           done
