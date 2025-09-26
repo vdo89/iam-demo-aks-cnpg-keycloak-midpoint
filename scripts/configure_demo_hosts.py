@@ -25,10 +25,28 @@ class KubectlError(RuntimeError):
     """Raised when kubectl returns a non-zero exit status."""
 
 
+def _format_kubectl_resource(service: str) -> tuple[str, str]:
+    """Return the namespace and resource reference for kubectl."""
+
+    parts = service.split("/")
+    if len(parts) == 2:
+        namespace, name = parts
+        resource = f"service/{name}"
+    elif len(parts) == 3:
+        namespace, resource_type, name = parts
+        resource = f"{resource_type}/{name}"
+    else:  # pragma: no cover - guarded by CLI argument contract
+        raise ValueError(
+            "--ingress-service must be <namespace>/<name> or <namespace>/<resource>/<name>"
+        )
+
+    return namespace, resource
+
+
 def run_kubectl_jsonpath(service: str, jsonpath: str) -> str:
     """Return the kubectl jsonpath result or raise KubectlError."""
-    namespace, name = service.split("/", 1)
-    cmd = ["kubectl", "-n", namespace, "get", name, "-o", f"jsonpath={jsonpath}"]
+    namespace, resource = _format_kubectl_resource(service)
+    cmd = ["kubectl", "-n", namespace, "get", resource, "-o", f"jsonpath={jsonpath}"]
     proc = subprocess.run(cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if proc.returncode != 0:
         raise KubectlError(proc.stderr.strip() or "kubectl command failed")
@@ -131,7 +149,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--ingress-service",
         default=DEFAULT_SERVICE,
-        help="<namespace>/<name> of the ingress service",
+        help="Ingress resource in <namespace>/<name> or <namespace>/<resource>/<name> form",
     )
     parser.add_argument("--ingress-ip", help="Explicit ingress IP address (skips kubectl)")
     parser.add_argument("--ingress-hostname", help="Explicit ingress hostname to resolve")
