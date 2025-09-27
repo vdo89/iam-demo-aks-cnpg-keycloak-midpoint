@@ -10,7 +10,7 @@ spec:
     server: https://kubernetes.default.svc
   source:
     repoURL: https://github.com/keycloak/keycloak-k8s-resources.git
-    targetRevision: 26.3.4
+    targetRevision: 26.3.5
     path: kubernetes
     directory:
       recurse: true
