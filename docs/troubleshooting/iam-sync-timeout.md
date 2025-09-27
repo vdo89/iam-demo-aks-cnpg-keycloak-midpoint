@@ -43,7 +43,9 @@ commands manually, follow the steps below.
    ```
 5. If the CRDs are missing, inspect the operator controller logs for installation errors:
    ```bash
-   kubectl logs deployment/keycloak-operator -n keycloak --since=15m
+   kubectl logs deployment/keycloak-operator -n iam --since=15m
+   # Adjust the namespace flag (or set KEYCLOAK_OPERATOR_NAMESPACE for the
+   # diagnostics script) if your installation uses a different location.
    ```
 
 Collecting this data before attempting a fix ensures we know whether the failure is caused by missing CRDs or by a different
