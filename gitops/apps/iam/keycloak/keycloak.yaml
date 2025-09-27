@@ -42,6 +42,11 @@ spec:
       nginx.ingress.kubernetes.io/ssl-redirect: "false"
   unsupported:
     podTemplate:
+      metadata:
+        labels:
+          app: keycloak
+          app.kubernetes.io/name: keycloak
+          app.kubernetes.io/instance: rws-keycloak
       spec:
         containers:
           - name: keycloak
