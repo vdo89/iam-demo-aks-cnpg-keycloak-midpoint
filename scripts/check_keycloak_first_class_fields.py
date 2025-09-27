@@ -12,6 +12,7 @@ MANIFEST = REPO_ROOT / "gitops/apps/iam/keycloak/keycloak.yaml"
 BANNED_ADDITIONAL_OPTIONS = {
     re.compile(r"^\s*-?\s*name:\s*db-url\s*$", re.MULTILINE): "--db-url",
     re.compile(r"^\s*-?\s*name:\s*hostname-strict\s*$", re.MULTILINE): "--hostname-strict",
+    re.compile(r"^\s*-?\s*name:\s*hostname-strict-https\s*$", re.MULTILINE): "--hostname-strict-https",
     re.compile(r"^\s*-?\s*name:\s*features\s*$", re.MULTILINE): "--features",
 }
 
