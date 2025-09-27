@@ -10,6 +10,7 @@ def test_build_hosts_roundtrip():
     hosts = cd.build_hosts("10.0.0.1")
     assert hosts.keycloak == "kc.10.0.0.1.nip.io"
     assert hosts.midpoint == "mp.10.0.0.1.nip.io"
+    assert hosts.argocd == "argocd.10.0.0.1.nip.io"
 
 
 def test_write_and_read_params(tmp_path: Path):
@@ -20,6 +21,7 @@ def test_write_and_read_params(tmp_path: Path):
     text = params.read_text(encoding="utf-8")
     assert "ingressClass=custom" in text
     assert "keycloakHost=kc.192.168.0.42.nip.io" in text
+    assert "argocdHost=argocd.192.168.0.42.nip.io" in text
     assert cd.read_ingress_class(params) == "custom"
 
 
@@ -48,8 +50,15 @@ def test_main_updates_env_files(monkeypatch, tmp_path: Path):
 
     saved = params.read_text(encoding="utf-8")
     assert "keycloakHost=kc.203.0.113.10.nip.io" in saved
-    assert env_file.read_text(encoding="utf-8").strip().endswith("MP_HOST=mp.203.0.113.10.nip.io")
-    assert "midpoint_url=http://mp.203.0.113.10.nip.io/midpoint" in out_file.read_text(encoding="utf-8")
+    env_contents = env_file.read_text(encoding="utf-8")
+    assert "KC_HOST=kc.203.0.113.10.nip.io" in env_contents
+    assert "MP_HOST=mp.203.0.113.10.nip.io" in env_contents
+    assert "ARGO_HOST=argocd.203.0.113.10.nip.io" in env_contents
+
+    output_contents = out_file.read_text(encoding="utf-8")
+    assert "keycloak_url=http://kc.203.0.113.10.nip.io" in output_contents
+    assert "midpoint_url=http://mp.203.0.113.10.nip.io/midpoint" in output_contents
+    assert "argocd_url=http://argocd.203.0.113.10.nip.io" in output_contents
 
 
 def test_resolve_ingress_ip_explicit():
