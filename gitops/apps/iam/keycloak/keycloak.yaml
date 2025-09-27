@@ -46,24 +46,3 @@ spec:
     limits:
       cpu: "1"
       memory: "2Gi"
-  startupProbe:
-    httpGet:
-      path: /health/ready
-      port: 9000
-      scheme: HTTP
-    periodSeconds: 5
-    failureThreshold: 12
-  readinessProbe:
-    httpGet:
-      path: /health/ready
-      port: 9000
-      scheme: HTTP
-    periodSeconds: 5
-    failureThreshold: 6
-  livenessProbe:
-    httpGet:
-      path: /health/live
-      port: 9000
-      scheme: HTTP
-    periodSeconds: 10
-    failureThreshold: 3
