@@ -29,6 +29,7 @@ spec:
     port: 5432
     database: keycloak
     schema: public
+    urlProperties: "?sslmode=require"
     usernameSecret:
       name: keycloak-db-app
       key: username
