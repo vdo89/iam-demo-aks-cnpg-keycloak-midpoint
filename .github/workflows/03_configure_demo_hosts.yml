@@ -47,12 +47,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          : "${KC_HOST:?KC_HOST was not exported by configure_demo_hosts.py}"
-          : "${MP_HOST:?MP_HOST was not exported by configure_demo_hosts.py}"
-          : "${ARGOCD_HOST:?ARGOCD_HOST was not exported by configure_demo_hosts.py}"
-
           emit_diagnostics() {
-            set +e
+            set +eu
             echo "::group::Ingress diagnostics"
             echo "📡 Inspecting ingress-nginx service status"
             kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide || true
@@ -80,10 +76,14 @@ jobs:
               echo "openssl not available on runner"
             fi
             echo "::endgroup::"
-            set -e
+            set -eu
           }
 
           trap 'emit_diagnostics' ERR
+
+          : "${KC_HOST:?KC_HOST was not exported by configure_demo_hosts.py}"
+          : "${MP_HOST:?MP_HOST was not exported by configure_demo_hosts.py}"
+          : "${ARGOCD_HOST:?ARGOCD_HOST was not exported by configure_demo_hosts.py}"
 
           endpoints=(
             "http://${KC_HOST}"
