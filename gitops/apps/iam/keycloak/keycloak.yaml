@@ -33,6 +33,7 @@ spec:
     hostname: kc.127.0.0.1.nip.io
     strict: false
     strictBackchannel: false
+    strictHttps: false
   ingress:
     enabled: true
     className: nginx
