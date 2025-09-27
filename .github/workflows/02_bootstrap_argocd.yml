@@ -288,7 +288,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 12); do
+          for attempt in $(seq 1 1); do
             sync=$(kubectl -n argocd get application iam -o jsonpath='{.status.sync.status}' 2>/dev/null || true)
             health=$(kubectl -n argocd get application iam -o jsonpath='{.status.health.status}' 2>/dev/null || true)
             phase=$(kubectl -n argocd get application iam -o jsonpath='{.status.operationState.phase}' 2>/dev/null || true)
@@ -302,7 +302,7 @@ jobs:
               echo "IAM application is synced and healthy"
               exit 0
             fi
-            if [ "${attempt}" -eq 12 ]; then
+            if [ "${attempt}" -eq 1 ]; then
               echo "Timed out waiting for IAM application to become healthy"
               echo '::group::IAM Argo CD application'
               kubectl -n argocd get application iam -o yaml || true
