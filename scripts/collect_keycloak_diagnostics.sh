@@ -43,6 +43,8 @@ KEYCLOAK_NAMESPACE=${KEYCLOAK_NAMESPACE:-iam}
 KEYCLOAK_NAME=${KEYCLOAK_NAME:-rws-keycloak}
 KEYCLOAK_POD_SELECTOR=${KEYCLOAK_POD_SELECTOR:-app=keycloak}
 KEYCLOAK_MGMT_PORT=${KEYCLOAK_MGMT_PORT:-9000}
+KEYCLOAK_OPERATOR_NAMESPACE=${KEYCLOAK_OPERATOR_NAMESPACE:-keycloak}
+KEYCLOAK_OPERATOR_DEPLOYMENT=${KEYCLOAK_OPERATOR_DEPLOYMENT:-keycloak-operator}
 
 if command -v argocd >/dev/null 2>&1; then
   run_cmd "Argo CD application summary (iam)" \
@@ -102,5 +104,11 @@ else
   done
 fi
 
-run_cmd "Keycloak operator logs (last 15m)" \
-  kubectl logs deployment/keycloak-operator -n keycloak --since=15m
+if kubectl get deployment "${KEYCLOAK_OPERATOR_DEPLOYMENT}" -n "${KEYCLOAK_OPERATOR_NAMESPACE}" >/dev/null 2>&1; then
+  run_cmd "Keycloak operator logs (last 15m)" \
+    kubectl logs deployment/"${KEYCLOAK_OPERATOR_DEPLOYMENT}" -n "${KEYCLOAK_OPERATOR_NAMESPACE}" --since=15m
+else
+  warn "Keycloak operator deployment '${KEYCLOAK_OPERATOR_DEPLOYMENT}' not found in namespace '${KEYCLOAK_OPERATOR_NAMESPACE}'"
+  run_cmd "List deployments in ${KEYCLOAK_OPERATOR_NAMESPACE}" \
+    kubectl get deployments -n "${KEYCLOAK_OPERATOR_NAMESPACE}" --show-labels
+fi
