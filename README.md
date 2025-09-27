@@ -75,7 +75,7 @@ Run the workflow **“04 - Configure demo hosts”** after the bootstrap finis
 
 - The GitOps tree lives under `gitops/`. Update manifests, commit, and let Argo CD reconcile the cluster. `kubectl apply` is only needed for the initial bootstrap.
 - `scripts/check_keycloak_first_class_fields.py` guards against regressing to deprecated Keycloak CLI flags – run it whenever you edit the Keycloak CR.
-- Keycloak's pod template now defines startup, readiness, and liveness probes that hit the management port (`9000`) on the `/health/started`, `/health/ready`, and `/health/live` endpoints recommended in the Keycloak observability guide. These probes are rendered through the operator's `unsupported.podTemplate` escape hatch so Argo CD can track them declaratively.
+- Keycloak runs with the operator's optimized startup path (`startOptimized: true`) so restarts skip the build step, and we rely on the operator's default probes against the management endpoints.
 
 - Need to rotate ingress hosts manually? Execute `python3 scripts/configure_demo_hosts.py --ingress-ip <EXTERNAL-IP>` and commit the updated parameters file.
 
