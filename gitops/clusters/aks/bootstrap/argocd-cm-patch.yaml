@@ -63,7 +63,11 @@ data:
           end
         end
       end
-      if obj.status.ready == true or obj.status.phase == "Ready" then
+      if
+        obj.status.ready == true
+        or obj.status.phase == "Ready"
+        or obj.status.phase == "Running"
+      then
         hs.status = "Healthy"
         hs.message = "Keycloak reports ready"
         return hs
