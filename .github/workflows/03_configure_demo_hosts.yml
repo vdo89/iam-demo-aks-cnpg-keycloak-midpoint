@@ -48,7 +48,9 @@ jobs:
           set -euo pipefail
 
           emit_diagnostics() {
-            set +eu
+            set +e
+            set +u
+            set +o pipefail
             echo "::group::Ingress diagnostics"
             echo "📡 Inspecting ingress-nginx service status"
             kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide || true
@@ -76,7 +78,9 @@ jobs:
               echo "openssl not available on runner"
             fi
             echo "::endgroup::"
-            set -eu
+            set -e
+            set -u
+            set -o pipefail
           }
 
           trap 'emit_diagnostics' ERR
@@ -91,18 +95,23 @@ jobs:
             "https://${ARGOCD_HOST}"
           )
 
+          max_attempts=${MAX_INGRESS_ATTEMPTS:-10}
+          sleep_seconds=${INGRESS_RETRY_DELAY:-30}
+
           for url in "${endpoints[@]}"; do
             echo "::group::Probing ${url}"
-            for attempt in $(seq 1 2); do
-              if curl --fail --location --show-error --silent --connect-timeout 5 --max-time 20 --output /dev/null "${url}"; then
-                http_code=$(curl --silent --show-error --write-out '%{http_code}' --output /dev/null "${url}")
-                echo "✅ ${url} responded with HTTP ${http_code} (attempt ${attempt})."
+            for attempt in $(seq 1 "${max_attempts}"); do
+              if http_code=$(curl --fail --location --show-error --silent \
+                --connect-timeout 5 --max-time 20 --write-out '%{http_code}' \
+                --output /dev/null "${url}"); then
+                echo "✅ ${url} responded with HTTP ${http_code} (attempt ${attempt}/${max_attempts})."
                 break
               fi
-              echo "Attempt ${attempt} failed for ${url}; waiting 15 seconds before retrying..."
-              sleep 15
-              if [[ ${attempt} -eq 2 ]]; then
-                echo "❌ Unable to reach ${url} after ${attempt} attempts."
+              status=$?
+              echo "Attempt ${attempt}/${max_attempts} failed for ${url} (exit ${status}); waiting ${sleep_seconds}s before retrying..."
+              sleep "${sleep_seconds}"
+              if [[ ${attempt} -eq ${max_attempts} ]]; then
+                echo "❌ Unable to reach ${url} after ${max_attempts} attempts."
                 # Trigger the ERR trap so diagnostics are emitted before the
                 # job exits; `exit` bypasses the trap in bash.
                 false
