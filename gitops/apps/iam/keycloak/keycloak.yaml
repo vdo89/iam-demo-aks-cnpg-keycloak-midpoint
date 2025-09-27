@@ -12,6 +12,8 @@ spec:
       value: "true"
     - name: metrics-enabled
       value: "true"
+    - name: http-management-enabled
+      value: "true"
     - name: hostname-strict-https
       value: "false"
   features:
