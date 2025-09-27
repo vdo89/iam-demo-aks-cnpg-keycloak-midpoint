@@ -6,7 +6,7 @@ metadata:
 spec:
   image: quay.io/keycloak/keycloak:26.3.5
   instances: 1
-  startOptimized: false
+  startOptimized: true
   additionalOptions:
     - name: health-enabled
       value: "true"
@@ -42,36 +42,6 @@ spec:
       nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
       nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
       nginx.ingress.kubernetes.io/ssl-redirect: "false"
-  unsupported:
-    podTemplate:
-      metadata:
-        labels:
-          app: keycloak
-          app.kubernetes.io/name: keycloak
-          app.kubernetes.io/instance: rws-keycloak
-      spec:
-        containers:
-          - name: keycloak
-            startupProbe:
-              httpGet:
-                path: /health/started
-                port: 9000
-              failureThreshold: 60
-              periodSeconds: 5
-            livenessProbe:
-              httpGet:
-                path: /health/live
-                port: 9000
-              failureThreshold: 6
-              initialDelaySeconds: 30
-              periodSeconds: 10
-            readinessProbe:
-              httpGet:
-                path: /health/ready
-                port: 9000
-              failureThreshold: 6
-              initialDelaySeconds: 10
-              periodSeconds: 5
   resources:
     requests:
       cpu: "250m"
