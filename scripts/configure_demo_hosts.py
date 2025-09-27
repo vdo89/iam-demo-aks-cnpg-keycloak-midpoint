@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 DEFAULT_PARAMS_FILE = Path("gitops/apps/iam/params.env")
+DEFAULT_EXTRA_PARAMS_FILES = [Path("gitops/clusters/aks/bootstrap/params.env")]
 DEFAULT_SERVICE = "ingress-nginx/ingress-nginx-controller"
 
 
@@ -153,6 +154,16 @@ def parse_args() -> argparse.Namespace:
         help="Path to the params.env file to update",
     )
     parser.add_argument(
+        "--extra-params-file",
+        action="append",
+        type=Path,
+        default=[*DEFAULT_EXTRA_PARAMS_FILES],
+        help=(
+            "Additional params.env files to keep in sync with --params-file. "
+            "Specify multiple times to update several files."
+        ),
+    )
+    parser.add_argument(
         "--ingress-service",
         default=DEFAULT_SERVICE,
         help="Ingress resource in <namespace>/<name> or <namespace>/<resource>/<name> form",
@@ -182,6 +193,12 @@ def main() -> int:
         return 0
 
     write_params(args.params_file, ingress_class, hosts)
+    for extra_file in args.extra_params_file:
+        if not extra_file:
+            continue
+        if extra_file.resolve() == args.params_file.resolve():
+            continue
+        write_params(extra_file, ingress_class, hosts)
 
     github_env = os.environ.get("GITHUB_ENV")
     if github_env:
