@@ -4,7 +4,7 @@ metadata:
   name: rws-keycloak
   namespace: iam
 spec:
-  image: quay.io/keycloak/keycloak:26.3.4
+  image: quay.io/keycloak/keycloak:26.3.5
   instances: 1
   startOptimized: false
   additionalOptions:
