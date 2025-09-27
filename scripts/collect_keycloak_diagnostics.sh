@@ -5,6 +5,10 @@ error() {
   echo "[error] $*" >&2
 }
 
+warn() {
+  echo "[warn] $*" >&2
+}
+
 require_cmd() {
   local cmd="$1"
   if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -51,7 +55,7 @@ if command -v argocd >/dev/null 2>&1; then
     "kubectl get application iam -n argocd -o json \
       | jq '.status.operationState | {phase, message, syncResult: .syncResult.resources[]? | select(.status == \"OutOfSync\")}'"
 else
-  error "'argocd' CLI not found; skipping Argo CD application summaries"
+  warn "'argocd' CLI not found; skipping Argo CD application summaries"
   run_cmd "Argo CD operation state (iam)" bash -c \
     "kubectl get application iam -n argocd -o json \
       | jq '.status.operationState | {phase, message, syncResult: .syncResult.resources[]? | select(.status == \"OutOfSync\")}'"
@@ -75,7 +79,7 @@ mapfile -t keycloak_pods < <(
 )
 
 if ((${#keycloak_pods[@]} == 0)); then
-  error "No Keycloak pods found with selector '${KEYCLOAK_POD_SELECTOR}' in namespace '${KEYCLOAK_NAMESPACE}'"
+  warn "No Keycloak pods found with selector '${KEYCLOAK_POD_SELECTOR}' in namespace '${KEYCLOAK_NAMESPACE}'"
 
   run_cmd "Pods in namespace ${KEYCLOAK_NAMESPACE} (showing labels)" \
     kubectl get pods -n "${KEYCLOAK_NAMESPACE}" --show-labels
