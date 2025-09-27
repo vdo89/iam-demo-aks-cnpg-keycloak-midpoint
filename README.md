@@ -51,6 +51,10 @@ Trigger the workflow **“01 - Provision AKS with Terraform”** (`.github/wor
 
 If the `iam` application reports `application repo … is not permitted in project 'iam'`, make sure the AppProject allows the exact Git repository URL. The default configuration now whitelists both the templated `$(GITOPS_REPO_URL)` value used by the bootstrap workflow and the canonical `https://github.com/vdo89/iam-demo-aks-cnpg-keycloak-midpoint` remote so freshly bootstrapped clusters reconcile immediately. Adjust [`gitops/clusters/aks/projects/iam.yaml`](gitops/clusters/aks/projects/iam.yaml) if you fork the project or host the manifests elsewhere.
 
+### Troubleshooting: Secrets stuck on `type` immutability
+
+Argo CD 2.11 migrates existing resources to client-side apply, which surfaces immutable field errors if the live object was created with a different schema than the GitOps source. The bootstrap workflow seeds the IAM database and admin credentials as [`kubernetes.io/basic-auth` secrets](.github/workflows/02_bootstrap_argocd.yml), so make sure any follow-up manifests use the same secret type. If the application remains `Degraded` with a message similar to `Secret "keycloak-db-app" is invalid: type: Invalid value: "Opaque": field is immutable`, delete the affected secret (Argo will recreate it on the next sync) or update its type in Git to match the bootstrap workflow before re-running the sync.
+
 ## 3. Publish demo ingress hostnames
 
 Run the workflow **“04 - Configure demo hosts”** after the bootstrap finishes. The job calls [`scripts/configure_demo_hosts.py`](scripts/configure_demo_hosts.py) to discover the ingress IP, updates [`gitops/apps/iam/params.env`](gitops/apps/iam/params.env) with fresh `nip.io` hostnames, commits the change and prints the URLs.
