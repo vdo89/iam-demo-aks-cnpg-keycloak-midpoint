@@ -101,8 +101,12 @@ jobs:
           for url in "${endpoints[@]}"; do
             echo "::group::Probing ${url}"
             for attempt in $(seq 1 "${max_attempts}"); do
-              if http_code=$(curl --fail --location --show-error --silent \
-                --connect-timeout 5 --max-time 20 --write-out '%{http_code}' \
+              # Some ingress backends return an HTTP redirect to an HTTPS
+              # listener that terminates TLS at the service instead of the
+              # ingress. Avoid following the redirect so that a missing or
+              # misconfigured TLS endpoint does not cause the probe to fail.
+              if http_code=$(curl --fail --show-error --silent \
+                --connect-timeout 5 --max-time 20 --max-redirs 0 --write-out '%{http_code}' \
                 --output /dev/null "${url}"); then
                 echo "✅ ${url} responded with HTTP ${http_code} (attempt ${attempt}/${max_attempts})."
                 break
