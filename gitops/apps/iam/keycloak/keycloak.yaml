@@ -6,7 +6,7 @@ metadata:
 spec:
   image: quay.io/keycloak/keycloak:26.3.5
   instances: 1
-  startOptimized: true
+  startOptimized: false
   additionalOptions:
     - name: health-enabled
       value: "true"
