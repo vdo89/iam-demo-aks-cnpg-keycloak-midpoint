@@ -18,6 +18,10 @@ spec:
       value: "0.0.0.0"
     - name: db-url-properties
       value: sslmode=require
+    - name: proxy
+      value: edge
+    - name: proxy-headers
+      value: xforwarded
   features:
     enabled:
       - token-exchange
