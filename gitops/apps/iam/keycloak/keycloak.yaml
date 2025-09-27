@@ -8,12 +8,9 @@ spec:
   instances: 1
   startOptimized: false
   additionalOptions:
-    - name: health-enabled
-      value: "true"
-    - name: metrics-enabled
-      value: "true"
-    - name: hostname-strict-https
-      value: "false"
+    - "--health-enabled=true"
+    - "--metrics-enabled=true"
+    - "--hostname-strict-https=false"
   features:
     enabled:
       - token-exchange
