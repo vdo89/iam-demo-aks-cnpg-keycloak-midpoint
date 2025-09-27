@@ -319,6 +319,15 @@ jobs:
               echo '::group::Recent IAM namespace events'
               kubectl -n iam get events --sort-by='.metadata.creationTimestamp' | tail -n 40 || true
               echo '::endgroup::'
+              echo '::group::Keycloak diagnostics bundle'
+              if [ -x scripts/collect_keycloak_diagnostics.sh ]; then
+                if ! scripts/collect_keycloak_diagnostics.sh; then
+                  echo 'collect_keycloak_diagnostics.sh exited with a non-zero status' >&2
+                fi
+              else
+                echo 'collect_keycloak_diagnostics.sh is not present or executable' >&2
+              fi
+              echo '::endgroup::'
               exit 1
             fi
             sleep 10
