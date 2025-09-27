@@ -40,6 +40,7 @@ require_cmd kubectl
 require_cmd jq
 
 KEYCLOAK_NAMESPACE=${KEYCLOAK_NAMESPACE:-iam}
+KEYCLOAK_OPERATOR_NAMESPACE=${KEYCLOAK_OPERATOR_NAMESPACE:-${KEYCLOAK_NAMESPACE}}
 KEYCLOAK_NAME=${KEYCLOAK_NAME:-rws-keycloak}
 KEYCLOAK_POD_SELECTOR=${KEYCLOAK_POD_SELECTOR:-app=keycloak}
 KEYCLOAK_MGMT_PORT=${KEYCLOAK_MGMT_PORT:-9000}
@@ -103,4 +104,4 @@ else
 fi
 
 run_cmd "Keycloak operator logs (last 15m)" \
-  kubectl logs deployment/keycloak-operator -n keycloak --since=15m
+  kubectl logs deployment/keycloak-operator -n "${KEYCLOAK_OPERATOR_NAMESPACE}" --since=15m
