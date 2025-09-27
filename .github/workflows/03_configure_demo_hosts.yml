@@ -93,7 +93,7 @@ jobs:
 
           for url in "${endpoints[@]}"; do
             echo "::group::Probing ${url}"
-            for attempt in $(seq 1 20); do
+            for attempt in $(seq 1 2); do
               if curl --fail --location --show-error --silent --connect-timeout 5 --max-time 20 --output /dev/null "${url}"; then
                 http_code=$(curl --silent --show-error --write-out '%{http_code}' --output /dev/null "${url}")
                 echo "✅ ${url} responded with HTTP ${http_code} (attempt ${attempt})."
