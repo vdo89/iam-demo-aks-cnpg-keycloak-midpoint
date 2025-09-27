@@ -56,6 +56,10 @@ If the `iam` application reports `application repo … is not permitted in proje
 
 Argo CD 2.11 migrates existing resources to client-side apply, which surfaces immutable field errors if the live object was created with a different schema than the GitOps source. The bootstrap workflow now seeds the IAM database and admin credentials as [`Opaque` secrets](.github/workflows/02_bootstrap_argocd.yml) and proactively deletes any older basic-auth secrets before recreating them. If the application remains `Degraded` with a message similar to `Secret "keycloak-db-app" is invalid: type: Invalid value: "kubernetes.io/basic-auth": field is immutable`, delete the affected secret (Argo will recreate it on the next sync) so the type converges on the new schema.
 
+### Troubleshooting: IAM sync timeout waiting for Keycloak CRDs
+
+When the IAM application reports `one or more synchronization tasks are not valid due to application controller sync timeout`, Argo CD is trying to apply Keycloak custom resources before the operator finishes installing its CRDs. Longer timeouts do not help because the resources remain invalid until the CRDs appear. Follow the runbook in [`docs/troubleshooting/iam-sync-timeout.md`](docs/troubleshooting/iam-sync-timeout.md) to gather the relevant controller state and apply the sync-wave fix so the Keycloak operator finishes before the IAM stack reconciles.
+
 ## 3. Publish demo ingress hostnames
 
 Run the workflow **“04 - Configure demo hosts”** after the bootstrap finishes. The job calls [`scripts/configure_demo_hosts.py`](scripts/configure_demo_hosts.py) to discover the ingress IP, updates [`gitops/apps/iam/params.env`](gitops/apps/iam/params.env) with fresh `nip.io` hostnames, commits the change and prints the URLs.
