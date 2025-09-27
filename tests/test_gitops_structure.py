@@ -88,6 +88,51 @@ def test_params_env_defaults():
     assert "argocdHost=" in params
 
 
+def test_iam_ingress_replacements_cover_all_targets():
+    kustomization = yaml.safe_load(
+        (REPO_ROOT / "gitops/apps/iam/kustomization.yaml").read_text(encoding="utf-8")
+    )
+
+    def has_replacement(source_field: str, kind: str, name: str, field_path: str) -> bool:
+        for entry in kustomization.get("replacements", []):
+            src = entry.get("source", {})
+            if src.get("fieldPath") != source_field:
+                continue
+            for target in entry.get("targets", []):
+                selector = target.get("select", {})
+                if selector.get("kind") == kind and selector.get("name") == name:
+                    if field_path in target.get("fieldPaths", []):
+                        return True
+        return False
+
+    assert has_replacement("data.ingressClass", "Keycloak", "rws-keycloak", "spec.ingress.className")
+    assert has_replacement("data.ingressClass", "Ingress", "midpoint", "spec.ingressClassName")
+    assert has_replacement("data.keycloakHost", "Keycloak", "rws-keycloak", "spec.hostname.hostname")
+    assert has_replacement("data.keycloakHost", "Keycloak", "rws-keycloak", "spec.ingress.hostname")
+    assert has_replacement("data.midpointHost", "Ingress", "midpoint", "spec.rules.0.host")
+
+
+def test_bootstrap_ingress_replacements():
+    kustomization = yaml.safe_load(
+        (REPO_ROOT / "gitops/clusters/aks/bootstrap/kustomization.yaml").read_text(encoding="utf-8")
+    )
+
+    def has_replacement(source_field: str, kind: str, name: str, field_path: str) -> bool:
+        for entry in kustomization.get("replacements", []):
+            src = entry.get("source", {})
+            if src.get("fieldPath") != source_field:
+                continue
+            for target in entry.get("targets", []):
+                selector = target.get("select", {})
+                if selector.get("kind") == kind and selector.get("name") == name:
+                    if field_path in target.get("fieldPaths", []):
+                        return True
+        return False
+
+    assert has_replacement("data.ingressClass", "Ingress", "argocd-server", "spec.ingressClassName")
+    assert has_replacement("data.argocdHost", "Ingress", "argocd-server", "spec.rules.0.host")
+
+
 def test_iam_secret_generators_use_opaque_type():
     kustomization = yaml.safe_load(
         (REPO_ROOT / "gitops/apps/iam/secrets/kustomization.yaml").read_text(encoding="utf-8")
