@@ -16,8 +16,6 @@ spec:
       value: "true"
     - name: http-management-host
       value: "0.0.0.0"
-    - name: db-url
-      value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/keycloak?sslmode=require
     - name: proxy
       value: edge
     - name: proxy-headers
@@ -31,6 +29,7 @@ spec:
     port: 5432
     database: keycloak
     schema: public
+    urlProperties: "?sslmode=require"
     usernameSecret:
       name: keycloak-db-app
       key: username
