@@ -38,6 +38,15 @@ def main() -> int:
                     "Keycloak manifest must drive the database connection through typed host/port/database fields instead of spec.db.url."
                 )
                 break
+
+        ssl_mode_match = re.search(r"^\s*sslMode:\s*(?P<value>\S+)", body, re.MULTILINE)
+        if ssl_mode_match is None:
+            errors.append("Keycloak manifest must set spec.db.sslMode to enforce TLS for database connections.")
+        elif ssl_mode_match.group("value") != "require":
+            errors.append(
+                "Keycloak manifest must enforce TLS via spec.db.sslMode: require (found"
+                f" '{ssl_mode_match.group('value')}')."
+            )
     else:
         errors.append("Unable to locate spec.db block in Keycloak manifest; update the checker if the manifest moved.")
 

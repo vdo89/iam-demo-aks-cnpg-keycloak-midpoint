@@ -20,8 +20,6 @@ spec:
       value: edge
     - name: proxy-headers
       value: xforwarded
-    - name: db-url
-      value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/keycloak?sslmode=require
   features:
     enabled:
       - token-exchange
@@ -31,7 +29,7 @@ spec:
     port: 5432
     database: keycloak
     schema: public
-    urlProperties: "?sslmode=require"
+    sslMode: require
     usernameSecret:
       name: keycloak-db-app
       key: username

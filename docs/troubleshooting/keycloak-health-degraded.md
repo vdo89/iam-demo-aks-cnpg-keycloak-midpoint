@@ -69,7 +69,7 @@ For more examples of response payloads, consult the [Keycloak health documentati
        bash -lc "export PGPASSWORD='$PASS'; psql -h iam-db-rw.iam.svc.cluster.local -U '$USER' -d keycloak -c '\\conninfo'"
      ```
   3. If the command returns `\conninfo` without an error, the credentials are correct; otherwise update either the database user or the secret so that they match.
-* **TLS enforcement errors:** If the readiness payload or Keycloak logs mention `SSL off` or a missing `pg_hba.conf` entry, confirm the manifest still applies the `--db-url=jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/keycloak?sslmode=require` flag (added under `spec.additionalOptions`). Without that flag the server attempts an unencrypted connection, which CloudNativePG rejects when TLS is mandatory.
+* **TLS enforcement errors:** If the readiness payload or Keycloak logs mention `SSL off` or a missing `pg_hba.conf` entry, confirm the manifest still sets `spec.db.sslMode: require`. Without that field the server attempts an unencrypted connection, which CloudNativePG rejects when TLS is mandatory.
 * **Schema migrations:** Monitor the pod logs until migrations complete. Large schema updates can temporarily keep the readiness probe `DOWN`; do not restart the pod unless the logs show a fatal error.
 * **Missing secrets or config:** Confirm every reference in `gitops/apps/iam/keycloak/keycloak.yaml` and the realm import exists in the `iam` namespace. Re-run the bootstrap workflow if secrets are missing.
 
