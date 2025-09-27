@@ -13,7 +13,7 @@ configMapGenerator:
   - name: argocd-ingress-settings
     namespace: argocd
     envs:
-      - ../../../apps/iam/params.env
+      - params.env
 replacements:
   - source:
       kind: ConfigMap
