@@ -56,7 +56,7 @@ def test_main_updates_env_files(monkeypatch, tmp_path: Path):
 
     output_contents = out_file.read_text(encoding="utf-8")
     assert "midpoint_url=http://mp.203.0.113.10.nip.io/midpoint" in output_contents
-    assert "argocd_url=https://argocd.203.0.113.10.nip.io" in output_contents
+    assert "argocd_url=http://argocd.203.0.113.10.nip.io" in output_contents
 
 
 def test_resolve_ingress_ip_explicit():

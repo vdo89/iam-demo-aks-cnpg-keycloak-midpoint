@@ -69,7 +69,7 @@ When the IAM application reports `one or more synchronization tasks are not vali
 
 ## 3. Publish demo ingress hostnames
 
-Run the workflow **“04 - Configure demo hosts”** after the bootstrap finishes. The job calls [`scripts/configure_demo_hosts.py`](scripts/configure_demo_hosts.py) to discover the ingress IP, updates [`gitops/apps/iam/params.env`](gitops/apps/iam/params.env) with fresh `nip.io` hostnames, commits the change and prints the URLs.
+Run the workflow **“04 - Configure demo hosts”** after the bootstrap finishes. The job calls [`scripts/configure_demo_hosts.py`](scripts/configure_demo_hosts.py) to discover the ingress IP, updates [`gitops/apps/iam/params.env`](gitops/apps/iam/params.env) with fresh `nip.io` hostnames, commits the change and prints the URLs. Argo CD is exposed through an HTTP ingress (TLS terminates at the `argocd-server` service), so the generated Argo link intentionally uses `http://`.
 
 ## 4. Day-two tips
 
