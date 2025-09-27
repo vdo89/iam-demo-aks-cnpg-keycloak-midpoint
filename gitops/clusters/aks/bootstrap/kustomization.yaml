@@ -4,5 +4,34 @@ namespace: argocd
 resources:
   - namespace.yaml
   - https://raw.githubusercontent.com/argoproj/argo-cd/v3.1.7/manifests/install.yaml
+  - argocd-ingress.yaml
 patches:
   - path: argocd-cm-patch.yaml
+generatorOptions:
+  disableNameSuffixHash: true
+configMapGenerator:
+  - name: argocd-ingress-settings
+    namespace: argocd
+    envs:
+      - ../../apps/iam/params.env
+replacements:
+  - source:
+      kind: ConfigMap
+      name: argocd-ingress-settings
+      fieldPath: data.ingressClass
+    targets:
+      - select:
+          kind: Ingress
+          name: argocd-server
+        fieldPaths:
+          - spec.ingressClassName
+  - source:
+      kind: ConfigMap
+      name: argocd-ingress-settings
+      fieldPath: data.argocdHost
+    targets:
+      - select:
+          kind: Ingress
+          name: argocd-server
+        fieldPaths:
+          - spec.rules.0.host
