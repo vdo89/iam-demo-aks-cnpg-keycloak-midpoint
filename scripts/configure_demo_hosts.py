@@ -19,6 +19,7 @@ DEFAULT_SERVICE = "ingress-nginx/ingress-nginx-controller"
 class Hosts:
     keycloak: str
     midpoint: str
+    argocd: str
 
 
 class KubectlError(RuntimeError):
@@ -108,7 +109,11 @@ def resolve_ingress_ip(service: str, explicit_ip: Optional[str], explicit_hostna
 def build_hosts(ip: str) -> Hosts:
     """Return nip.io hosts for the provided IP address."""
     ipaddress.ip_address(ip)
-    return Hosts(keycloak=f"kc.{ip}.nip.io", midpoint=f"mp.{ip}.nip.io")
+    return Hosts(
+        keycloak=f"kc.{ip}.nip.io",
+        midpoint=f"mp.{ip}.nip.io",
+        argocd=f"argocd.{ip}.nip.io",
+    )
 
 
 def read_ingress_class(params_file: Path) -> Optional[str]:
@@ -131,6 +136,7 @@ def write_params(params_file: Path, ingress_class: str, hosts: Hosts) -> None:
                 f"ingressClass={ingress_class}",
                 f"keycloakHost={hosts.keycloak}",
                 f"midpointHost={hosts.midpoint}",
+                f"argocdHost={hosts.argocd}",
             ]
         )
         + "\n",
@@ -182,12 +188,14 @@ def main() -> int:
             env_file.write(f"EXTERNAL_IP={ip_value}\n")
             env_file.write(f"KC_HOST={hosts.keycloak}\n")
             env_file.write(f"MP_HOST={hosts.midpoint}\n")
+            env_file.write(f"ARGOCD_HOST={hosts.argocd}\n")
 
     github_output = os.environ.get("GITHUB_OUTPUT")
     if github_output:
         with open(github_output, "a", encoding="utf-8") as output_file:
             output_file.write(f"keycloak_url=http://{hosts.keycloak}\n")
             output_file.write(f"midpoint_url=http://{hosts.midpoint}/midpoint\n")
+            output_file.write(f"argocd_url=https://{hosts.argocd}\n")
 
     return 0
 

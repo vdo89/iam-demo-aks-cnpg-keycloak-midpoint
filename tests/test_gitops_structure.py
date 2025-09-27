@@ -85,6 +85,7 @@ def test_params_env_defaults():
     assert "ingressClass=" in params
     assert "keycloakHost=" in params
     assert "midpointHost=" in params
+    assert "argocdHost=" in params
 
 
 def test_iam_secret_generators_use_opaque_type():
