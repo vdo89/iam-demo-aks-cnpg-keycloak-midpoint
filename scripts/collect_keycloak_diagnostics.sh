@@ -79,6 +79,36 @@ mapfile -t keycloak_pods < <(
     -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true
 )
 
+log_contains() {
+  local pod="$1"
+  local pattern="$2"
+  local scope="$3"
+
+  local flags=("$pod" -n "${KEYCLOAK_NAMESPACE}" --tail=200)
+  if [[ "${scope}" == "previous" ]]; then
+    flags+=(--previous)
+  fi
+
+  if kubectl logs "${flags[@]}" 2>/dev/null | grep -Fq "$pattern"; then
+    return 0
+  fi
+  return 1
+}
+
+diagnose_known_failures() {
+  local pod="$1"
+
+  if log_contains "$pod" "Unknown option: '--http-management-allowed-hosts'" current \
+    || log_contains "$pod" "Unknown option: '--http-management-allowed-hosts'" previous; then
+    warn "Detected deprecated CLI flag '--http-management-allowed-hosts' in pod ${pod}; remove it from gitops/apps/iam/keycloak/keycloak.yaml."
+  fi
+
+  if log_contains "$pod" "The '--optimized' flag was used for first ever server start" current \
+    || log_contains "$pod" "The '--optimized' flag was used for first ever server start" previous; then
+    warn "Pod ${pod} tried to start with '--optimized' before the initial build completed; ensure spec.startOptimized: false in gitops/apps/iam/keycloak/keycloak.yaml before the first boot."
+  fi
+}
+
 if ((${#keycloak_pods[@]} == 0)); then
   warn "No Keycloak pods found with selector '${KEYCLOAK_POD_SELECTOR}' in namespace '${KEYCLOAK_NAMESPACE}'"
 
@@ -103,6 +133,8 @@ else
       run_cmd "Keycloak health endpoint (${pod}, ${endpoint})" bash -c \
         "kubectl get --raw \"/api/v1/namespaces/${KEYCLOAK_NAMESPACE}/pods/${pod}:${KEYCLOAK_MGMT_PORT}/proxy${endpoint}\" | jq '.'"
     done
+
+    diagnose_known_failures "${pod}"
   done
 fi
 
