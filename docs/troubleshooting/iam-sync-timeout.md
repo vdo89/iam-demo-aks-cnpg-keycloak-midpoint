@@ -19,6 +19,11 @@ retries and eventually times out.
 
 ## Collect the right evidence
 
+Run `scripts/collect_keycloak_diagnostics.sh` to capture the key Argo CD and Kubernetes state when the timeout occurs. The script
+gathers the IAM and Keycloak operator application status, the operation state that lists invalid tasks, the presence of the
+Keycloak CRDs, and recent operator logs so you can attach them to an incident or support ticket. If you prefer to run the
+commands manually, follow the steps below.
+
 1. Confirm the status and last operation details:
    ```bash
    argocd app get iam
