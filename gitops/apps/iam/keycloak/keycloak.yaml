@@ -12,6 +12,8 @@ spec:
       value: "true"
     - name: metrics-enabled
       value: "true"
+    - name: hostname-strict-https
+      value: "false"
   features:
     enabled:
       - token-exchange
@@ -33,7 +35,6 @@ spec:
     hostname: kc.127.0.0.1.nip.io
     strict: false
     strictBackchannel: false
-    strictHttps: false
   ingress:
     enabled: true
     className: nginx
