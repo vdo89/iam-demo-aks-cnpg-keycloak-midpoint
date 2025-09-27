@@ -18,6 +18,10 @@ spec:
       value: "0.0.0.0"
     - name: db-url
       value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/keycloak?sslmode=require
+    - name: proxy
+      value: edge
+    - name: proxy-headers
+      value: xforwarded
   features:
     enabled:
       - token-exchange
