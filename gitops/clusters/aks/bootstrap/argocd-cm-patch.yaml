@@ -14,8 +14,11 @@ data:
     if obj.status ~= nil then
       if obj.status.conditions ~= nil then
         for _, condition in ipairs(obj.status.conditions) do
+          local status_value = condition.status
+          local is_true = status_value == true or status_value == "True"
+          local is_false = status_value == false or status_value == "False"
           if condition.type == "Ready" then
-            if condition.status == "True" then
+            if is_true then
               hs.status = "Healthy"
               if condition.message ~= nil and condition.message ~= "" then
                 hs.message = condition.message
@@ -24,7 +27,7 @@ data:
               end
               return hs
             end
-            if condition.status == "False" then
+            if is_false then
               local lower_reason = nil
               if condition.reason ~= nil then
                 lower_reason = string.lower(condition.reason)
@@ -52,7 +55,7 @@ data:
               end
             end
           end
-          if condition.type == "HasErrors" and condition.status == "True" then
+          if condition.type == "HasErrors" and is_true then
             hs.status = "Degraded"
             if condition.message ~= nil and condition.message ~= "" then
               hs.message = condition.message
