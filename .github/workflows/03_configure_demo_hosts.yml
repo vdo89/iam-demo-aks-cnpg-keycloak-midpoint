@@ -101,7 +101,7 @@ jobs:
               fi
               echo "Attempt ${attempt} failed for ${url}; waiting 15 seconds before retrying..."
               sleep 15
-              if [[ ${attempt} -eq 20 ]]; then
+              if [[ ${attempt} -eq 2 ]]; then
                 echo "❌ Unable to reach ${url} after ${attempt} attempts."
                 exit 1
               fi
