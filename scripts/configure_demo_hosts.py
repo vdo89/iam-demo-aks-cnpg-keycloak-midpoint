@@ -178,6 +178,7 @@ def main() -> int:
     if args.print_only:
         print(hosts.keycloak)
         print(hosts.midpoint)
+        print(hosts.argocd)
         return 0
 
     write_params(args.params_file, ingress_class, hosts)
