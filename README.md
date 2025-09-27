@@ -74,8 +74,9 @@ Run the workflow **“04 - Configure demo hosts”** after the bootstrap finis
 ## 4. Day-two tips
 
 - The GitOps tree lives under `gitops/`. Update manifests, commit, and let Argo CD reconcile the cluster. `kubectl apply` is only needed for the initial bootstrap.
-- `scripts/check_keycloak_first_class_fields.py` guards against regressing to deprecated Keycloak CLI flags – run it whenever you edit the Keycloak CR.
-- The Keycloak CR enables `startOptimized` so the operator launches `kc.sh start --optimized`, avoiding rebuilds on restarts while still exposing the operator-managed health probes on port `9000`.
+=======
+- Keycloak runs with the operator's optimized startup path (`startOptimized: true`) so restarts skip the build step, and we rely on the operator's default probes against the management endpoints.
+
 
 - Need to rotate ingress hosts manually? Execute `python3 scripts/configure_demo_hosts.py --ingress-ip <EXTERNAL-IP>` and commit the updated parameters file.
 
