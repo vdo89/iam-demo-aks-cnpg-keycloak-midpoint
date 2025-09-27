@@ -47,7 +47,24 @@ For more examples of response payloads, consult the [Keycloak health documentati
 
 ## Apply the fix
 
-* **Database connectivity:** Verify the `keycloak-db-app` secret values match the CloudNativePG database user. Reset the password via the CNPG management tooling and update the secret if necessary.
+* **Database connectivity:** Verify the `keycloak-db-app` secret values match the CloudNativePG database user. Reset the password via the CNPG management tooling and update the secret if necessary. To confirm the mismatch quickly:
+  1. Decode the credentials that Keycloak consumes:
+     ```bash
+     kubectl -n iam get secret keycloak-db-app \
+       -o jsonpath='{.data.username}' | base64 -d; echo
+     kubectl -n iam get secret keycloak-db-app \
+       -o jsonpath='{.data.password}' | base64 -d; echo
+     ```
+  2. Test those credentials against the CloudNativePG primary:
+     ```bash
+     USER=$(kubectl -n iam get secret keycloak-db-app -o jsonpath='{.data.username}' | base64 -d)
+     PASS=$(kubectl -n iam get secret keycloak-db-app -o jsonpath='{.data.password}' | base64 -d)
+
+     kubectl -n iam run -it --rm pgclient \
+       --image=ghcr.io/cloudnative-pg/postgresql:16.4 -- \
+       bash -lc "export PGPASSWORD='$PASS'; psql -h iam-db-rw.iam.svc.cluster.local -U '$USER' -d keycloak -c '\\conninfo'"
+     ```
+  3. If the command returns `\conninfo` without an error, the credentials are correct; otherwise update either the database user or the secret so that they match.
 * **Schema migrations:** Monitor the pod logs until migrations complete. Large schema updates can temporarily keep the readiness probe `DOWN`; do not restart the pod unless the logs show a fatal error.
 * **Missing secrets or config:** Confirm every reference in `gitops/apps/iam/keycloak/keycloak.yaml` and the realm import exists in the `iam` namespace. Re-run the bootstrap workflow if secrets are missing.
 
