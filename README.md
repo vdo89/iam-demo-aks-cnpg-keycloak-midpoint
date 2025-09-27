@@ -64,7 +64,7 @@ Run the workflow **“04 - Configure demo hosts”** after the bootstrap finis
 
 - The GitOps tree lives under `gitops/`. Update manifests, commit, and let Argo CD reconcile the cluster. `kubectl apply` is only needed for the initial bootstrap.
 - `scripts/check_keycloak_first_class_fields.py` guards against regressing to deprecated Keycloak CLI flags – run it whenever you edit the Keycloak CR.
-- Keycloak's probes are wired to the operator-managed management port (9000) and call the documented `/health/ready` and `/health/live` endpoints. When Argo CD reports the Keycloak resource as `Degraded` with a health-related reason, inspect those endpoints via `kubectl port-forward` to confirm whether the instance is reporting that it is not ready or not alive yet.
+- Keycloak's probes are now left at the operator defaults. The CRD rejects custom `httpGet` blocks on the probe definitions, so overriding them causes Argo CD to report a `ComparisonError`. When Argo CD reports the Keycloak resource as `Degraded`, confirm readiness via the `/health/ready` and `/health/live` endpoints with `kubectl port-forward`.
 - Need to rotate ingress hosts manually? Execute `python3 scripts/configure_demo_hosts.py --ingress-ip <EXTERNAL-IP>` and commit the updated parameters file.
 
 ### Debugging Argo CD repo permissions
