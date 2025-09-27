@@ -499,11 +499,16 @@ spec:
             - name: http
               containerPort: 8080
           readinessProbe:
-            httpGet:
-              path: /midpoint/login
+            # The midPoint UI login endpoint can take longer than the probe timeout to
+            # answer while the application finishes bootstrapping, which was causing
+            # repeated readiness probe timeouts.  A TCP socket check is sufficient for
+            # determining that the embedded web server is accepting requests, while the
+            # higher initial delay gives midPoint enough time to finish its start-up
+            # tasks on cold boots.
+            tcpSocket:
               port: http
-            failureThreshold: 12
-            initialDelaySeconds: 60
+            failureThreshold: 6
+            initialDelaySeconds: 120
             periodSeconds: 10
             successThreshold: 1
             timeoutSeconds: 5
