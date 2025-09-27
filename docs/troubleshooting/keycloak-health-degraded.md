@@ -1,5 +1,9 @@
 # Keycloak health endpoint reports `NOT READY`
 
+> ℹ️ If the Keycloak pod exits immediately with `ExitCode: 2` and the controller reports `CrashLoopBackOff`,
+> follow [Keycloak pod stuck in `CrashLoopBackOff`](./keycloak-crashloop.md) instead. The steps below assume the
+> server is running but the readiness probe is failing.
+
 ## Symptoms
 
 * The Argo CD application shows the IAM stack as `sync=OutOfSync`, `health=Degraded`, `phase=Running`.

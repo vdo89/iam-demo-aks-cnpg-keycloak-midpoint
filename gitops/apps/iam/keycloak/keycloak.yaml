@@ -14,8 +14,6 @@ spec:
       value: "true"
     - name: http-management-enabled
       value: "true"
-    - name: http-management-allowed-hosts
-      value: "*"
     - name: http-management-host
       value: "0.0.0.0"
   features:
