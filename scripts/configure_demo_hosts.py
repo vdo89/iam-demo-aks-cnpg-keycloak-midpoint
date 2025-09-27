@@ -196,7 +196,10 @@ def main() -> int:
         with open(github_output, "a", encoding="utf-8") as output_file:
             output_file.write(f"keycloak_url=http://{hosts.keycloak}\n")
             output_file.write(f"midpoint_url=http://{hosts.midpoint}/midpoint\n")
-            output_file.write(f"argocd_url=https://{hosts.argocd}\n")
+            # Argo CD terminates TLS at the upstream service; the ingress itself
+            # only serves HTTP. Surface the reachable scheme so the generated
+            # URL works out of the box.
+            output_file.write(f"argocd_url=http://{hosts.argocd}\n")
 
     return 0
 
