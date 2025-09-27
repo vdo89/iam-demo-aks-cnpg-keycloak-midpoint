@@ -18,6 +18,10 @@ spec:
       value: "0.0.0.0"
     - name: db-url-properties
       value: sslmode=require
+    - name: proxy-headers
+      value: xforwarded
+    - name: hostname-url
+      value: https://kc.127.0.0.1.nip.io
   features:
     enabled:
       - token-exchange
