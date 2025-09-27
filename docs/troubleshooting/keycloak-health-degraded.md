@@ -26,6 +26,7 @@ The script now captures:
 
 * The Keycloak CR status and controller events.
 * The Keycloak pod descriptions and the last 200 log lines from each pod (look for `Health endpoint check result` entries).
+* The live output of the `/health`, `/health/live`, `/health/ready`, and `/health/started` management endpoints from every Keycloak pod.
 * Operator logs from the last 15 minutes.
 
 Attach this output to the incident so future runs stay actionable.

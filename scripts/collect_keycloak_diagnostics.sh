@@ -38,6 +38,7 @@ require_cmd jq
 KEYCLOAK_NAMESPACE=${KEYCLOAK_NAMESPACE:-iam}
 KEYCLOAK_NAME=${KEYCLOAK_NAME:-rws-keycloak}
 KEYCLOAK_POD_SELECTOR=${KEYCLOAK_POD_SELECTOR:-app=keycloak}
+KEYCLOAK_MGMT_PORT=${KEYCLOAK_MGMT_PORT:-9000}
 
 if command -v argocd >/dev/null 2>&1; then
   run_cmd "Argo CD application summary (iam)" \
@@ -82,6 +83,11 @@ else
 
     run_cmd "Keycloak pod logs (${pod}, last 200 lines)" \
       kubectl logs "${pod}" -n "${KEYCLOAK_NAMESPACE}" --tail=200
+
+    for endpoint in /health /health/live /health/ready /health/started; do
+      run_cmd "Keycloak health endpoint (${pod}, ${endpoint})" bash -c \
+        "kubectl get --raw \"/api/v1/namespaces/${KEYCLOAK_NAMESPACE}/pods/${pod}:${KEYCLOAK_MGMT_PORT}/proxy${endpoint}\" | jq '.'"
+    done
   done
 fi
 
