@@ -8,7 +8,7 @@ metadata:
 spec:
   project: platform
   destination:
-    namespace: keycloak
+    namespace: iam
     server: https://kubernetes.default.svc
   source:
     repoURL: https://github.com/keycloak/keycloak-k8s-resources.git
