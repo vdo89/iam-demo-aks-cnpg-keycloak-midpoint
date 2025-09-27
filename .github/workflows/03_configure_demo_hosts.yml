@@ -103,7 +103,9 @@ jobs:
               sleep 15
               if [[ ${attempt} -eq 2 ]]; then
                 echo "❌ Unable to reach ${url} after ${attempt} attempts."
-                exit 1
+                # Trigger the ERR trap so diagnostics are emitted before the
+                # job exits; `exit` bypasses the trap in bash.
+                false
               fi
             done
             echo "::endgroup::"
