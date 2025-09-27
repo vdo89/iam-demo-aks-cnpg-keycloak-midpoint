@@ -53,7 +53,9 @@ If the `iam` application reports `application repo … is not permitted in proje
 
 ### Troubleshooting: Secrets stuck on `type` immutability
 
-Argo CD 2.11 migrates existing resources to client-side apply, which surfaces immutable field errors if the live object was created with a different schema than the GitOps source. The bootstrap workflow seeds the IAM database and admin credentials as [`kubernetes.io/basic-auth` secrets](.github/workflows/02_bootstrap_argocd.yml), so make sure any follow-up manifests use the same secret type. If the application remains `Degraded` with a message similar to `Secret "keycloak-db-app" is invalid: type: Invalid value: "Opaque": field is immutable`, delete the affected secret (Argo will recreate it on the next sync) or update its type in Git to match the bootstrap workflow before re-running the sync.
+Argo CD 2.11 migrates existing resources to client-side apply, which surfaces immutable field errors if the live object was created with a different schema than the GitOps source. During this migration Kubernetes replays the last-applied configuration that was recorded by `kubectl`. When earlier bootstraps omitted `--type`, Kubernetes stored an `Opaque` secret in the last-applied payload even though later revisions declared [`kubernetes.io/basic-auth`](https://kubernetes.io/docs/concepts/configuration/secret/#secret-types). Because the `type` field is immutable, the API rejects the replay and reports errors such as `Secret "keycloak-db-app" is invalid: type: Invalid value: "Opaque": field is immutable`.
+
+The bootstrap workflow now deletes the IAM secrets before re-seeding them and the GitOps tree standardises on `type: Opaque` so the live and desired configuration agree. If Argo CD still surfaces the immutability error, delete the affected secret (Argo will recreate it on the next sync) so the stale `kubectl-client-side-apply` configuration is dropped, or update the bootstrap workflow inputs to match the actual type before re-running the sync.
 
 ## 3. Publish demo ingress hostnames
 

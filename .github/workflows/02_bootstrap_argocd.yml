@@ -125,6 +125,19 @@ jobs:
           set -euo pipefail
           kubectl create namespace "${{ inputs.NAMESPACE_IAM }}" --dry-run=client -o yaml | kubectl apply -f -
 
+      - name: Delete stale IAM secrets before seeding
+        shell: bash
+        env:
+          NAMESPACE_IAM: ${{ inputs.NAMESPACE_IAM }}
+        run: |
+          set -euo pipefail
+          kubectl -n "${NAMESPACE_IAM}" delete secret \
+            cnpg-superuser \
+            keycloak-db-app \
+            midpoint-db-app \
+            midpoint-admin \
+            --ignore-not-found
+
       - name: Seed database credentials
         shell: bash
         env:
@@ -139,17 +152,17 @@ jobs:
             exit 1
           fi
           kubectl -n "${NAMESPACE_IAM}" create secret generic cnpg-superuser \
-            --type=kubernetes.io/basic-auth \
+            --type=Opaque \
             --from-literal=username=postgres \
             --from-literal=password="${POSTGRES_SUPERUSER_PASSWORD}" \
             --dry-run=client -o yaml | kubectl apply -f -
           kubectl -n "${NAMESPACE_IAM}" create secret generic keycloak-db-app \
-            --type=kubernetes.io/basic-auth \
+            --type=Opaque \
             --from-literal=username=keycloak \
             --from-literal=password="${KEYCLOAK_DB_PASSWORD}" \
             --dry-run=client -o yaml | kubectl apply -f -
           kubectl -n "${NAMESPACE_IAM}" create secret generic midpoint-db-app \
-            --type=kubernetes.io/basic-auth \
+            --type=Opaque \
             --from-literal=username=midpoint \
             --from-literal=password="${MIDPOINT_DB_PASSWORD}" \
             --dry-run=client -o yaml | kubectl apply -f -
@@ -166,7 +179,7 @@ jobs:
             exit 1
           fi
           kubectl -n "${NAMESPACE_IAM}" create secret generic midpoint-admin \
-            --type=kubernetes.io/basic-auth \
+            --type=Opaque \
             --from-literal=username=administrator \
             --from-literal=password="${MIDPOINT_ADMIN_PASSWORD}" \
             --dry-run=client -o yaml | kubectl apply -f -
