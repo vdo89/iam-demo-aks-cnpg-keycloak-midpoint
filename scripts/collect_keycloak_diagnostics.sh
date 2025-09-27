@@ -35,6 +35,10 @@ run_cmd() {
 require_cmd kubectl
 require_cmd jq
 
+KEYCLOAK_NAMESPACE=${KEYCLOAK_NAMESPACE:-iam}
+KEYCLOAK_NAME=${KEYCLOAK_NAME:-rws-keycloak}
+KEYCLOAK_POD_SELECTOR=${KEYCLOAK_POD_SELECTOR:-app=keycloak}
+
 if command -v argocd >/dev/null 2>&1; then
   run_cmd "Argo CD application summary (iam)" \
     argocd app get iam
@@ -54,6 +58,32 @@ fi
 
 run_cmd "Check for Keycloak CRDs" \
   kubectl get crd keycloaks.k8s.keycloak.org keycloakrealmimports.k8s.keycloak.org
+
+run_cmd "Keycloak custom resource status" \
+  kubectl get keycloak "${KEYCLOAK_NAME}" -n "${KEYCLOAK_NAMESPACE}" -o yaml
+
+run_cmd "Describe Keycloak custom resource" \
+  kubectl describe keycloak "${KEYCLOAK_NAME}" -n "${KEYCLOAK_NAMESPACE}"
+
+run_cmd "Keycloak pods" \
+  kubectl get pods -n "${KEYCLOAK_NAMESPACE}" -l "${KEYCLOAK_POD_SELECTOR}" -o wide
+
+mapfile -t keycloak_pods < <(
+  kubectl get pods -n "${KEYCLOAK_NAMESPACE}" -l "${KEYCLOAK_POD_SELECTOR}" \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true
+)
+
+if ((${#keycloak_pods[@]} == 0)); then
+  error "No Keycloak pods found with selector '${KEYCLOAK_POD_SELECTOR}' in namespace '${KEYCLOAK_NAMESPACE}'"
+else
+  for pod in "${keycloak_pods[@]}"; do
+    run_cmd "Describe Keycloak pod ${pod}" \
+      kubectl describe pod "${pod}" -n "${KEYCLOAK_NAMESPACE}"
+
+    run_cmd "Keycloak pod logs (${pod}, last 200 lines)" \
+      kubectl logs "${pod}" -n "${KEYCLOAK_NAMESPACE}" --tail=200
+  done
+fi
 
 run_cmd "Keycloak operator logs (last 15m)" \
   kubectl logs deployment/keycloak-operator -n keycloak --since=15m
