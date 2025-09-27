@@ -96,6 +96,9 @@ else
     run_cmd "Keycloak pod logs (${pod}, last 200 lines)" \
       kubectl logs "${pod}" -n "${KEYCLOAK_NAMESPACE}" --tail=200
 
+    run_cmd "Keycloak pod logs (${pod}, previous container)" \
+      kubectl logs "${pod}" -n "${KEYCLOAK_NAMESPACE}" --tail=200 --previous
+
     for endpoint in /health /health/live /health/ready /health/started; do
       run_cmd "Keycloak health endpoint (${pod}, ${endpoint})" bash -c \
         "kubectl get --raw \"/api/v1/namespaces/${KEYCLOAK_NAMESPACE}/pods/${pod}:${KEYCLOAK_MGMT_PORT}/proxy${endpoint}\" | jq '.'"
