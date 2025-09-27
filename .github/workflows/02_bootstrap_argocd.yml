@@ -32,6 +32,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements-dev.txt
+
+      - name: Run GitOps validation tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          pytest -q
+
       - name: Azure Login (OIDC)
         uses: azure/login@v2
         with:
@@ -138,18 +151,21 @@ jobs:
             echo "Database credentials are required (POSTGRES_SUPERUSER_PASSWORD, KEYCLOAK_DB_PASSWORD, MIDPOINT_DB_PASSWORD)."
             exit 1
           fi
+          for secret in cnpg-superuser keycloak-db-app midpoint-db-app; do
+            kubectl -n "${NAMESPACE_IAM}" delete secret "${secret}" --ignore-not-found >/dev/null 2>&1 || true
+          done
           kubectl -n "${NAMESPACE_IAM}" create secret generic cnpg-superuser \
-            --type=kubernetes.io/basic-auth \
+            --type=Opaque \
             --from-literal=username=postgres \
             --from-literal=password="${POSTGRES_SUPERUSER_PASSWORD}" \
             --dry-run=client -o yaml | kubectl apply -f -
           kubectl -n "${NAMESPACE_IAM}" create secret generic keycloak-db-app \
-            --type=kubernetes.io/basic-auth \
+            --type=Opaque \
             --from-literal=username=keycloak \
             --from-literal=password="${KEYCLOAK_DB_PASSWORD}" \
             --dry-run=client -o yaml | kubectl apply -f -
           kubectl -n "${NAMESPACE_IAM}" create secret generic midpoint-db-app \
-            --type=kubernetes.io/basic-auth \
+            --type=Opaque \
             --from-literal=username=midpoint \
             --from-literal=password="${MIDPOINT_DB_PASSWORD}" \
             --dry-run=client -o yaml | kubectl apply -f -
@@ -165,8 +181,9 @@ jobs:
             echo "MIDPOINT_ADMIN_PASSWORD secret is required."
             exit 1
           fi
+          kubectl -n "${NAMESPACE_IAM}" delete secret midpoint-admin --ignore-not-found >/dev/null 2>&1 || true
           kubectl -n "${NAMESPACE_IAM}" create secret generic midpoint-admin \
-            --type=kubernetes.io/basic-auth \
+            --type=Opaque \
             --from-literal=username=administrator \
             --from-literal=password="${MIDPOINT_ADMIN_PASSWORD}" \
             --dry-run=client -o yaml | kubectl apply -f -

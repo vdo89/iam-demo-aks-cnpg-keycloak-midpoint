@@ -87,11 +87,11 @@ def test_params_env_defaults():
     assert "midpointHost=" in params
 
 
-def test_iam_secret_generators_use_basic_auth_type():
+def test_iam_secret_generators_use_opaque_type():
     kustomization = yaml.safe_load(
         (REPO_ROOT / "gitops/apps/iam/secrets/kustomization.yaml").read_text(encoding="utf-8")
     )
     secrets = kustomization.get("secretGenerator", [])
     assert secrets, "secretGenerator entries should be defined for IAM secrets"
     for secret in secrets:
-        assert secret.get("type") == "kubernetes.io/basic-auth"
+        assert secret.get("type") == "Opaque"

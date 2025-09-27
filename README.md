@@ -41,6 +41,7 @@ Trigger the workflow **“01 - Provision AKS with Terraform”** (`.github/wor
 1. Run the workflow **“02 - Bootstrap GitOps stack”** (`.github/workflows/02_bootstrap_argocd.yml`). Provide the `STORAGE_ACCOUNT` input so the job can render the CNPG backup configuration. It will:
    - Apply the Argo CD bootstrap kustomization pinned to `v3.1.7`.
    - Optionally configure repository credentials when the repo is private.
+   - Validate the GitOps manifests via the unit tests before touching the cluster.
    - Create the database and admin secrets in the `iam` namespace.
    - Normalise the Azure Blob credentials into the `cnpg-azure-backup` secret using `scripts/normalize_azure_storage_secret.py`.
    - Apply the GitOps tree (`gitops/clusters/aks`) so Argo CD manages addons (cert-manager, CloudNativePG operator, ingress-nginx, Keycloak operator) and the IAM workloads (CloudNativePG cluster, Keycloak, midPoint).
@@ -53,7 +54,7 @@ If the `iam` application reports `application repo … is not permitted in proje
 
 ### Troubleshooting: Secrets stuck on `type` immutability
 
-Argo CD 2.11 migrates existing resources to client-side apply, which surfaces immutable field errors if the live object was created with a different schema than the GitOps source. The bootstrap workflow seeds the IAM database and admin credentials as [`kubernetes.io/basic-auth` secrets](.github/workflows/02_bootstrap_argocd.yml), so make sure any follow-up manifests use the same secret type. If the application remains `Degraded` with a message similar to `Secret "keycloak-db-app" is invalid: type: Invalid value: "Opaque": field is immutable`, delete the affected secret (Argo will recreate it on the next sync) or update its type in Git to match the bootstrap workflow before re-running the sync.
+Argo CD 2.11 migrates existing resources to client-side apply, which surfaces immutable field errors if the live object was created with a different schema than the GitOps source. The bootstrap workflow now seeds the IAM database and admin credentials as [`Opaque` secrets](.github/workflows/02_bootstrap_argocd.yml) and proactively deletes any older basic-auth secrets before recreating them. If the application remains `Degraded` with a message similar to `Secret "keycloak-db-app" is invalid: type: Invalid value: "kubernetes.io/basic-auth": field is immutable`, delete the affected secret (Argo will recreate it on the next sync) so the type converges on the new schema.
 
 ## 3. Publish demo ingress hostnames
 
