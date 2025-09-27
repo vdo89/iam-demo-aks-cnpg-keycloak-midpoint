@@ -76,6 +76,13 @@ mapfile -t keycloak_pods < <(
 
 if ((${#keycloak_pods[@]} == 0)); then
   error "No Keycloak pods found with selector '${KEYCLOAK_POD_SELECTOR}' in namespace '${KEYCLOAK_NAMESPACE}'"
+
+  run_cmd "Pods in namespace ${KEYCLOAK_NAMESPACE} (showing labels)" \
+    kubectl get pods -n "${KEYCLOAK_NAMESPACE}" --show-labels
+
+  run_cmd "Keycloak workloads in ${KEYCLOAK_NAMESPACE}" \
+    kubectl get statefulsets,deployments -n "${KEYCLOAK_NAMESPACE}" \
+      --selector="${KEYCLOAK_POD_SELECTOR}" --show-labels
 else
   for pod in "${keycloak_pods[@]}"; do
     run_cmd "Describe Keycloak pod ${pod}" \
