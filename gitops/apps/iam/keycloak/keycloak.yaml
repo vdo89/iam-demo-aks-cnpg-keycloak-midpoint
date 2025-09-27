@@ -16,6 +16,8 @@ spec:
       value: "true"
     - name: http-management-host
       value: "0.0.0.0"
+    - name: db-url-properties
+      value: sslmode=require
   features:
     enabled:
       - token-exchange
