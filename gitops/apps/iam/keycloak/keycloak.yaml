@@ -47,21 +47,21 @@ spec:
           - name: keycloak
             startupProbe:
               httpGet:
-                path: /health/ready
-                port: 8080
+                path: /health/started
+                port: 9000
               failureThreshold: 60
               periodSeconds: 5
             livenessProbe:
               httpGet:
                 path: /health/live
-                port: 8080
+                port: 9000
               failureThreshold: 6
               initialDelaySeconds: 30
               periodSeconds: 10
             readinessProbe:
               httpGet:
                 path: /health/ready
-                port: 8080
+                port: 9000
               failureThreshold: 6
               initialDelaySeconds: 10
               periodSeconds: 5
