@@ -32,6 +32,9 @@ spec:
             targetRevision: 4.13.2
             values:
               controller:
+                admissionWebhooks:
+                  certManager:
+                    enabled: true
                 service:
                   annotations:
                     service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: /is-dynamic-lb-initialized

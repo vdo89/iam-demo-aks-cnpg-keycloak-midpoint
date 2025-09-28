@@ -68,6 +68,10 @@ controller logs, inspect the `/health/ready` payload and resolve the underlying 
 
 When the IAM application reports `one or more synchronization tasks are not valid due to application controller sync timeout`, Argo CD is trying to apply Keycloak custom resources before the operator finishes installing its CRDs. Longer timeouts do not help because the resources remain invalid until the CRDs appear. Follow the runbook in [`docs/troubleshooting/iam-sync-timeout.md`](docs/troubleshooting/iam-sync-timeout.md) to gather the relevant controller state and apply the sync-wave fix so the Keycloak operator finishes before the IAM stack reconciles.
 
+### Troubleshooting: ingress-nginx webhook TLS errors
+
+If the platform-addons application fails with `failed calling webhook "validate.nginx.ingress.kubernetes.io"` and the error mentions `x509: certificate signed by unknown authority`, the ingress-nginx admission webhook is serving a certificate that the Kubernetes API server does not trust yet. Cert-manager now manages the webhook certificates for us; ensure the platform-addons application has synced the updated ingress-nginx values and follow the steps in [`docs/troubleshooting/ingress-nginx-webhook-cert.md`](docs/troubleshooting/ingress-nginx-webhook-cert.md) to confirm the Certificate resource is ready.
+
 ## 3. Publish demo ingress hostnames
 
 Run the workflow **“04 - Configure demo hosts”** after the bootstrap finishes. The job calls [`scripts/configure_demo_hosts.py`](scripts/configure_demo_hosts.py) to discover the ingress IP, updates [`gitops/apps/iam/params.env`](gitops/apps/iam/params.env) with fresh `nip.io` hostnames, commits the change and prints the URLs. Argo CD is exposed through an HTTP ingress (TLS terminates at the `argocd-server` service), so the generated Argo link intentionally uses `http://`.
