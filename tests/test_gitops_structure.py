@@ -140,3 +140,14 @@ def test_iam_secret_generators_use_opaque_type():
     assert secrets, "secretGenerator entries should be defined for IAM secrets"
     for secret in secrets:
         assert secret.get("type") == "Opaque"
+
+
+def test_midpoint_env_requires_tls():
+    kustomization = yaml.safe_load(
+        (REPO_ROOT / "gitops/apps/iam/midpoint/kustomization.yaml").read_text(encoding="utf-8")
+    )
+    generators = kustomization.get("configMapGenerator", [])
+    midpoint_env = next((item for item in generators if item.get("name") == "midpoint-env"), None)
+    assert midpoint_env is not None, "midpoint-env configMap generator must be defined"
+    literals = midpoint_env.get("literals", [])
+    assert "MIDPOINT_DB_SSLMODE=require" in literals

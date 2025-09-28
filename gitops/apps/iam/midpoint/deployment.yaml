@@ -60,6 +60,7 @@ spec:
               host="${MIDPOINT_DB_HOST:-iam-db-rw.iam.svc.cluster.local}"
               port="${MIDPOINT_DB_PORT:-5432}"
               database="${MIDPOINT_DB_NAME:-midpoint}"
+              sslmode="${MIDPOINT_DB_SSLMODE:-require}"
               username_file="${MIDPOINT_DB_USERNAME_FILE:-/var/run/secrets/midpoint-db-app/username}"
               password_file="${MIDPOINT_DB_PASSWORD_FILE:-/var/run/secrets/midpoint-db-app/password}"
 
@@ -93,8 +94,10 @@ spec:
               last_status=1
               last_output=""
 
+              conninfo="host=${host} port=${port} dbname=${database} user=${username} sslmode=${sslmode}"
+
               while [ "${attempt}" -le "${max_attempts}" ]; do
-                if output="$(PGPASSWORD="${password}" pg_isready -h "${host}" -p "${port}" -d "${database}" -U "${username}" 2>&1)"; then
+                if output="$(PGPASSWORD="${password}" pg_isready --dbname="${conninfo}" 2>&1)"; then
                   echo "PostgreSQL ${host}:${port}/${database} is ready (attempt ${attempt}/${max_attempts})"
                   exit 0
                 fi
@@ -110,7 +113,7 @@ spec:
                 attempt=$((attempt + 1))
               done
 
-              echo "ERROR: timed out waiting for PostgreSQL at ${host}:${port}/${database} (last exit ${last_status})" >&2
+              echo "ERROR: timed out waiting for PostgreSQL at ${host}:${port}/${database} using sslmode=${sslmode} (last exit ${last_status})" >&2
               if [ -n "${last_output}" ]; then
                 echo "Last pg_isready output:" >&2
                 printf '%s\n' "${last_output}" >&2
