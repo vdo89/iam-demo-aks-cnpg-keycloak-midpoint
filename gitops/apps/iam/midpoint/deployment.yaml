@@ -61,8 +61,8 @@ spec:
               port="${MIDPOINT_DB_PORT:-5432}"
               database="${MIDPOINT_DB_NAME:-midpoint}"
               sslmode="${MIDPOINT_DB_SSLMODE:-require}"
-              username_file="${MIDPOINT_DB_USERNAME_FILE:-/var/run/secrets/midpoint-db-app/username}"
-              password_file="${MIDPOINT_DB_PASSWORD_FILE:-/var/run/secrets/midpoint-db-app/password}"
+              username_file="${MIDPOINT_DB_USERNAME_FILE:-/var/run/secrets/iam-db-app/username}"
+              password_file="${MIDPOINT_DB_PASSWORD_FILE:-/var/run/secrets/iam-db-app/password}"
 
               max_attempts="$(parse_positive_int "${MIDPOINT_DB_WAIT_MAX_ATTEMPTS:-60}" 60)"
               sleep_seconds="$(parse_positive_int "${MIDPOINT_DB_WAIT_SLEEP_SECONDS:-5}" 5)"
@@ -124,12 +124,12 @@ spec:
                 name: midpoint-env
           env:
             - name: MIDPOINT_DB_USERNAME_FILE
-              value: /var/run/secrets/midpoint-db-app/username
+              value: /var/run/secrets/iam-db-app/username
             - name: MIDPOINT_DB_PASSWORD_FILE
-              value: /var/run/secrets/midpoint-db-app/password
+              value: /var/run/secrets/iam-db-app/password
           volumeMounts:
-            - name: midpoint-db-credentials
-              mountPath: /var/run/secrets/midpoint-db-app
+            - name: iam-db-credentials
+              mountPath: /var/run/secrets/iam-db-app
               readOnly: true
         - name: midpoint-db-init
           image: evolveum/midpoint:4.9
@@ -219,8 +219,8 @@ spec:
                 exit 1
               fi
 
-              db_username_file="${MIDPOINT_DB_USERNAME_FILE:-/var/run/secrets/midpoint-db-app/username}"
-              db_password_file="${MIDPOINT_DB_PASSWORD_FILE:-/var/run/secrets/midpoint-db-app/password}"
+              db_username_file="${MIDPOINT_DB_USERNAME_FILE:-/var/run/secrets/iam-db-app/username}"
+              db_password_file="${MIDPOINT_DB_PASSWORD_FILE:-/var/run/secrets/iam-db-app/password}"
 
               db_username="$(read_secret_file "${db_username_file}" 'repository username')"
               db_password="$(read_secret_file "${db_password_file}" 'repository password')"
@@ -491,17 +491,17 @@ spec:
             - name: MIDPOINT_JDBC_URL
               value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/midpoint?sslmode=require
             - name: MIDPOINT_DB_USERNAME_FILE
-              value: /var/run/secrets/midpoint-db-app/username
+              value: /var/run/secrets/iam-db-app/username
             - name: MIDPOINT_DB_PASSWORD_FILE
-              value: /var/run/secrets/midpoint-db-app/password
+              value: /var/run/secrets/iam-db-app/password
           volumeMounts:
             - name: midpoint-home
               mountPath: /opt/midpoint/var
             - name: config-xml
               mountPath: /config-template
               readOnly: true
-            - name: midpoint-db-credentials
-              mountPath: /var/run/secrets/midpoint-db-app
+            - name: iam-db-credentials
+              mountPath: /var/run/secrets/iam-db-app
               readOnly: true
       containers:
         - name: midpoint
@@ -546,6 +546,20 @@ spec:
                   name: midpoint-admin
                   key: username
                   optional: true
+            - name: MP_SET_midpoint_repository_database
+              value: postgresql
+            - name: MP_SET_midpoint_repository_jdbcUrl
+              value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/midpoint?sslmode=require
+            - name: MP_SET_midpoint_repository_jdbcUsername
+              valueFrom:
+                secretKeyRef:
+                  name: iam-db-app
+                  key: username
+            - name: MP_SET_midpoint_repository_jdbcPassword
+              valueFrom:
+                secretKeyRef:
+                  name: iam-db-app
+                  key: password
             - name: MP_MEM_INIT
               value: "768M"
             - name: MP_MEM_MAX
@@ -555,6 +569,9 @@ spec:
               mountPath: /opt/midpoint/var
             - name: midpoint-admin-secret
               mountPath: /var/run/secrets/midpoint-admin
+              readOnly: true
+            - name: iam-db-credentials
+              mountPath: /var/run/secrets/iam-db-app
               readOnly: true
           resources:
             requests:
@@ -569,9 +586,9 @@ spec:
         - name: config-xml
           configMap:
             name: midpoint-config
-        - name: midpoint-db-credentials
+        - name: iam-db-credentials
           secret:
-            secretName: midpoint-db-app
+            secretName: iam-db-app
         - name: midpoint-admin-secret
           secret:
             secretName: midpoint-admin
