@@ -22,7 +22,7 @@ spec:
     enabled:
       - token-exchange
   hostname:
-    hostname: kc.98.64.116.233.nip.io
+    hostname: kc.132.164.46.57.nip.io
     strict: false
     strictBackchannel: false
   proxy:
