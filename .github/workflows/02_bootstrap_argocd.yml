@@ -151,7 +151,7 @@ jobs:
             echo "Database credentials are required (POSTGRES_SUPERUSER_PASSWORD, KEYCLOAK_DB_PASSWORD, MIDPOINT_DB_PASSWORD)."
             exit 1
           fi
-          for secret in cnpg-superuser keycloak-db-app midpoint-db-app; do
+          for secret in cnpg-superuser keycloak-db-app iam-db-app midpoint-db-app; do
             kubectl -n "${NAMESPACE_IAM}" delete secret "${secret}" --ignore-not-found >/dev/null 2>&1 || true
           done
           kubectl -n "${NAMESPACE_IAM}" create secret generic cnpg-superuser \
@@ -159,9 +159,9 @@ jobs:
             --from-literal=username=postgres \
             --from-literal=password="${POSTGRES_SUPERUSER_PASSWORD}" \
             --dry-run=client -o yaml | kubectl apply -f -
-          kubectl -n "${NAMESPACE_IAM}" create secret generic keycloak-db-app \
+          kubectl -n "${NAMESPACE_IAM}" create secret generic iam-db-app \
             --type=Opaque \
-            --from-literal=username=keycloak \
+            --from-literal=username=app \
             --from-literal=password="${KEYCLOAK_DB_PASSWORD}" \
             --dry-run=client -o yaml | kubectl apply -f -
           kubectl -n "${NAMESPACE_IAM}" create secret generic midpoint-db-app \
