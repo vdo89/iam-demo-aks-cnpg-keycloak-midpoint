@@ -29,7 +29,7 @@ spec:
     port: 5432
     database: keycloak
     schema: public
-    urlProperties: "?sslmode=require"
+    url: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/keycloak?sslmode=require
     usernameSecret:
       name: keycloak-db-app
       key: username
