@@ -72,6 +72,8 @@ When the IAM application reports `one or more synchronization tasks are not vali
 
 Run the workflow **“04 - Configure demo hosts”** after the bootstrap finishes. The job calls [`scripts/configure_demo_hosts.py`](scripts/configure_demo_hosts.py) to discover the ingress IP, updates [`gitops/apps/iam/params.env`](gitops/apps/iam/params.env) with fresh `nip.io` hostnames, commits the change and prints the URLs. Argo CD is exposed through an HTTP ingress (TLS terminates at the `argocd-server` service), so the generated Argo link intentionally uses `http://`.
 
+To prevent drift, the workflow now also runs every night with the default AKS resource group and cluster name (or the values configured in repository variables `AKS_RESOURCE_GROUP`/`AKS_NAME`). Each scheduled run re-applies the host discovery script and commits any changes automatically, so stale ingress hostnames self-heal without manual intervention.
+
 ## 4. Day-two tips
 
 - The GitOps tree lives under `gitops/`. Update manifests, commit, and let Argo CD reconcile the cluster. `kubectl apply` is only needed for the initial bootstrap.

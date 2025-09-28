@@ -1,6 +1,8 @@
 name: "03 - Configure demo hosts (nip.io) & Ingresses"
 
 on:
+  schedule:
+    - cron: '15 3 * * *'
   workflow_dispatch:
     inputs:
       RESOURCE_GROUP:
@@ -19,6 +21,9 @@ permissions:
 jobs:
   configure:
     runs-on: ubuntu-latest
+    env:
+      RESOURCE_GROUP: ${{ github.event.inputs.RESOURCE_GROUP || vars.AKS_RESOURCE_GROUP || 'rwsdemo-rg' }}
+      AKS_NAME: ${{ github.event.inputs.AKS_NAME || vars.AKS_NAME || 'rwsdemo-aks' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -32,8 +37,8 @@ jobs:
       - name: Get AKS credentials
         uses: azure/aks-set-context@v4
         with:
-          resource-group: ${{ inputs.RESOURCE_GROUP }}
-          cluster-name: ${{ inputs.AKS_NAME }}
+          resource-group: ${{ env.RESOURCE_GROUP }}
+          cluster-name: ${{ env.AKS_NAME }}
 
       - name: Configure demo ingress hosts
         id: configure
