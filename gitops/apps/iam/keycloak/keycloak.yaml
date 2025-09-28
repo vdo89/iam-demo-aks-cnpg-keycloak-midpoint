@@ -25,20 +25,16 @@ spec:
       - token-exchange
   db:
     vendor: postgres
-    host: iam-db-rw.iam.svc.cluster.local
-    port: 5432
-    database: keycloak
-    schema: public
     url: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/keycloak?sslmode=require
+    schema: public
     usernameSecret:
       name: keycloak-db-app
       key: username
     passwordSecret:
       name: keycloak-db-app
       key: password
-  http:
-    httpEnabled: true
-  hostname:
+    host: iam-db-rw.iam.svc.cluster.local
+    port: 5432
     hostname: kc.127.0.0.1.nip.io
     strict: false
     strictBackchannel: false
