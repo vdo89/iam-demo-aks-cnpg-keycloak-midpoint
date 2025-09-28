@@ -16,8 +16,6 @@ spec:
       value: "true"
     - name: http-management-host
       value: "0.0.0.0"
-    - name: proxy-headers
-      value: xforwarded
     - name: cache
       value: local
   features:
@@ -27,6 +25,8 @@ spec:
     hostname: kc.98.64.116.233.nip.io
     strict: false
     strictBackchannel: false
+  proxy:
+    headers: xforwarded
   http:
     httpEnabled: true
 
