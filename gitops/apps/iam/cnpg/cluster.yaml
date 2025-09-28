@@ -53,4 +53,3 @@ spec:
         connectionLimit: -1
         passwordSecret:
           name: midpoint-db-app
-          key: password
