@@ -51,18 +51,18 @@ For more examples of response payloads, consult the [Keycloak health documentati
 
 ## Apply the fix
 
-* **Database connectivity:** Verify the `keycloak-db-app` secret values match the CloudNativePG database user. Reset the password via the CNPG management tooling and update the secret if necessary. To confirm the mismatch quickly:
+* **Database connectivity:** Verify the CloudNativePG generated `iam-db-app` secret contains a working password for the `app` user. Keycloak now consumes that secret directly, so a mismatch indicates the database user was changed manually. To confirm the credentials quickly:
   1. Decode the credentials that Keycloak consumes:
      ```bash
-     kubectl -n iam get secret keycloak-db-app \
+     kubectl -n iam get secret iam-db-app \
        -o jsonpath='{.data.username}' | base64 -d; echo
-     kubectl -n iam get secret keycloak-db-app \
+     kubectl -n iam get secret iam-db-app \
        -o jsonpath='{.data.password}' | base64 -d; echo
      ```
   2. Test those credentials against the CloudNativePG primary:
      ```bash
-     USER=$(kubectl -n iam get secret keycloak-db-app -o jsonpath='{.data.username}' | base64 -d)
-     PASS=$(kubectl -n iam get secret keycloak-db-app -o jsonpath='{.data.password}' | base64 -d)
+     USER=$(kubectl -n iam get secret iam-db-app -o jsonpath='{.data.username}' | base64 -d)
+     PASS=$(kubectl -n iam get secret iam-db-app -o jsonpath='{.data.password}' | base64 -d)
 
      kubectl -n iam run -it --rm pgclient \
        --image=ghcr.io/cloudnative-pg/postgresql:16.4 -- \

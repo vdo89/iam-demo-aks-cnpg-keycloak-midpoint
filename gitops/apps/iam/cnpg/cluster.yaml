@@ -12,12 +12,10 @@ spec:
   bootstrap:
     initdb:
       database: keycloak
-      owner: keycloak
+      owner: app
       encoding: UTF8
       localeCollate: C
       localeCType: C
-      secret:
-        name: keycloak-db-app
 
   superuserSecret:
     name: cnpg-superuser
@@ -48,14 +46,6 @@ spec:
 
   managed:
     roles:
-      - name: keycloak
-        ensure: present
-        login: true
-        inherit: true
-        connectionLimit: -1
-        passwordSecret:
-          name: keycloak-db-app
-          key: password
       - name: midpoint
         ensure: present
         login: true
