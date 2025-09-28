@@ -195,7 +195,11 @@ spec:
                   return 1
                 fi
 
-                cat "${file_path}"
+                # Kubernetes secrets created via `stringData` and `literals` often
+                # include a trailing newline when projected to files. Trim common
+                # line terminators so database authentication does not fail because
+                # of invisible whitespace.
+                tr -d '\r\n' <"${file_path}"
               }
 
               parse_positive_int() {
