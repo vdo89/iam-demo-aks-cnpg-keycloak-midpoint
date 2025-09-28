@@ -42,7 +42,6 @@ replacements:
           name: rws-keycloak
         fieldPaths:
           - spec.hostname.hostname
-          - spec.ingress.hostname
   - source:
       kind: ConfigMap
       name: iam-ingress-settings
