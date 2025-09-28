@@ -5,6 +5,10 @@ metadata:
   namespace: iam
 spec:
   replicas: 1
+  # MidPoint's first boot performs a sizeable schema bootstrap and application
+  # warm-up. Allow up to 30 minutes for the rollout before Kubernetes considers
+  # the deployment failed so that Argo CD does not flap during initial syncs.
+  progressDeadlineSeconds: 1800
   selector:
     matchLabels: { app: midpoint }
   template:
@@ -498,6 +502,14 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+          startupProbe:
+            # MidPoint needs several minutes on cold starts while it imports
+            # bundles and populates the repository.  A TCP probe is sufficient
+            # to confirm the embedded web server is answering requests.
+            tcpSocket:
+              port: http
+            failureThreshold: 90 # ~15 minutes @ 10s period
+            periodSeconds: 10
           readinessProbe:
             # The midPoint UI login endpoint can take longer than the probe timeout to
             # answer while the application finishes bootstrapping, which was causing
