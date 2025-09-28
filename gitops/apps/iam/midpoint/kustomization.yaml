@@ -23,6 +23,7 @@ configMapGenerator:
       - MIDPOINT_DB_HOST=iam-db-rw.iam.svc.cluster.local
       - MIDPOINT_DB_PORT=5432
       - MIDPOINT_DB_NAME=midpoint
+      - MIDPOINT_DB_SSLMODE=require
       - MIDPOINT_DB_WAIT_MAX_ATTEMPTS=60
       - MIDPOINT_DB_WAIT_SLEEP_SECONDS=5
   - name: midpoint-objects
