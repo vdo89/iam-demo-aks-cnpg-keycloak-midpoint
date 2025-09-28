@@ -17,6 +17,10 @@ spec:
           env:
             - name: MIDPOINT_URL
               value: "http://midpoint:8080/midpoint"
+            - name: MIDPOINT_WAIT_MAX_ATTEMPTS
+              value: "90"
+            - name: MIDPOINT_WAIT_SLEEP_SECONDS
+              value: "10"
           volumeMounts:
             - name: objs
               mountPath: /objects
