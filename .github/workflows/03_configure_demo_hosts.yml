@@ -1,8 +1,6 @@
 name: "03 - Configure demo hosts (nip.io) & Ingresses"
 
 on:
-  schedule:
-    - cron: '15 3 * * *'
   workflow_dispatch:
     inputs:
       RESOURCE_GROUP:
