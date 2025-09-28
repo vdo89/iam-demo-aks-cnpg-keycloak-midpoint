@@ -34,12 +34,8 @@ spec:
     vendor: postgres
     url: "jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/keycloak?sslmode=require"
     schema: public
-    usernameSecret:
-      name: keycloak-db-app
-      key: username
-    passwordSecret:
-      name: keycloak-db-app
-      key: password
+    usernameSecret: { name: keycloak-db-app, key: username }
+    passwordSecret: { name: keycloak-db-app, key: password }
 
   ingress:
     enabled: true
