@@ -69,6 +69,8 @@ controller logs, inspect the `/health/ready` payload and resolve the underlying 
 
 When the IAM application reports `one or more synchronization tasks are not valid due to application controller sync timeout`, Argo CD is trying to apply Keycloak custom resources before the operator finishes installing its CRDs. Longer timeouts do not help because the resources remain invalid until the CRDs appear. Follow the runbook in [`docs/troubleshooting/iam-sync-timeout.md`](docs/troubleshooting/iam-sync-timeout.md) to gather the relevant controller state and apply the sync-wave fix so the Keycloak operator finishes before the IAM stack reconciles.
 
+If the Argo CD UI immediately returns you to the login page even with the correct `admin` password, apply the workaround in [`docs/troubleshooting/argocd-login-loop.md`](docs/troubleshooting/argocd-login-loop.md). Argo CD 3.1 marks its session cookie as `Secure` by default; the patch teaches the bootstrap overlay to run the server in insecure mode so browsers keep the session when you access it over HTTP.
+
 ### Troubleshooting: ingress-nginx webhook TLS errors
 
 If the platform-addons application fails with `failed calling webhook "validate.nginx.ingress.kubernetes.io"` and the error mentions `x509: certificate signed by unknown authority`, the ingress-nginx admission webhook is serving a certificate that the Kubernetes API server does not trust yet. Cert-manager now manages the webhook certificates for us; ensure the platform-addons application has synced the updated ingress-nginx values and follow the steps in [`docs/troubleshooting/ingress-nginx-webhook-cert.md`](docs/troubleshooting/ingress-nginx-webhook-cert.md) to confirm the Certificate resource is ready.
