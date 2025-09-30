@@ -47,6 +47,7 @@ def test_main_updates_env_files(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("GITHUB_OUTPUT", str(out_file))
 
     monkeypatch.setattr(cd, "resolve_ingress_ip", lambda *args, **kwargs: "203.0.113.10")
+    monkeypatch.setattr(cd, "ensure_ingress_accessible", lambda *args, **kwargs: None)
 
     args = argparse.Namespace(
         params_file=params,
@@ -89,3 +90,25 @@ def test_resolve_ingress_ip_requires_address(monkeypatch):
     monkeypatch.setattr(cd, "run_kubectl_jsonpath", lambda *args, **kwargs: "")
     with pytest.raises(RuntimeError):
         cd.resolve_ingress_ip(cd.DEFAULT_SERVICE, None, None)
+
+
+def test_ensure_ingress_accessible_rejects_private_ip():
+    with pytest.raises(RuntimeError) as excinfo:
+        cd.ensure_ingress_accessible("10.0.0.4")
+    assert "non-public IP" in str(excinfo.value)
+
+
+def test_ensure_ingress_accessible_requires_open_port(monkeypatch):
+    attempts = []
+
+    def fake_create_connection(address, timeout):
+        attempts.append((address, timeout))
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(cd.socket, "create_connection", fake_create_connection)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        cd.ensure_ingress_accessible("1.2.3.4")
+
+    assert "Unable to reach" in str(excinfo.value)
+    assert attempts
