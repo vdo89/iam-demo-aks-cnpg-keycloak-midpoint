@@ -29,6 +29,11 @@ replacements:
           - spec.ingress.ingressClassName
       - select:
           kind: Ingress
+          name: keycloak
+        fieldPaths:
+          - spec.ingressClassName
+      - select:
+          kind: Ingress
           name: midpoint
         fieldPaths:
           - spec.ingressClassName
@@ -42,6 +47,11 @@ replacements:
           name: rws-keycloak
         fieldPaths:
           - spec.hostname.hostname
+      - select:
+          kind: Ingress
+          name: keycloak
+        fieldPaths:
+          - spec.rules.0.host
   - source:
       kind: ConfigMap
       name: iam-ingress-settings
