@@ -26,7 +26,7 @@ replacements:
           kind: Keycloak
           name: rws-keycloak
         fieldPaths:
-          - spec.ingress.className
+          - spec.ingress.ingressClassName
       - select:
           kind: Ingress
           name: midpoint
