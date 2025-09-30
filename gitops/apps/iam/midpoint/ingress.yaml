@@ -10,7 +10,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: mp.20.76.98.154.nip.io
+    - host: mp.132.164.56.132.nip.io
       http:
         paths:
           - path: /
