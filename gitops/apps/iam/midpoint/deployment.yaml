@@ -57,7 +57,7 @@ spec:
                 fi
               }
 
-              host="${MIDPOINT_DB_HOST:-iam-db-rw}"
+              host="${MIDPOINT_DB_HOST:-iam-db-rw.iam.svc.cluster.local}"
               port="${MIDPOINT_DB_PORT:-5432}"
               database="${MIDPOINT_DB_NAME:-midpoint}"
               sslmode="${MIDPOINT_DB_SSLMODE:-require}"
