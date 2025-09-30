@@ -54,7 +54,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/configure_demo_hosts.py --params-file gitops/apps/iam/params.env
+          python3 scripts/configure_demo_hosts.py \
+            --params-file gitops/apps/iam/params.env \
+            --skip-reachability-check
 
       - name: Wait for ingress endpoints to become reachable
         shell: bash
