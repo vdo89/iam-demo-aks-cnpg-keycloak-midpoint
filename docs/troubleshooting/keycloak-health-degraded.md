@@ -66,7 +66,7 @@ For more examples of response payloads, consult the [Keycloak health documentati
 
      kubectl -n iam run -it --rm pgclient \
        --image=ghcr.io/cloudnative-pg/postgresql:16.4 -- \
-      bash -lc "export PGPASSWORD='$PASS'; psql -h iam-db-rw -U '$USER' -d keycloak -c '\\conninfo'"
+      bash -lc "export PGPASSWORD='$PASS'; psql -h iam-db-rw.iam.svc.cluster.local -U '$USER' -d keycloak -c '\\conninfo'"
      ```
   3. If the command returns `\conninfo` without an error, the credentials are correct; otherwise update either the database user or the secret so that they match.
 * **TLS enforcement errors:** If the readiness payload or Keycloak logs mention `SSL off` or a missing `pg_hba.conf` entry, confirm the `Keycloak` manifest still declares `spec.db.urlProperties: "?sslmode=require"`. The operator concatenates that value onto the JDBC URL; omitting the leading `?` produces a database name such as `keycloaksslmode=require`, which fails with `FATAL: database "keycloaksslmode=require" does not exist`. Keeping the delimiter ensures every connection negotiates TLS when CloudNativePG requires encryption.
