@@ -30,6 +30,17 @@ def test_main_updates_env_files(monkeypatch, tmp_path: Path):
     params.write_text("ingressClass=test\n", encoding="utf-8")
 
     bootstrap_params = tmp_path / "bootstrap_params.env"
+    manifest = tmp_path / "ingress.yaml"
+    manifest.write_text(
+        "\n".join(
+            [
+                "hostname: kc.198.51.100.7.nip.io",
+                "- host: mp.198.51.100.7.nip.io",
+                "  some: argocd.198.51.100.7.nip.io",
+            ]
+        ),
+        encoding="utf-8",
+    )
     env_file = tmp_path / "github_env"
     out_file = tmp_path / "github_output"
     monkeypatch.setenv("GITHUB_ENV", str(env_file))
@@ -40,6 +51,7 @@ def test_main_updates_env_files(monkeypatch, tmp_path: Path):
     args = argparse.Namespace(
         params_file=params,
         extra_params_file=[bootstrap_params],
+        manifest_file=[manifest],
         ingress_service=cd.DEFAULT_SERVICE,
         ingress_ip=None,
         ingress_hostname=None,
@@ -54,6 +66,11 @@ def test_main_updates_env_files(monkeypatch, tmp_path: Path):
     assert "keycloakHost=kc.203.0.113.10.nip.io" in saved
     bootstrap_text = bootstrap_params.read_text(encoding="utf-8")
     assert "argocdHost=argocd.203.0.113.10.nip.io" in bootstrap_text
+
+    manifest_text = manifest.read_text(encoding="utf-8")
+    assert "hostname: kc.203.0.113.10.nip.io" in manifest_text
+    assert "- host: mp.203.0.113.10.nip.io" in manifest_text
+    assert "some: argocd.203.0.113.10.nip.io" in manifest_text
 
     env_contents = env_file.read_text(encoding="utf-8")
     assert env_contents.strip().endswith("ARGOCD_HOST=argocd.203.0.113.10.nip.io")

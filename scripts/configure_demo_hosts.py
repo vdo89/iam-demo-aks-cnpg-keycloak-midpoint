@@ -5,15 +5,21 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import os
+import re
 import socket
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 DEFAULT_PARAMS_FILE = Path("gitops/apps/iam/params.env")
 DEFAULT_EXTRA_PARAMS_FILES = [Path("gitops/clusters/aks/bootstrap/params.env")]
 DEFAULT_SERVICE = "ingress-nginx/ingress-nginx-controller"
+DEFAULT_MANIFEST_FILES = [
+    Path("gitops/apps/iam/keycloak/keycloak.yaml"),
+    Path("gitops/apps/iam/midpoint/ingress.yaml"),
+    Path("gitops/clusters/aks/bootstrap/argocd-ingress.yaml"),
+]
 
 
 @dataclass
@@ -145,6 +151,28 @@ def write_params(params_file: Path, ingress_class: str, hosts: Hosts) -> None:
     )
 
 
+def update_manifest_hosts(manifest_files: Iterable[Path], hosts: Hosts) -> None:
+    """Update nip.io host references within manifest files."""
+
+    replacements = [
+        (re.compile(r"kc\.\d+\.\d+\.\d+\.\d+\.nip\.io"), hosts.keycloak),
+        (re.compile(r"mp\.\d+\.\d+\.\d+\.\d+\.nip\.io"), hosts.midpoint),
+        (re.compile(r"argocd\.\d+\.\d+\.\d+\.\d+\.nip\.io"), hosts.argocd),
+    ]
+
+    for manifest in manifest_files:
+        if not manifest:
+            continue
+        if not manifest.exists():
+            continue
+        original_content = manifest.read_text(encoding="utf-8")
+        updated_content = original_content
+        for pattern, replacement in replacements:
+            updated_content = pattern.sub(replacement, updated_content)
+        if updated_content != original_content:
+            manifest.write_text(updated_content, encoding="utf-8")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -161,6 +189,16 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Additional params.env files to keep in sync with --params-file. "
             "Specify multiple times to update several files."
+        ),
+    )
+    parser.add_argument(
+        "--manifest-file",
+        action="append",
+        type=Path,
+        default=[*DEFAULT_MANIFEST_FILES],
+        help=(
+            "Manifest files that contain nip.io hostnames to update alongside params files. "
+            "Specify multiple times to manage additional manifests."
         ),
     )
     parser.add_argument(
@@ -199,6 +237,9 @@ def main() -> int:
         if extra_file.resolve() == args.params_file.resolve():
             continue
         write_params(extra_file, ingress_class, hosts)
+
+    manifest_files = getattr(args, "manifest_file", DEFAULT_MANIFEST_FILES)
+    update_manifest_hosts(manifest_files, hosts)
 
     github_env = os.environ.get("GITHUB_ENV")
     if github_env:
