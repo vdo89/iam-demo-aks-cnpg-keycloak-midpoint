@@ -38,6 +38,17 @@ jobs:
           resource-group: ${{ env.RESOURCE_GROUP }}
           cluster-name: ${{ env.AKS_NAME }}
 
+      - name: Ensure ingress load balancer is ready
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/ensure_ingress_load_balancer.py \
+            --ingress-service ingress-nginx/ingress-nginx-controller \
+            --resource-group "${RESOURCE_GROUP}" \
+            --aks-name "${AKS_NAME}" \
+            --timeout "${INGRESS_LB_TIMEOUT:-900}" \
+            --interval "${INGRESS_LB_INTERVAL:-15}"
+
       - name: Configure demo ingress hosts
         id: configure
         shell: bash
