@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import ipaddress
 import os
 import re
@@ -123,6 +124,41 @@ def build_hosts(ip: str) -> Hosts:
     )
 
 
+def ensure_ingress_accessible(ip: str, *, ports: Iterable[int] = (80, 443)) -> None:
+    """Validate the ingress endpoint resolves to a reachable public address."""
+
+    ip_obj = ipaddress.ip_address(ip)
+    if (
+        ip_obj.is_private
+        or ip_obj.is_loopback
+        or ip_obj.is_link_local
+        or ip_obj.is_multicast
+        or ip_obj.is_unspecified
+    ):
+        raise RuntimeError(
+            "Ingress controller resolved to a non-public IP address"
+            f" ({ip_obj}). Ensure the service publishes an external address or"
+            " override it with --ingress-ip/--ingress-hostname."
+        )
+
+    connection_errors: dict[int, Exception] = {}
+    for port in ports:
+        try:
+            with contextlib.closing(
+                socket.create_connection((str(ip_obj), port), timeout=5)
+            ):
+                return
+        except OSError as exc:
+            connection_errors[port] = exc
+
+    joined_errors = "; ".join(f"{port}/tcp: {err}" for port, err in connection_errors.items())
+    raise RuntimeError(
+        "Unable to reach the ingress load balancer at"
+        f" {ip_obj}; attempted ports {', '.join(str(p) for p in ports)}."
+        f" Connection errors: {joined_errors}."
+    )
+
+
 def read_ingress_class(params_file: Path) -> Optional[str]:
     if not params_file.exists():
         return None
@@ -222,6 +258,7 @@ def main() -> int:
     ingress_class = args.ingress_class or read_ingress_class(args.params_file) or "nginx"
 
     ip_value = resolve_ingress_ip(args.ingress_service, args.ingress_ip, args.ingress_hostname)
+    ensure_ingress_accessible(ip_value)
     hosts = build_hosts(ip_value)
 
     if args.print_only:
