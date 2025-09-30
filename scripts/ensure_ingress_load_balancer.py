@@ -11,6 +11,14 @@ import sys
 import time
 from dataclasses import dataclass
 from typing import Iterable, Optional
+from pathlib import Path
+
+if __package__ in (None, ""):
+    # Allow running the script directly via ``python scripts/<name>.py`` by ensuring the
+    # repository root (which contains the ``scripts`` package) is on ``sys.path``.
+    repo_root = Path(__file__).resolve().parent.parent
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
 
 from scripts.configure_demo_hosts import DEFAULT_SERVICE, KubectlError, run_kubectl_jsonpath
 
