@@ -151,3 +151,35 @@ def test_midpoint_env_requires_tls():
     assert midpoint_env is not None, "midpoint-env configMap generator must be defined"
     literals = midpoint_env.get("literals", [])
     assert "MIDPOINT_DB_SSLMODE=require" in literals
+
+
+def test_cnpg_cluster_handles_missing_crds_and_roles():
+    cluster = load_yaml(REPO_ROOT / "gitops/apps/iam/cnpg/cluster.yaml")
+    annotations = cluster["metadata"].get("annotations", {})
+    assert (
+        annotations.get("argocd.argoproj.io/sync-options")
+        == "SkipDryRunOnMissingResource=true"
+    ), "Cluster must skip dry-run until CNPG CRDs register"
+
+    roles = cluster["spec"].get("managed", {}).get("roles", [])
+
+    def find_role(name: str):
+        return next((role for role in roles if role.get("name") == name), None)
+
+    app_role = find_role("app")
+    assert app_role is not None, "app role should be managed for Keycloak"
+    assert app_role.get("passwordSecret", {}).get("name") == "iam-db-app"
+
+    midpoint_role = find_role("midpoint")
+    assert midpoint_role is not None, "midpoint role should remain managed"
+    assert midpoint_role.get("passwordSecret", {}).get("name") == "midpoint-db-app"
+
+
+def test_cnpg_databases_skip_dry_run():
+    for manifest_name in ("database-keycloak.yaml", "database-midpoint.yaml"):
+        manifest = load_yaml(REPO_ROOT / "gitops/apps/iam/cnpg" / manifest_name)
+        annotations = manifest["metadata"].get("annotations", {})
+        assert (
+            annotations.get("argocd.argoproj.io/sync-options")
+            == "SkipDryRunOnMissingResource=true"
+        ), f"{manifest_name} must skip dry-run until CNPG CRDs register"
