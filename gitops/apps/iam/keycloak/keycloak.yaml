@@ -36,7 +36,7 @@ spec:
 
   db:
     vendor: postgres
-    url: "jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/keycloak?sslmode=require"
+    url: "jdbc:postgresql://iam-db-rw:5432/keycloak?sslmode=require"
     schema: public
     usernameSecret: { name: iam-db-app, key: username }
     passwordSecret: { name: iam-db-app, key: password }

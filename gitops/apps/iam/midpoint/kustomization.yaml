@@ -20,7 +20,7 @@ configMapGenerator:
       - MP_UNSET_midpoint_repository_upgradeableSchemaAction=1
       - MP_UNSET_midpoint_administrator_initialPassword_FILE=1
       - MP_UNSET_midpoint_administrator_userId_FILE=1
-      - MIDPOINT_DB_HOST=iam-db-rw.iam.svc.cluster.local
+      - MIDPOINT_DB_HOST=iam-db-rw
       - MIDPOINT_DB_PORT=5432
       - MIDPOINT_DB_NAME=midpoint
       - MIDPOINT_DB_SSLMODE=require
