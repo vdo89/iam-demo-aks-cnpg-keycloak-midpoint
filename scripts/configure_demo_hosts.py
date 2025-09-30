@@ -22,6 +22,7 @@ DEFAULT_MANIFEST_FILES = [
     Path("gitops/apps/iam/midpoint/ingress.yaml"),
     Path("gitops/clusters/aks/bootstrap/argocd-ingress.yaml"),
 ]
+DEFAULT_VALIDATION_PATHS = [Path("gitops")]
 
 
 @dataclass
@@ -221,6 +222,52 @@ def update_manifest_hosts(manifest_files: Iterable[Path], hosts: Hosts) -> None:
             manifest.write_text(updated_content, encoding="utf-8")
 
 
+def discover_stale_hosts(paths: Iterable[Path], expected_ip: str) -> list[tuple[Path, str]]:
+    """Return references to nip.io hosts that do not match the expected IP."""
+
+    host_pattern = re.compile(
+        r"\b(?P<service>kc|mp|argocd)\."
+        r"(?P<ip>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\.nip\.io\b"
+    )
+    stale: list[tuple[Path, str]] = []
+
+    for raw_path in paths:
+        if not raw_path:
+            continue
+        path = raw_path.resolve()
+        if path.is_dir():
+            candidates = (p for p in path.rglob("*") if p.is_file())
+        elif path.is_file():
+            candidates = [path]
+        else:
+            continue
+
+        for candidate in candidates:
+            try:
+                contents = candidate.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                contents = candidate.read_text(encoding="utf-8", errors="ignore")
+            for match in host_pattern.finditer(contents):
+                if match.group("ip") != expected_ip:
+                    stale.append((candidate, match.group(0)))
+
+    return stale
+
+
+def ensure_hosts_rotated(paths: Iterable[Path], expected_ip: str) -> None:
+    """Fail if any managed nip.io hosts still reference an outdated IP."""
+
+    stale = discover_stale_hosts(paths, expected_ip)
+    if stale:
+        formatted = "\n".join(f"  - {ref} (in {path})" for path, ref in stale)
+        raise RuntimeError(
+            "Found stale nip.io hostnames that do not match the ingress IP "
+            f"{expected_ip}.\n{formatted}\n"
+            "Update the manifests or extend --manifest-file/--validation-path"
+            " arguments so scripts/configure_demo_hosts.py can manage them."
+        )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -247,6 +294,16 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Manifest files that contain nip.io hostnames to update alongside params files. "
             "Specify multiple times to manage additional manifests."
+        ),
+    )
+    parser.add_argument(
+        "--validation-path",
+        action="append",
+        type=Path,
+        default=[*DEFAULT_VALIDATION_PATHS],
+        help=(
+            "Files or directories that must not contain stale nip.io hostnames."
+            " Specify multiple times to scan additional paths."
         ),
     )
     parser.add_argument(
@@ -301,6 +358,9 @@ def main() -> int:
 
     manifest_files = getattr(args, "manifest_file", DEFAULT_MANIFEST_FILES)
     update_manifest_hosts(manifest_files, hosts)
+
+    validation_paths = getattr(args, "validation_path", DEFAULT_VALIDATION_PATHS)
+    ensure_hosts_rotated(validation_paths, ip_value)
 
     github_env = os.environ.get("GITHUB_ENV")
     if github_env:
