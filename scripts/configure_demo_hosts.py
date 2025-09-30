@@ -276,7 +276,7 @@ def main() -> int:
     ip_value = resolve_ingress_ip(args.ingress_service, args.ingress_ip, args.ingress_hostname)
     ensure_ingress_accessible(
         ip_value,
-        raise_on_error=not args.skip_reachability_check,
+        raise_on_error=not getattr(args, "skip_reachability_check", False),
     )
     hosts = build_hosts(ip_value)
 
