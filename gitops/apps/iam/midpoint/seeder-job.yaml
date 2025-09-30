@@ -67,7 +67,7 @@ spec:
               ready=0
               while [ "${attempt}" -le "${wait_attempts}" ]; do
                 http_code="$(curl -sS -o /dev/null -u "$auth" -w '%{http_code}' \
-                  "$MP_URL/ws/rest/version" || true)"
+                  "$MP_URL/ws/rest/version" || echo '000')"
 
                 case "${http_code}" in
                 200)
@@ -75,14 +75,28 @@ spec:
                   ready=1
                   break
                   ;;
+                401|403)
+                  echo "ERROR: received HTTP ${http_code} from midPoint REST API; administrator credentials are invalid" >&2
+                  echo "       Check the midpoint-admin secret before re-running the job" >&2
+                  exit 1
+                  ;;
+                404)
+                  echo "ERROR: midPoint REST endpoint ${MP_URL}/ws/rest/version returned HTTP ${http_code}" >&2
+                  echo "       Verify the MIDPOINT_URL value and that the service is exposed" >&2
+                  exit 1
+                  ;;
+                000)
+                  echo "midPoint endpoint not reachable [${attempt}/${wait_attempts}]"
+                  ;;
                 *)
                   echo "midPoint not ready yet (HTTP ${http_code}) [${attempt}/${wait_attempts}]"
-                  attempt=$((attempt + 1))
-                  if [ "${attempt}" -le "${wait_attempts}" ]; then
-                    sleep "${wait_sleep}"
-                  fi
                   ;;
                 esac
+
+                attempt=$((attempt + 1))
+                if [ "${attempt}" -le "${wait_attempts}" ]; then
+                  sleep "${wait_sleep}"
+                fi
               done
 
               if [ "${ready}" -ne 1 ]; then

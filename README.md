@@ -69,6 +69,10 @@ controller logs, inspect the `/health/ready` payload and resolve the underlying 
 
 When the IAM application reports `one or more synchronization tasks are not valid due to application controller sync timeout`, Argo CD is trying to apply Keycloak custom resources before the operator finishes installing its CRDs. Longer timeouts do not help because the resources remain invalid until the CRDs appear. Follow the runbook in [`docs/troubleshooting/iam-sync-timeout.md`](docs/troubleshooting/iam-sync-timeout.md) to gather the relevant controller state and apply the sync-wave fix so the Keycloak operator finishes before the IAM stack reconciles.
 
+### Troubleshooting: IAM application waiting for resources
+
+If the IAM application stalls with a message like `waiting for resources`, the midPoint PostSync seeder job is still running. Inspect the seeder job and midPoint pods with [`scripts/collect_midpoint_diagnostics.sh`](scripts/collect_midpoint_diagnostics.sh) and follow [`docs/troubleshooting/iam-waiting-for-resources.md`](docs/troubleshooting/iam-waiting-for-resources.md) to resolve the underlying midPoint readiness or credential issue.
+
 If the Argo CD UI immediately returns you to the login page even with the correct `admin` password, apply the workaround in [`docs/troubleshooting/argocd-login-loop.md`](docs/troubleshooting/argocd-login-loop.md). Argo CD 3.1 marks its session cookie as `Secure` by default; the patch teaches the bootstrap overlay to run the server in insecure mode so browsers keep the session when you access it over HTTP.
 
 ### Troubleshooting: ingress-nginx webhook TLS errors
