@@ -53,11 +53,13 @@ def test_main_updates_env_files(monkeypatch, tmp_path: Path):
         params_file=params,
         extra_params_file=[bootstrap_params],
         manifest_file=[manifest],
+        validation_path=[tmp_path],
         ingress_service=cd.DEFAULT_SERVICE,
         ingress_ip=None,
         ingress_hostname=None,
         ingress_class=None,
         print_only=False,
+        skip_reachability_check=False,
     )
     monkeypatch.setattr(cd, "parse_args", lambda: args)
 
@@ -80,6 +82,27 @@ def test_main_updates_env_files(monkeypatch, tmp_path: Path):
     output_contents = out_file.read_text(encoding="utf-8")
     assert "midpoint_url=http://mp.203.0.113.10.nip.io/midpoint" in output_contents
     assert "argocd_url=http://argocd.203.0.113.10.nip.io" in output_contents
+
+
+def test_discover_stale_hosts(tmp_path: Path):
+    tracked = tmp_path / "manifests"
+    tracked.mkdir()
+    file_one = tracked / "kc.yaml"
+    file_one.write_text("hostname: kc.192.0.2.4.nip.io", encoding="utf-8")
+    file_two = tracked / "other.txt"
+    file_two.write_text("argocd.203.0.113.8.nip.io", encoding="utf-8")
+
+    stale = cd.discover_stale_hosts([tracked], "203.0.113.8")
+    assert stale == [(file_one.resolve(), "kc.192.0.2.4.nip.io")]
+    with pytest.raises(RuntimeError) as excinfo:
+        cd.ensure_hosts_rotated([tracked], "203.0.113.8")
+    assert "kc.192.0.2.4.nip.io" in str(excinfo.value)
+
+    # When the inputs only contain the expected IP, the result is empty.
+    file_one.write_text("hostname: kc.203.0.113.8.nip.io", encoding="utf-8")
+    stale = cd.discover_stale_hosts([tracked], "203.0.113.8")
+    assert stale == []
+    cd.ensure_hosts_rotated([tracked], "203.0.113.8")
 
 
 def test_resolve_ingress_ip_explicit():
