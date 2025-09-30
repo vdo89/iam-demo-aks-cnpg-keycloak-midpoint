@@ -4,6 +4,8 @@ metadata:
   name: rws-realm-import
   namespace: iam
   annotations:
+    argocd.argoproj.io/sync-wave: "40"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     iam.demo/realm-config-version: "1"
 spec:
   keycloakCRName: rws-keycloak
