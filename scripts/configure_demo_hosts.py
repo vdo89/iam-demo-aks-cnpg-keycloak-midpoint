@@ -150,6 +150,10 @@ def ensure_ingress_accessible(
             with contextlib.closing(
                 socket.create_connection((str(ip_obj), port), timeout=5)
             ):
+                print(
+                    f"✅ Verified ingress load balancer {ip_obj} accepts TCP connections on port {port}",
+                    flush=True,
+                )
                 return
         except OSError as exc:
             connection_errors[port] = exc
@@ -274,6 +278,7 @@ def main() -> int:
     ingress_class = args.ingress_class or read_ingress_class(args.params_file) or "nginx"
 
     ip_value = resolve_ingress_ip(args.ingress_service, args.ingress_ip, args.ingress_hostname)
+    print(f"ℹ️  Discovered ingress load balancer address: {ip_value}")
     ensure_ingress_accessible(
         ip_value,
         raise_on_error=not getattr(args, "skip_reachability_check", False),
@@ -314,6 +319,11 @@ def main() -> int:
             # only serves HTTP. Surface the reachable scheme so the generated
             # URL works out of the box.
             output_file.write(f"argocd_url=http://{hosts.argocd}\n")
+
+    print("✅ Updated ingress host configuration:")
+    print(f"   Keycloak:  http://{hosts.keycloak}")
+    print(f"   midPoint:  http://{hosts.midpoint}/midpoint")
+    print(f"   Argo CD:   http://{hosts.argocd}")
 
     return 0
 
