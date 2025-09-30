@@ -60,7 +60,16 @@ def run_kubectl_jsonpath(service: str, jsonpath: str) -> str:
     cmd = ["kubectl", "-n", namespace, "get", resource, "-o", f"jsonpath={jsonpath}"]
     proc = subprocess.run(cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if proc.returncode != 0:
-        raise KubectlError(proc.stderr.strip() or "kubectl command failed")
+        stderr = proc.stderr.strip()
+        stdout = proc.stdout.strip()
+        details = [
+            f"kubectl command {' '.join(cmd)} exited with status {proc.returncode}.",
+        ]
+        if stderr:
+            details.append(f"stderr: {stderr}")
+        if stdout:
+            details.append(f"stdout: {stdout}")
+        raise KubectlError(" ".join(details))
     return proc.stdout.strip()
 
 

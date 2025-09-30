@@ -115,6 +115,26 @@ def test_resolve_ingress_ip_requires_address(monkeypatch):
         cd.resolve_ingress_ip(cd.DEFAULT_SERVICE, None, None)
 
 
+def test_run_kubectl_jsonpath_surfaces_failures(monkeypatch):
+    def fake_run(cmd, check, stdout, stderr, text):
+        class Result:
+            returncode = 1
+            stdout = ""
+            stderr = "resource not found"
+
+        return Result()
+
+    monkeypatch.setattr(cd.subprocess, "run", fake_run)
+
+    with pytest.raises(cd.KubectlError) as excinfo:
+        cd.run_kubectl_jsonpath("iam/service/missing", "{.status}")
+
+    message = str(excinfo.value)
+    assert "kubectl command kubectl -n iam get service/missing -o jsonpath={.status}" in message
+    assert "status 1" in message
+    assert "resource not found" in message
+
+
 def test_ensure_ingress_accessible_rejects_private_ip():
     with pytest.raises(RuntimeError) as excinfo:
         cd.ensure_ingress_accessible("10.0.0.4")
