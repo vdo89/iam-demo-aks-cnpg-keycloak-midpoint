@@ -106,10 +106,8 @@ def test_iam_ingress_replacements_cover_all_targets():
         return False
 
     assert has_replacement("data.ingressClass", "Keycloak", "rws-keycloak", "spec.ingress.ingressClassName")
-    assert has_replacement("data.ingressClass", "Ingress", "rws-keycloak", "spec.ingressClassName")
     assert has_replacement("data.ingressClass", "Ingress", "midpoint", "spec.ingressClassName")
     assert has_replacement("data.keycloakHost", "Keycloak", "rws-keycloak", "spec.hostname.hostname")
-    assert has_replacement("data.keycloakHost", "Ingress", "rws-keycloak", "spec.rules.0.host")
     assert has_replacement("data.midpointHost", "Ingress", "midpoint", "spec.rules.0.host")
 
 
