@@ -4,6 +4,9 @@ namespace: iam
 
 resources: [deployment.yaml, ingress.yaml, seeder-job.yaml]
 
+patchesStrategicMerge:
+  - deployment-argocd-sync-wave-patch.yaml
+
 generatorOptions:
   disableNameSuffixHash: true
 
