@@ -174,13 +174,17 @@ def test_cnpg_cluster_handles_missing_crds_and_roles():
     def find_role(name: str):
         return next((role for role in roles if role.get("name") == name), None)
 
-    app_role = find_role("app")
-    assert app_role is not None, "app role should be managed for Keycloak"
-    assert app_role.get("passwordSecret", {}).get("name") == "iam-db-app"
+    keycloak_role = find_role("keycloak")
+    assert keycloak_role is not None, "keycloak role should be managed"
+    keycloak_secret = keycloak_role.get("passwordSecret", {})
+    assert keycloak_secret.get("name") == "keycloak-db-app"
+    assert keycloak_secret.get("key") == "password"
 
     midpoint_role = find_role("midpoint")
     assert midpoint_role is not None, "midpoint role should remain managed"
-    assert midpoint_role.get("passwordSecret", {}).get("name") == "midpoint-db-app"
+    midpoint_secret = midpoint_role.get("passwordSecret", {})
+    assert midpoint_secret.get("name") == "midpoint-db-app"
+    assert midpoint_secret.get("key") == "password"
 
 
 def test_cnpg_databases_skip_dry_run():

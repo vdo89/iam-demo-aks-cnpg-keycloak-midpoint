@@ -22,8 +22,6 @@ spec:
       value: local
     - name: proxy
       value: edge
-    - name: proxy-headers
-      value: xforwarded
   features:
     enabled:
       - token-exchange
@@ -40,8 +38,8 @@ spec:
     vendor: postgres
     url: "jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/keycloak?sslmode=require"
     schema: public
-    usernameSecret: { name: iam-db-app, key: username }
-    passwordSecret: { name: iam-db-app, key: password }
+    usernameSecret: { name: keycloak-db-app, key: username }
+    passwordSecret: { name: keycloak-db-app, key: password }
 
   ingress:
     enabled: true

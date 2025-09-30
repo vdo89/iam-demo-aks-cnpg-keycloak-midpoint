@@ -66,7 +66,7 @@ Run these commands to validate the operator and the database status:
 kubectl -n cnpg-system get deploy,pods
 kubectl get crd | grep postgresql.cnpg.io
 kubectl -n iam get cluster
-kubectl -n iam get secret iam-db-app
+kubectl -n iam get secret keycloak-db-app
 kubectl -n iam describe database keycloak
 kubectl -n iam get database keycloak -o yaml | yq '.status'
 ```

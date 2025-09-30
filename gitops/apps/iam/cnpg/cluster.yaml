@@ -15,7 +15,7 @@ spec:
   bootstrap:
     initdb:
       database: keycloak
-      owner: app
+      owner: keycloak
       encoding: UTF8
       localeCollate: C
       localeCType: C
@@ -49,13 +49,14 @@ spec:
 
   managed:
     roles:
-      - name: app
+      - name: keycloak
         ensure: present
         login: true
         inherit: true
         connectionLimit: -1
         passwordSecret:
-          name: iam-db-app
+          name: keycloak-db-app
+          key: password
       - name: midpoint
         ensure: present
         login: true
@@ -63,3 +64,4 @@ spec:
         connectionLimit: -1
         passwordSecret:
           name: midpoint-db-app
+          key: password

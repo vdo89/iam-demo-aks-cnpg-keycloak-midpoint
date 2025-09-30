@@ -44,7 +44,7 @@ Trigger the workflow **“01 - Provision AKS with Terraform”** (`.github/wor
    - Validate the GitOps manifests via the unit tests before touching the cluster.
    - Create the database and admin secrets in the `iam` namespace.
    - Configure Keycloak with the strongly typed database settings and keep `spec.db.urlProperties` prefixed with `?sslmode=require` so JDBC connections to the CloudNativePG primary always negotiate TLS and the readiness health check passes when encryption is mandatory.
-   - Source Keycloak's credentials directly from CloudNativePG's generated `iam-db-app` secret so the pod always uses the in-cluster password.
+   - Source Keycloak's credentials directly from CloudNativePG's managed `keycloak-db-app` secret so the pod always uses the in-cluster password.
    - Normalise the Azure Blob credentials into the `cnpg-azure-backup` secret using `scripts/normalize_azure_storage_secret.py`.
    - Apply the GitOps tree (`gitops/clusters/aks`) so Argo CD manages addons (cert-manager, CloudNativePG operator, ingress-nginx, Keycloak operator) and the IAM workloads (CloudNativePG cluster, Keycloak, midPoint).
    - Wait for all applications to report `Synced` and `Healthy`.

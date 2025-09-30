@@ -10,7 +10,7 @@ spec:
   cluster:
     name: iam-db
   name: keycloak
-  owner: app
+  owner: keycloak
   schemas:
     - name: public
-      owner: app
+      owner: keycloak
