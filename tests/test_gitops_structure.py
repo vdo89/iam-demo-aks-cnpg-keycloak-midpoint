@@ -131,6 +131,12 @@ def test_bootstrap_ingress_replacements():
     assert has_replacement("data.ingressClass", "Ingress", "argocd-server", "spec.ingressClassName")
     assert has_replacement("data.argocdHost", "Ingress", "argocd-server", "spec.rules.0.host")
 
+    ingress = load_yaml(REPO_ROOT / "gitops/clusters/aks/bootstrap/argocd-ingress.yaml")
+    backend = (
+        ingress["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]
+    )
+    assert backend["port"].get("name") == "http"
+
 
 def test_iam_secret_generators_use_opaque_type():
     kustomization = yaml.safe_load(
