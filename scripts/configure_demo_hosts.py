@@ -9,6 +9,7 @@ import os
 import re
 import socket
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional
@@ -124,7 +125,9 @@ def build_hosts(ip: str) -> Hosts:
     )
 
 
-def ensure_ingress_accessible(ip: str, *, ports: Iterable[int] = (80, 443)) -> None:
+def ensure_ingress_accessible(
+    ip: str, *, ports: Iterable[int] = (80, 443), raise_on_error: bool = True
+) -> None:
     """Validate the ingress endpoint resolves to a reachable public address."""
 
     ip_obj = ipaddress.ip_address(ip)
@@ -152,11 +155,16 @@ def ensure_ingress_accessible(ip: str, *, ports: Iterable[int] = (80, 443)) -> N
             connection_errors[port] = exc
 
     joined_errors = "; ".join(f"{port}/tcp: {err}" for port, err in connection_errors.items())
-    raise RuntimeError(
+    message = (
         "Unable to reach the ingress load balancer at"
         f" {ip_obj}; attempted ports {', '.join(str(p) for p in ports)}."
         f" Connection errors: {joined_errors}."
     )
+
+    if raise_on_error:
+        raise RuntimeError(message)
+
+    print(f"WARNING: {message}", file=sys.stderr)
 
 
 def read_ingress_class(params_file: Path) -> Optional[str]:
@@ -250,6 +258,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Do not modify the params file; print discovered hosts instead",
     )
+    parser.add_argument(
+        "--skip-reachability-check",
+        action="store_true",
+        help=(
+            "Do not fail if the ingress load balancer ports are not reachable. "
+            "The script will still verify the IP is public and emit a warning."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -258,7 +274,10 @@ def main() -> int:
     ingress_class = args.ingress_class or read_ingress_class(args.params_file) or "nginx"
 
     ip_value = resolve_ingress_ip(args.ingress_service, args.ingress_ip, args.ingress_hostname)
-    ensure_ingress_accessible(ip_value)
+    ensure_ingress_accessible(
+        ip_value,
+        raise_on_error=not args.skip_reachability_check,
+    )
     hosts = build_hosts(ip_value)
 
     if args.print_only:
