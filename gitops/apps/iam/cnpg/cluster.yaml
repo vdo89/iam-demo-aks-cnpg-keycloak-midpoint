@@ -48,6 +48,11 @@ spec:
 
   managed:
     roles:
+      - name: app
+        ensure: present
+        login: true
+        inherit: true
+        connectionLimit: -1
       - name: midpoint
         ensure: present
         login: true
