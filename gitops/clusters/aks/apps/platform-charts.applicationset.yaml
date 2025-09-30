@@ -37,7 +37,7 @@ spec:
                     enabled: true
                 service:
                   annotations:
-                    service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: /is-dynamic-lb-initialized
+                    service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: /healthz
                   type: LoadBalancer
                 watchIngressWithoutClass: true
                 ingressClassResource:
