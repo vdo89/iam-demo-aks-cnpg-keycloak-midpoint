@@ -195,3 +195,22 @@ def test_cnpg_databases_skip_dry_run():
             annotations.get("argocd.argoproj.io/sync-options")
             == "SkipDryRunOnMissingResource=true"
         ), f"{manifest_name} must skip dry-run until CNPG CRDs register"
+
+
+def test_keycloak_resources_skip_dry_run_and_wave_ordering():
+    keycloak = load_yaml(REPO_ROOT / "gitops/apps/iam/keycloak/keycloak.yaml")
+    keycloak_annotations = keycloak["metadata"].get("annotations", {})
+    assert (
+        keycloak_annotations.get("argocd.argoproj.io/sync-options")
+        == "SkipDryRunOnMissingResource=true"
+    ), "Keycloak CR should skip dry-run while CRDs install"
+
+    realm = load_yaml(REPO_ROOT / "gitops/apps/iam/keycloak/rws-realm.yaml")
+    realm_annotations = realm["metadata"].get("annotations", {})
+    assert (
+        realm_annotations.get("argocd.argoproj.io/sync-options")
+        == "SkipDryRunOnMissingResource=true"
+    ), "Realm import should skip dry-run while CRDs install"
+    assert (
+        realm_annotations.get("argocd.argoproj.io/sync-wave") == "40"
+    ), "Realm import should wait for the Keycloak instance to finish first"
