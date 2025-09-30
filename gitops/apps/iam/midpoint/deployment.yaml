@@ -131,6 +131,40 @@ spec:
             - name: iam-db-credentials
               mountPath: /var/run/secrets/iam-db-app
               readOnly: true
+        - name: repo-init
+          image: evolveum/midpoint:4.9-alpine
+          workingDir: /opt/midpoint
+          command:
+            - sh
+            - -lc
+            - >
+              bin/midpoint.sh init-native &&
+              bin/ninja.sh run-sql --create --mode repository &&
+              bin/ninja.sh run-sql --create --mode audit
+          env:
+            - name: MP_SET_midpoint_repository_database
+              value: postgresql
+            - name: MP_SET_midpoint_repository_jdbcUrl
+              valueFrom:
+                secretKeyRef:
+                  name: iam-db-app
+                  key: jdbc-uri
+            - name: MP_SET_midpoint_repository_jdbcUsername
+              valueFrom:
+                secretKeyRef:
+                  name: iam-db-app
+                  key: username
+            - name: MP_SET_midpoint_repository_jdbcPassword
+              valueFrom:
+                secretKeyRef:
+                  name: iam-db-app
+                  key: password
+            - name: MP_SET_midpoint_repository_missingSchemaAction
+              value: "create"
+            - name: MP_UNSET_midpoint_repository_hibernateHbm2ddl
+              value: "1"
+            - name: MP_NO_ENV_COMPAT
+              value: "1"
         - name: midpoint-db-init
           image: evolveum/midpoint:4.9
           workingDir: /opt/midpoint
@@ -549,7 +583,10 @@ spec:
             - name: MP_SET_midpoint_repository_database
               value: postgresql
             - name: MP_SET_midpoint_repository_jdbcUrl
-              value: jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/midpoint?sslmode=require
+              valueFrom:
+                secretKeyRef:
+                  name: iam-db-app
+                  key: jdbc-uri
             - name: MP_SET_midpoint_repository_jdbcUsername
               valueFrom:
                 secretKeyRef:
@@ -560,6 +597,12 @@ spec:
                 secretKeyRef:
                   name: iam-db-app
                   key: password
+            - name: MP_SET_midpoint_repository_missingSchemaAction
+              value: "create"
+            - name: MP_UNSET_midpoint_repository_hibernateHbm2ddl
+              value: "1"
+            - name: MP_NO_ENV_COMPAT
+              value: "1"
             - name: MP_MEM_INIT
               value: "768M"
             - name: MP_MEM_MAX
