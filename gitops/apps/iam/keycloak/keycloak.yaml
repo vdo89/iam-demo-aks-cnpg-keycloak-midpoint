@@ -44,6 +44,8 @@ spec:
   ingress:
     enabled: true
     className: nginx
+    hostname: kc.20.76.98.154.nip.io
+    path: /
     annotations:
       nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
       nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
