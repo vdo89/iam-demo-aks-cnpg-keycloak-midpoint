@@ -45,6 +45,8 @@ spec:
   template:
     metadata:
       name: '{{.name}}'
+      annotations:
+        argocd.argoproj.io/sync-wave: "5"
     spec:
       project: platform
       destination:

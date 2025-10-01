@@ -3,6 +3,8 @@ kind: Deployment
 metadata:
   name: midpoint
   namespace: iam
+  annotations:
+    argocd.argoproj.io/sync-wave: "30"
 spec:
   replicas: 1
   # MidPoint's first boot performs a sizeable schema bootstrap and application
