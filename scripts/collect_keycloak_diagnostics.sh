@@ -65,12 +65,20 @@ argo_operation_state() {
 
 require_cmd kubectl
 require_cmd jq
+if ! command -v curl >/dev/null 2>&1; then
+  warn "'curl' command not found; HTTP probing will be skipped"
+  CURL_AVAILABLE=0
+else
+  CURL_AVAILABLE=1
+fi
 
 KEYCLOAK_NAMESPACE=${KEYCLOAK_NAMESPACE:-iam}
 KEYCLOAK_OPERATOR_NAMESPACE=${KEYCLOAK_OPERATOR_NAMESPACE:-${KEYCLOAK_NAMESPACE}}
 KEYCLOAK_NAME=${KEYCLOAK_NAME:-rws-keycloak}
 KEYCLOAK_POD_SELECTOR=${KEYCLOAK_POD_SELECTOR:-app=keycloak}
 KEYCLOAK_MGMT_PORT=${KEYCLOAK_MGMT_PORT:-9000}
+KEYCLOAK_SERVICE_NAME=${KEYCLOAK_SERVICE_NAME:-rws-keycloak-service}
+KEYCLOAK_INGRESS_NAME=${KEYCLOAK_INGRESS_NAME:-keycloak}
 ARGOCD_CLI_AVAILABLE=0
 ARGOCD_WARNED=0
 
@@ -184,3 +192,50 @@ fi
 
 run_cmd "Keycloak operator logs (last 15m)" \
   kubectl logs deployment/keycloak-operator -n "${KEYCLOAK_OPERATOR_NAMESPACE}" --since=15m
+
+section "Ingress diagnostics"
+
+run_cmd "Keycloak ingress" \
+  kubectl get ingress "${KEYCLOAK_INGRESS_NAME}" -n "${KEYCLOAK_NAMESPACE}" -o wide
+
+run_cmd "Keycloak ingress description" \
+  kubectl describe ingress "${KEYCLOAK_INGRESS_NAME}" -n "${KEYCLOAK_NAMESPACE}"
+
+run_cmd "Keycloak service" \
+  kubectl get service "${KEYCLOAK_SERVICE_NAME}" -n "${KEYCLOAK_NAMESPACE}" -o wide
+
+run_cmd "Keycloak service endpoints" \
+  kubectl get endpoints "${KEYCLOAK_SERVICE_NAME}" -n "${KEYCLOAK_NAMESPACE}" -o wide
+
+mapfile -t ingress_hosts < <(
+  kubectl get ingress "${KEYCLOAK_INGRESS_NAME}" -n "${KEYCLOAK_NAMESPACE}" \
+    -o jsonpath='{range .spec.rules[*]}{.host}{"\n"}{end}' 2>/dev/null | sed '/^$/d' || true
+)
+
+if (( ${#ingress_hosts[@]} == 0 )); then
+  warn "No hosts discovered for ingress ${KEYCLOAK_NAMESPACE}/${KEYCLOAK_INGRESS_NAME}; ensure the manifest sets spec.rules[].host"
+fi
+
+if (( CURL_AVAILABLE == 1 )) && (( ${#ingress_hosts[@]} > 0 )); then
+  candidates=()
+  for host in "${ingress_hosts[@]}"; do
+    candidates+=("http://${host}")
+    candidates+=("https://${host}")
+  done
+
+  success=0
+  for candidate in "${candidates[@]}"; do
+    echo "Probing ${candidate}"
+    if curl --connect-timeout 5 --max-time 10 -ksSf "${candidate}" >/dev/null; then
+      echo "✅ ${candidate} responded"
+      success=1
+      break
+    fi
+
+    echo "Continuing with next candidate after failure for ${candidate}."
+  done
+
+  if (( success == 0 )); then
+    printf '\u274c All candidate URLs failed: %s\n' "${candidates[*]}"
+  fi
+fi
