@@ -45,8 +45,6 @@ spec:
   ingress:
     enabled: true
     className: nginx
-    path: /
-    pathType: Prefix
     annotations:
       nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
       nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
