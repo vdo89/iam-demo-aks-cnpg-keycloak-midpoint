@@ -73,56 +73,69 @@ def run_kubectl_jsonpath(service: str, jsonpath: str) -> str:
     return proc.stdout.strip()
 
 
+def _split_candidates(raw: str) -> list[str]:
+    """Return non-empty values from a kubectl jsonpath string."""
+
+    if not raw:
+        return []
+    return [value for value in re.split(r"[\s,]+", raw.strip()) if value]
+
+
 def resolve_ingress_ip(service: str, explicit_ip: Optional[str], explicit_hostname: Optional[str]) -> str:
     """Discover the ingress IP using kubectl or supplied overrides."""
     if explicit_ip:
         ipaddress.ip_address(explicit_ip)  # validate format
         return explicit_ip
 
-    jsonpath_ip = "{.status.loadBalancer.ingress[0].ip}"
-    jsonpath_hostname = "{.status.loadBalancer.ingress[0].hostname}"
-
     try:
-        ip_value = run_kubectl_jsonpath(service, jsonpath_ip)
+        ip_values = run_kubectl_jsonpath(service, "{.status.loadBalancer.ingress[*].ip}")
     except KubectlError:
-        ip_value = ""
+        ip_values = ""
 
-    if ip_value:
-        return ip_value
+    for candidate in reversed(_split_candidates(ip_values)):
+        try:
+            ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+        return candidate
 
-    hostname = explicit_hostname
-    if not hostname:
-        try:
-            hostname = run_kubectl_jsonpath(service, jsonpath_hostname)
-        except KubectlError:
-            hostname = ""
-
-    if not hostname:
-        status_hint = ""
-        try:
-            svc_type = run_kubectl_jsonpath(service, "{.spec.type}")
-        except KubectlError as exc:
-            svc_type = ""
-            status_hint = f" Unable to query service type: {exc}."
-        try:
-            lb_state = run_kubectl_jsonpath(service, "{.status.loadBalancer}")
-        except KubectlError as exc:
-            lb_state = ""
-            status_hint = f"{status_hint} Unable to query load balancer status: {exc}."
-        else:
-            if lb_state:
-                status_hint = f"{status_hint} Current loadBalancer status: {lb_state}."
-        if svc_type:
-            status_hint = f"{status_hint} Service type: {svc_type}."
-        raise RuntimeError(
-            "Ingress controller does not expose an external IP or hostname yet. "
-            "Provide --ingress-ip or wait for the service to publish an address." + status_hint
-        )
+    hostname_candidates: list[str] = []
+    if explicit_hostname:
+        hostname_candidates.append(explicit_hostname)
 
     try:
-        return socket.gethostbyname(hostname)
-    except OSError as exc:  # pragma: no cover - network behaviour varies per environment
-        raise RuntimeError(f"Unable to resolve hostname {hostname!r}: {exc}") from exc
+        hostname_values = run_kubectl_jsonpath(service, "{.status.loadBalancer.ingress[*].hostname}")
+    except KubectlError:
+        hostname_values = ""
+
+    hostname_candidates.extend(_split_candidates(hostname_values))
+
+    for hostname in hostname_candidates:
+        try:
+            return socket.gethostbyname(hostname)
+        except OSError:
+            continue
+
+    status_hint = ""
+    try:
+        svc_type = run_kubectl_jsonpath(service, "{.spec.type}")
+    except KubectlError as exc:
+        svc_type = ""
+        status_hint = f" Unable to query service type: {exc}."
+    try:
+        lb_state = run_kubectl_jsonpath(service, "{.status.loadBalancer}")
+    except KubectlError as exc:
+        lb_state = ""
+        status_hint = f"{status_hint} Unable to query load balancer status: {exc}."
+    else:
+        if lb_state:
+            status_hint = f"{status_hint} Current loadBalancer status: {lb_state}."
+    if svc_type:
+        status_hint = f"{status_hint} Service type: {svc_type}."
+    raise RuntimeError(
+        "Ingress controller does not expose an external IP or hostname yet. "
+        "Provide --ingress-ip or wait for the service to publish an address." + status_hint
+    )
 
 
 def build_hosts(ip: str) -> Hosts:

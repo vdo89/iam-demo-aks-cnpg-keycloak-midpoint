@@ -115,6 +115,19 @@ def test_resolve_ingress_ip_requires_address(monkeypatch):
         cd.resolve_ingress_ip(cd.DEFAULT_SERVICE, None, None)
 
 
+def test_resolve_ingress_ip_prefers_latest_candidate(monkeypatch):
+    def fake_jsonpath(service: str, query: str) -> str:
+        if query == "{.status.loadBalancer.ingress[*].ip}":
+            return "198.51.100.7 203.0.113.10"
+        if query == "{.status.loadBalancer.ingress[*].hostname}":
+            return "old.example.com new.example.com"
+        return ""
+
+    monkeypatch.setattr(cd, "run_kubectl_jsonpath", fake_jsonpath)
+
+    assert cd.resolve_ingress_ip(cd.DEFAULT_SERVICE, None, None) == "203.0.113.10"
+
+
 def test_run_kubectl_jsonpath_surfaces_failures(monkeypatch):
     def fake_run(cmd, check, stdout, stderr, text):
         class Result:
