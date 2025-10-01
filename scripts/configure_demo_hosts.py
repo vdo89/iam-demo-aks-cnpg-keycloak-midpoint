@@ -19,7 +19,6 @@ DEFAULT_EXTRA_PARAMS_FILES = [Path("gitops/clusters/aks/bootstrap/params.env")]
 DEFAULT_SERVICE = "ingress-nginx/ingress-nginx-controller"
 DEFAULT_MANIFEST_FILES = [
     Path("gitops/apps/iam/keycloak/keycloak.yaml"),
-    Path("gitops/apps/iam/keycloak/ingress.yaml"),
     Path("gitops/apps/iam/midpoint/ingress.yaml"),
     Path("gitops/clusters/aks/bootstrap/argocd-ingress.yaml"),
 ]
