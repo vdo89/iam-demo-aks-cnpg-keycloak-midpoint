@@ -71,6 +71,11 @@ section "Keycloak custom resource status"
 if ! kubectl get keycloak "${KEYCLOAK_NAME}" -n "${KEYCLOAK_NAMESPACE}" -o yaml; then
   keycloak_cr_missing=1
   warn "Keycloak custom resource ${KEYCLOAK_NAMESPACE}/${KEYCLOAK_NAME} not found; see docs/troubleshooting/keycloak-cr-missing.md"
+  if command -v argocd >/dev/null 2>&1; then
+    warn "Recreate it with: argocd app sync iam --resource k8s.keycloak.org/Keycloak:${KEYCLOAK_NAMESPACE}/${KEYCLOAK_NAME}"
+  else
+    warn "Trigger an Argo CD sync from the UI or reapply gitops/apps/iam/keycloak/keycloak.yaml to recreate the resource"
+  fi
 fi
 
 section "Describe Keycloak custom resource"

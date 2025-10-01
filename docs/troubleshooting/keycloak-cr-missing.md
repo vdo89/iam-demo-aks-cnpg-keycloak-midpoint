@@ -38,9 +38,16 @@ kubectl get pods -n iam --show-labels
    kubectl get crd keycloaks.k8s.keycloak.org keycloakrealmimports.k8s.keycloak.org
    ```
 2. **Resync the IAM application** – If the operator is ready, instruct Argo CD to reapply the Keycloak manifest. This recreates
-   the CR when it was deleted manually or after the first attempt failed because the CRDs were missing:
+   the CR when it was deleted manually or after the first attempt failed because the CRDs were missing. From a shell with the
+   Argo CD CLI:
    ```bash
    argocd app sync iam --resource k8s.keycloak.org/Keycloak:iam/rws-keycloak
+   argocd app wait iam --timeout 180 --health
+   ```
+   When you do not have CLI access, trigger **Sync** in the Argo CD UI for the `iam` application (select the Keycloak resource)
+   or ask a teammate with access to run the command. As a last resort you can reapply the GitOps manifest directly:
+   ```bash
+   kubectl apply -f gitops/apps/iam/keycloak/keycloak.yaml
    ```
 3. **Investigate persistent failures** – When the sync fails again, inspect the Argo CD operation state to find the recorded error
    (for example `no matches for kind "Keycloak"`). Capture the Keycloak operator logs for the same time window—they confirm
