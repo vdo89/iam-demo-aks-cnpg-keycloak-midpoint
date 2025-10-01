@@ -354,6 +354,11 @@ def parse_args() -> argparse.Namespace:
             "The script will still verify the IP is public and emit a warning."
         ),
     )
+    parser.add_argument(
+        "--env-file",
+        type=Path,
+        help="Write KEY=VALUE environment variable assignments to this file",
+    )
     return parser.parse_args()
 
 
@@ -368,6 +373,18 @@ def main() -> int:
         raise_on_error=not getattr(args, "skip_reachability_check", False),
     )
     hosts = build_hosts(ip_value)
+
+    env_lines = [
+        f"EXTERNAL_IP={ip_value}",
+        f"KC_HOST={hosts.keycloak}",
+        f"MP_HOST={hosts.midpoint}",
+        f"ARGOCD_HOST={hosts.argocd}",
+    ]
+
+    env_file_path: Optional[Path] = getattr(args, "env_file", None)
+    if env_file_path:
+        env_file_path.parent.mkdir(parents=True, exist_ok=True)
+        env_file_path.write_text("\n".join(env_lines) + "\n", encoding="utf-8")
 
     if args.print_only:
         print(hosts.keycloak)
@@ -392,10 +409,7 @@ def main() -> int:
     github_env = os.environ.get("GITHUB_ENV")
     if github_env:
         with open(github_env, "a", encoding="utf-8") as env_file:
-            env_file.write(f"EXTERNAL_IP={ip_value}\n")
-            env_file.write(f"KC_HOST={hosts.keycloak}\n")
-            env_file.write(f"MP_HOST={hosts.midpoint}\n")
-            env_file.write(f"ARGOCD_HOST={hosts.argocd}\n")
+            env_file.write("\n".join(env_lines) + "\n")
 
     github_output = os.environ.get("GITHUB_OUTPUT")
     if github_output:
