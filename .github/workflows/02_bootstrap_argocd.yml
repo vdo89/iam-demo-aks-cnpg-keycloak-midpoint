@@ -406,8 +406,36 @@ jobs:
             echo '::endgroup::'
             echo '::group::Keycloak diagnostics bundle'
             if [ -x scripts/collect_keycloak_diagnostics.sh ]; then
-              if ! scripts/collect_keycloak_diagnostics.sh; then
+              diag_tmp=$(mktemp)
+              diag_status=0
+              if ! scripts/collect_keycloak_diagnostics.sh | tee "${diag_tmp}"; then
+                diag_status=$?
                 echo 'collect_keycloak_diagnostics.sh exited with a non-zero status' >&2
+              fi
+
+              if [ -s "${diag_tmp}" ]; then
+                if grep -q '^\[warn\]' "${diag_tmp}"; then
+                  while IFS= read -r warn_line; do
+                    warn_message="${warn_line#\[warn\]}"
+                    warn_message="${warn_message# }"
+                    printf '::warning::Keycloak diagnostics: %s\n' "${warn_message}"
+                  done < <(grep '^\[warn\]' "${diag_tmp}")
+                fi
+
+                if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+                  {
+                    echo '### Keycloak diagnostics bundle'
+                    echo
+                    echo '```text'
+                    cat "${diag_tmp}"
+                    echo '```'
+                  } >> "${GITHUB_STEP_SUMMARY}"
+                fi
+              fi
+
+              rm -f "${diag_tmp}"
+              if [ "${diag_status}" -ne 0 ]; then
+                echo "Keycloak diagnostics script exit code: ${diag_status}" >&2
               fi
             else
               echo 'collect_keycloak_diagnostics.sh is not present or executable' >&2
