@@ -448,6 +448,10 @@ jobs:
 
       - name: Wait for ingress endpoints to become reachable
         shell: bash
+        env:
+          KEYCLOAK_URL: ${{ steps.configure.outputs.keycloak_url }}
+          MIDPOINT_URL: ${{ steps.configure.outputs.midpoint_url }}
+          ARGOCD_URL: ${{ steps.configure.outputs.argocd_url }}
         run: |
           set -euo pipefail
 
@@ -493,34 +497,68 @@ jobs:
           : "${MP_HOST:?MP_HOST was not exported by configure_demo_hosts.py}"
           : "${ARGOCD_HOST:?ARGOCD_HOST was not exported by configure_demo_hosts.py}"
 
-          endpoints=(
-            "http://${KC_HOST}"
-            "http://${MP_HOST}/midpoint"
-            "http://${ARGOCD_HOST}"
-          )
+          keycloak_primary="${KEYCLOAK_URL:-http://${KC_HOST}}"
+          midpoint_primary="${MIDPOINT_URL:-http://${MP_HOST}/midpoint}"
+          argocd_primary="${ARGOCD_URL:-http://${ARGOCD_HOST}}"
 
           max_attempts=${MAX_INGRESS_ATTEMPTS:-10}
           sleep_seconds=${INGRESS_RETRY_DELAY:-30}
 
-          for url in "${endpoints[@]}"; do
+          probe_url() {
+            local url="$1"
             echo "::group::Probing ${url}"
             for attempt in $(seq 1 "${max_attempts}"); do
-              if http_code=$(curl --fail --show-error --silent \
+              local status=0
+              local http_code
+              http_code=$(curl --show-error --silent \
                 --connect-timeout 5 --max-time 20 --max-redirs 0 --write-out '%{http_code}' \
-                --output /dev/null "${url}"); then
-                echo "✅ ${url} responded with HTTP ${http_code} (attempt ${attempt}/${max_attempts})."
-                break
+                --output /dev/null "${url}") || status=$?
+
+              if [[ ${status} -eq 0 ]]; then
+                if [[ ${http_code} =~ ^[23] ]] || [[ ${http_code} == "401" ]] || [[ ${http_code} == "403" ]]; then
+                  echo "✅ ${url} responded with HTTP ${http_code} (attempt ${attempt}/${max_attempts})."
+                  echo "::endgroup::"
+                  return 0
+                fi
+                echo "Attempt ${attempt}/${max_attempts} received HTTP ${http_code} from ${url}; waiting ${sleep_seconds}s before retrying..."
+              else
+                echo "Attempt ${attempt}/${max_attempts} failed for ${url} (exit ${status}); waiting ${sleep_seconds}s before retrying..."
               fi
-              status=$?
-              echo "Attempt ${attempt}/${max_attempts} failed for ${url} (exit ${status}); waiting ${sleep_seconds}s before retrying..."
+
               sleep "${sleep_seconds}"
-              if [[ ${attempt} -eq ${max_attempts} ]]; then
-                echo "❌ Unable to reach ${url} after ${max_attempts} attempts."
-                false
-              fi
             done
+            echo "❌ Unable to reach ${url} after ${max_attempts} attempts."
             echo "::endgroup::"
-          done
+            return 1
+          }
+
+          probe_with_fallbacks() {
+            local primary="$1"
+            shift
+            local -a candidates=("${primary}" "$@")
+            local -A seen=()
+
+            for candidate in "${candidates[@]}"; do
+              if [[ -z "${candidate}" ]]; then
+                continue
+              fi
+              if [[ -n "${seen[${candidate}]:-}" ]]; then
+                continue
+              fi
+              seen["${candidate}"]=1
+              if probe_url "${candidate}"; then
+                return 0
+              fi
+              echo "Continuing with next candidate after failure for ${candidate}."
+            done
+
+            echo "❌ All candidate URLs failed: ${candidates[*]}"
+            return 1
+          }
+
+          probe_with_fallbacks "${keycloak_primary}" "https://${KC_HOST}"
+          probe_with_fallbacks "${midpoint_primary}" "https://${MP_HOST}/midpoint"
+          probe_with_fallbacks "${argocd_primary}"
 
           trap - ERR
 
