@@ -307,6 +307,25 @@ jobs:
             --params-file gitops/apps/iam/params.env \
             --skip-reachability-check
 
+      - name: Force hard recreate of IAM deployment
+        shell: bash
+        env:
+          NAMESPACE_IAM: ${{ inputs.NAMESPACE_IAM }}
+        run: |
+          set -euo pipefail
+
+          deployment_name="midpoint"
+
+          echo "Ensuring a clean rollout for ${deployment_name} deployment in namespace ${NAMESPACE_IAM}."
+
+          if kubectl -n "${NAMESPACE_IAM}" get deployment "${deployment_name}" >/dev/null 2>&1; then
+            echo "Deleting deployment ${deployment_name} in namespace ${NAMESPACE_IAM} to force a hard recreate."
+            kubectl -n "${NAMESPACE_IAM}" delete deployment "${deployment_name}" --wait=true
+            echo "Deployment ${deployment_name} deleted; Argo CD will recreate it during the next sync."
+          else
+            echo "Deployment ${deployment_name} does not exist yet; skipping forced recreate."
+          fi
+
       - name: Wait for IAM application
         shell: bash
         run: |
