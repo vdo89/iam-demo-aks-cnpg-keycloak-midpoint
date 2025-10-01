@@ -138,6 +138,39 @@ jobs:
           set -euo pipefail
           kubectl create namespace "${{ inputs.NAMESPACE_IAM }}" --dry-run=client -o yaml | kubectl apply -f -
 
+      - name: Reset CNPG and Keycloak workloads
+        shell: bash
+        env:
+          NAMESPACE_IAM: ${{ inputs.NAMESPACE_IAM }}
+        run: |
+          set -euo pipefail
+
+          echo "Ensuring previous CloudNativePG and Keycloak resources are removed before bootstrap."
+
+          if kubectl get crd clusters.postgresql.cnpg.io >/dev/null 2>&1; then
+            if kubectl -n "${NAMESPACE_IAM}" get cluster iam-db >/dev/null 2>&1; then
+              echo "Deleting existing CloudNativePG cluster iam-db in namespace ${NAMESPACE_IAM}."
+              kubectl -n "${NAMESPACE_IAM}" delete cluster iam-db --wait=true --ignore-not-found
+              echo "CloudNativePG cluster iam-db deleted."
+            else
+              echo "No existing CloudNativePG cluster iam-db found in namespace ${NAMESPACE_IAM}."
+            fi
+          else
+            echo "CloudNativePG Cluster CRD not present; skipping CNPG cleanup."
+          fi
+
+          if kubectl get crd keycloaks.k8s.keycloak.org >/dev/null 2>&1; then
+            if kubectl -n "${NAMESPACE_IAM}" get keycloak rws-keycloak >/dev/null 2>&1; then
+              echo "Deleting existing Keycloak resource rws-keycloak in namespace ${NAMESPACE_IAM}."
+              kubectl -n "${NAMESPACE_IAM}" delete keycloak rws-keycloak --wait=true --ignore-not-found
+              echo "Keycloak resource rws-keycloak deleted."
+            else
+              echo "No existing Keycloak resource rws-keycloak found in namespace ${NAMESPACE_IAM}."
+            fi
+          else
+            echo "Keycloak CRD not present; skipping Keycloak cleanup."
+          fi
+
       - name: Seed database credentials
         shell: bash
         env:
