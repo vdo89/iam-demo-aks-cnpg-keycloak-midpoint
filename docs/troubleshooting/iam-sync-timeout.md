@@ -53,17 +53,22 @@ error inside the operator.
 
 ## Proposed fix – Attempt 1
 
-**Goal:** ensure the Keycloak operator (and its CRDs) are installed before Argo CD attempts to sync the IAM application.
+**Goal:** ensure the platform operators (CloudNativePG and Keycloak) install their CRDs before Argo CD attempts to sync the IAM
+application.
 
-**Change:** add Argo CD sync waves so that the parent app-of-apps applies the `keycloak-operator` application before the
-`iam` application. Once the operator completes, the CRDs are available and the IAM sync can proceed.
+**Change:** add Argo CD sync waves and application dependencies so that the parent app-of-apps applies the platform operators
+first and the IAM application declares an explicit dependency on them. Once the operators report healthy, the IAM sync can
+proceed without missing-resource retries.
 
 **Implementation steps:**
 
 1. Annotate `gitops/clusters/aks/apps/keycloak-operator.application.yaml` with `argocd.argoproj.io/sync-wave: "10"`.
 2. Annotate `gitops/clusters/aks/apps/iam.application.yaml` with `argocd.argoproj.io/sync-wave: "30"`.
-3. Commit the change and allow Argo CD to resync the parent application. The new ordering ensures the IAM application waits
-   for the operator to finish creating its CRDs before reconciling Keycloak custom resources.
+3. Update `gitops/clusters/aks/apps/iam.application.yaml` so that `spec.dependencies` lists `cloudnative-pg` and
+   `keycloak-operator`. Argo CD waits for those child applications to reach a healthy, synced state before reconciling IAM
+   resources.
+4. Commit the change and allow Argo CD to resync the parent application. The new ordering ensures the IAM application waits for
+   the operators to finish creating their CRDs before reconciling CloudNativePG, Keycloak and midPoint custom resources.
 
 If the IAM application still fails after the sync-wave change, revisit the evidence above—specifically the operator logs and
 the presence of CRDs—to determine whether the operator itself failed to install or if a different dependency (for example the

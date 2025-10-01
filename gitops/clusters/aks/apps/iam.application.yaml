@@ -7,6 +7,9 @@ metadata:
     argocd.argoproj.io/sync-wave: "30"
 spec:
   project: iam
+  dependencies:
+    - cloudnative-pg
+    - keycloak-operator
   destination:
     namespace: iam
     server: https://kubernetes.default.svc
