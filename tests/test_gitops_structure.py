@@ -202,6 +202,10 @@ def test_keycloak_resources_skip_dry_run_and_wave_ordering():
         == "SkipDryRunOnMissingResource=true"
     ), "Keycloak CR should skip dry-run while CRDs install"
 
+    proxy = keycloak["spec"].get("proxy", {})
+    headers = proxy.get("headers")
+    assert isinstance(headers, str) and headers == "xforwarded", "Keycloak proxy headers must be a string"
+
     realm = load_yaml(REPO_ROOT / "gitops/apps/iam/keycloak/rws-realm.yaml")
     realm_annotations = realm["metadata"].get("annotations", {})
     assert (

@@ -341,7 +341,6 @@ jobs:
             --params-file gitops/apps/iam/params.env \
             --skip-reachability-check \
             --env-file "${tmp_env}"
-
           echo "🔧 computed hosts:"
           cat "${tmp_env}"
 

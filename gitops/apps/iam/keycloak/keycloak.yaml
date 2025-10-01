@@ -32,8 +32,7 @@ spec:
     httpEnabled: true
   proxy:
     mode: edge
-    headers:
-      - xforwarded
+    headers: xforwarded
 
   db:
     vendor: postgres
