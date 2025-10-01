@@ -32,33 +32,22 @@ kubectl get jobs -n iam -l app=keycloak-realm-import --show-labels
 kubectl get pods -n iam --show-labels
 ```
 
-## Fix the root cause
+## Quick recovery checklist
 
-1. **Confirm the operator is installed** – The CRDs must exist before Argo CD can apply the Keycloak manifest. Verify that the
-   `keycloak-operator` application is `Healthy` and that the `keycloaks.k8s.keycloak.org` CRD is present:
-   ```bash
-   argocd app wait keycloak-operator --health --timeout 180
-   kubectl get crd keycloaks.k8s.keycloak.org keycloakrealmimports.k8s.keycloak.org
-   ```
-2. **Resync the IAM application** – If the operator is ready, instruct Argo CD to reapply the Keycloak manifest. This recreates
-   the CR when it was deleted manually or after the first attempt failed because the CRDs were missing. From a shell with the
-   Argo CD CLI:
-   ```bash
-   argocd app sync iam --resource k8s.keycloak.org/Keycloak:iam/rws-keycloak
-   argocd app wait iam --timeout 180 --health
-   ```
-   When you do not have CLI access, trigger **Sync** in the Argo CD UI for the `iam` application (select the Keycloak resource)
-   or ask a teammate with access to run the command. As a last resort you can reapply the GitOps manifest directly:
-   ```bash
-   kubectl apply -f gitops/apps/iam/keycloak/keycloak.yaml
-   ```
-3. **Investigate persistent failures** – When the sync fails again, inspect the Argo CD operation state to find the recorded error
-   (for example `no matches for kind "Keycloak"`). Capture the Keycloak operator logs for the same time window—they confirm
-   whether the CRD installation or reconciliation failed:
-   ```bash
-   kubectl logs deployment/keycloak-operator -n iam --since=15m
-   ```
-4. **Document the outcome** – Once the CR appears again (`kubectl get keycloak -n iam`) and the operator creates the StatefulSet,
-   note the resolution in the incident tracker so future responders know the recovery steps.
+1. **Verify the operator finished installing**
+   * `argocd app wait keycloak-operator --health --timeout 180`
+   * `kubectl get crd keycloaks.k8s.keycloak.org keycloakrealmimports.k8s.keycloak.org`
+2. **Recreate the Keycloak custom resource** (pick the option that matches your access)
+   * Argo CD CLI: `argocd app sync iam --resource k8s.keycloak.org/Keycloak:iam/rws-keycloak`
+   * Argo CD UI: select the Keycloak resource inside the `iam` application and press **Sync**
+   * kubectl: `kubectl apply -f gitops/apps/iam/keycloak/keycloak.yaml`
+3. **Confirm the resource exists again**
+   * `kubectl get keycloak rws-keycloak -n iam`
+   * Wait for the operator to create the StatefulSet and pods (`kubectl get pods -n iam -l app=keycloak`)
+4. **Capture evidence**
+   * On repeated failures, inspect the Argo CD operation message for errors such as `no matches for kind "Keycloak"`
+   * Pull the operator logs for the same window: `kubectl logs deployment/keycloak-operator -n iam --since=15m`
+5. **Update the incident record**
+   * Note the recovery command you used and whether further follow-up is required so future responders have the full context
 
 Following this sequence ensures the operator dependencies are satisfied before asking Argo CD to recreate the custom resource.

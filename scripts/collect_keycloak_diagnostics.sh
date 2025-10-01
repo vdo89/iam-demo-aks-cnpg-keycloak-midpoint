@@ -9,6 +9,10 @@ warn() {
   echo "[warn] $*" >&2
 }
 
+info() {
+  echo "[info] $*"
+}
+
 require_cmd() {
   local cmd="$1"
   if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -96,21 +100,29 @@ run_cmd "Check for Keycloak CRDs" \
 
 keycloak_cr_missing=0
 
+suggest_keycloak_cr_recreation() {
+  warn "Keycloak diagnostics detected a missing custom resource; runbook: docs/troubleshooting/keycloak-cr-missing.md"
+  if (( ARGOCD_CLI_AVAILABLE == 1 )); then
+    info "Recreate the Keycloak custom resource with either of the following commands (whichever matches your access):"
+    info "  - argocd app sync iam --resource k8s.keycloak.org/Keycloak:${KEYCLOAK_NAMESPACE}/${KEYCLOAK_NAME}"
+    info "  - kubectl apply -f gitops/apps/iam/keycloak/keycloak.yaml"
+  else
+    warn "If you have Argo CD UI access, trigger a sync for resource k8s.keycloak.org/Keycloak:${KEYCLOAK_NAMESPACE}/${KEYCLOAK_NAME}."
+    info "With kubectl access you can recreate it by running:"
+    info "  kubectl apply -f gitops/apps/iam/keycloak/keycloak.yaml"
+  fi
+}
+
 section "Keycloak custom resource status"
 if ! kubectl get keycloak "${KEYCLOAK_NAME}" -n "${KEYCLOAK_NAMESPACE}" -o yaml; then
   keycloak_cr_missing=1
-  warn "Keycloak custom resource ${KEYCLOAK_NAMESPACE}/${KEYCLOAK_NAME} not found; see docs/troubleshooting/keycloak-cr-missing.md"
-  if command -v argocd >/dev/null 2>&1; then
-    warn "Recreate it with: argocd app sync iam --resource k8s.keycloak.org/Keycloak:${KEYCLOAK_NAMESPACE}/${KEYCLOAK_NAME}"
-  else
-    warn "Trigger an Argo CD sync from the UI or reapply gitops/apps/iam/keycloak/keycloak.yaml to recreate the resource"
-  fi
+  warn "Keycloak custom resource ${KEYCLOAK_NAMESPACE}/${KEYCLOAK_NAME} not found."
 fi
 
 section "Describe Keycloak custom resource"
 if ! kubectl describe keycloak "${KEYCLOAK_NAME}" -n "${KEYCLOAK_NAMESPACE}"; then
   keycloak_cr_missing=1
-  warn "Describe failed for ${KEYCLOAK_NAMESPACE}/${KEYCLOAK_NAME}; follow docs/troubleshooting/keycloak-cr-missing.md to recreate the resource"
+  warn "Describe failed for ${KEYCLOAK_NAMESPACE}/${KEYCLOAK_NAME}."
 fi
 
 run_cmd "Keycloak pods" \
@@ -187,7 +199,7 @@ else
 fi
 
 if (( keycloak_cr_missing == 1 )); then
-  warn "Keycloak diagnostics detected a missing custom resource; runbook: docs/troubleshooting/keycloak-cr-missing.md"
+  suggest_keycloak_cr_recreation
 fi
 
 run_cmd "Keycloak operator logs (last 15m)" \
