@@ -288,8 +288,42 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           max_attempts=60
           sleep_seconds=15
+          status="timeout"
+          failure_reason="Timed out waiting for IAM application to become healthy."
+          operation_message=""
+
+          collect_diagnostics() {
+            set +e
+            echo '::group::IAM Argo CD application'
+            kubectl -n argocd get application iam -o yaml || true
+            echo '::endgroup::'
+            echo '::group::Keycloak custom resource'
+            kubectl -n iam get keycloak rws-keycloak -o yaml || kubectl -n iam get keycloaks.k8s.keycloak.org rws-keycloak -o yaml || true
+            echo '::endgroup::'
+            echo '::group::Keycloak describe'
+            kubectl -n iam describe keycloak rws-keycloak || kubectl -n iam describe keycloaks.k8s.keycloak.org rws-keycloak || true
+            echo '::endgroup::'
+            echo '::group::IAM namespace pods'
+            kubectl -n iam get pods -o wide || true
+            echo '::endgroup::'
+            echo '::group::Recent IAM namespace events'
+            kubectl -n iam get events --sort-by='.metadata.creationTimestamp' | tail -n 40 || true
+            echo '::endgroup::'
+            echo '::group::Keycloak diagnostics bundle'
+            if [ -x scripts/collect_keycloak_diagnostics.sh ]; then
+              if ! scripts/collect_keycloak_diagnostics.sh; then
+                echo 'collect_keycloak_diagnostics.sh exited with a non-zero status' >&2
+              fi
+            else
+              echo 'collect_keycloak_diagnostics.sh is not present or executable' >&2
+            fi
+            echo '::endgroup::'
+            set -e
+          }
+
           for attempt in $(seq 1 "${max_attempts}"); do
             sync=$(kubectl -n argocd get application iam -o jsonpath='{.status.sync.status}' 2>/dev/null || true)
             health=$(kubectl -n argocd get application iam -o jsonpath='{.status.health.status}' 2>/dev/null || true)
@@ -300,47 +334,42 @@ jobs:
             if [ -n "${operation_message}" ]; then
               echo "Last operation message: ${operation_message}"
             fi
+
             if [ "${sync}" = "Synced" ] && [ "${health}" = "Healthy" ]; then
               echo "IAM application is synced and healthy"
-              exit 0
+              status="succeeded"
+              failure_reason=""
+              break
             fi
+
             if [ "${phase}" = "Failed" ]; then
               echo "IAM application sync failed"
-              echo '::group::IAM Argo CD application'
-              kubectl -n argocd get application iam -o yaml || true
-              echo '::endgroup::'
-              exit 1
+              status="failed"
+              failure_reason="IAM application sync failed."
+              break
             fi
+
             if [ "${attempt}" -eq "${max_attempts}" ]; then
               echo "Timed out waiting for IAM application to become healthy"
-              echo '::group::IAM Argo CD application'
-              kubectl -n argocd get application iam -o yaml || true
-              echo '::endgroup::'
-              echo '::group::Keycloak custom resource'
-              kubectl -n iam get keycloak rws-keycloak -o yaml || kubectl -n iam get keycloaks.k8s.keycloak.org rws-keycloak -o yaml || true
-              echo '::endgroup::'
-              echo '::group::Keycloak describe'
-              kubectl -n iam describe keycloak rws-keycloak || kubectl -n iam describe keycloaks.k8s.keycloak.org rws-keycloak || true
-              echo '::endgroup::'
-              echo '::group::IAM namespace pods'
-              kubectl -n iam get pods -o wide || true
-              echo '::endgroup::'
-              echo '::group::Recent IAM namespace events'
-              kubectl -n iam get events --sort-by='.metadata.creationTimestamp' | tail -n 40 || true
-              echo '::endgroup::'
-              echo '::group::Keycloak diagnostics bundle'
-              if [ -x scripts/collect_keycloak_diagnostics.sh ]; then
-                if ! scripts/collect_keycloak_diagnostics.sh; then
-                  echo 'collect_keycloak_diagnostics.sh exited with a non-zero status' >&2
-                fi
-              else
-                echo 'collect_keycloak_diagnostics.sh is not present or executable' >&2
-              fi
-              echo '::endgroup::'
-              exit 1
+              break
             fi
+
             sleep "${sleep_seconds}"
           done
+
+          if [ "${status}" != "succeeded" ]; then
+            echo "::warning::IAM application did not reach a healthy state (status=${status}). ${failure_reason}"
+            if [ -n "${operation_message}" ]; then
+              echo "::notice::Last operation message: ${operation_message}"
+            fi
+            collect_diagnostics
+          fi
+
+          {
+            echo "IAM_APP_STATUS=${status}"
+            echo "IAM_APP_FAILURE_REASON=${failure_reason}"
+            echo "IAM_APP_LAST_OPERATION_MESSAGE=${operation_message}"
+          } >>"${GITHUB_ENV}"
 
       - name: Ensure ingress load balancer is ready
         shell: bash
@@ -470,7 +499,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "✅ Argo CD and IAM workloads are converged."
+          iam_status="${IAM_APP_STATUS:-unknown}"
+          iam_reason="${IAM_APP_FAILURE_REASON:-}"
+          iam_message="${IAM_APP_LAST_OPERATION_MESSAGE:-}"
+
+          if [ "${iam_status}" = "succeeded" ]; then
+            echo "✅ Argo CD and IAM workloads are converged."
+          else
+            echo "⚠️ IAM workloads did not converge (status=${iam_status})."
+            if [ -n "${iam_reason}" ]; then
+              echo "ℹ️ ${iam_reason}"
+            fi
+            if [ -n "${iam_message}" ]; then
+              echo "ℹ️ Last operation message: ${iam_message}"
+            fi
+          fi
+
           echo "✅ Demo ingress hosts are configured."
           echo "🔗 Keycloak : ${{ steps.configure.outputs.keycloak_url }}"
           echo "🔗 midPoint : ${{ steps.configure.outputs.midpoint_url }}"
