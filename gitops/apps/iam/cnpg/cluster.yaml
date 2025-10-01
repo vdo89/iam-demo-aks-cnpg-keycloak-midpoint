@@ -56,7 +56,6 @@ spec:
         connectionLimit: -1
         passwordSecret:
           name: keycloak-db-app
-          key: password
       - name: midpoint
         ensure: present
         login: true
@@ -64,4 +63,3 @@ spec:
         connectionLimit: -1
         passwordSecret:
           name: midpoint-db-app
-          key: password
