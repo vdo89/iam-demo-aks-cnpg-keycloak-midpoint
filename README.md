@@ -81,18 +81,15 @@ If the platform-addons application fails with `failed calling webhook "validate.
 
 ## 3. Publish demo ingress hostnames
 
-Run the workflow **“04 - Configure demo hosts”** after the bootstrap finishes. The job now first executes [`scripts/ensure_ingress_load_balancer.py`](scripts/ensure_ingress_load_balancer.py) to confirm the `ingress-nginx-controller` service is of type `LoadBalancer`, patch the Azure resource group annotation when it drifts, and surface diagnostics (public IPs, rules, and front-ends) from the managed load balancer. Once the controller publishes an address, the workflow calls [`scripts/configure_demo_hosts.py`](scripts/configure_demo_hosts.py) to discover the ingress IP, updates [`gitops/apps/iam/params.env`](gitops/apps/iam/params.env) with fresh `nip.io` hostnames, commits the change and prints the URLs. Argo CD is exposed through an HTTP ingress (TLS terminates at the `argocd-server` service), so the generated Argo link intentionally uses `http://`. To keep the GitOps tree convergent, the script now scans the `gitops/` directory for managed `nip.io` hostnames and fails the run if stale references to the previous ingress IP remain; add new manifests to the workflow inputs if they introduce additional hostnames.
+The bootstrap workflow now configures the demo hosts once Argo CD reports the IAM stack as healthy. It first executes [`scripts/ensure_ingress_load_balancer.py`](scripts/ensure_ingress_load_balancer.py) to confirm the `ingress-nginx-controller` service is of type `LoadBalancer`, patch the Azure resource group annotation when it drifts, and surface diagnostics (public IPs, rules, and front-ends) from the managed load balancer. When the controller publishes an address, the workflow calls [`scripts/configure_demo_hosts.py`](scripts/configure_demo_hosts.py) to discover the ingress IP, updates [`gitops/apps/iam/params.env`](gitops/apps/iam/params.env) with fresh `nip.io` hostnames, commits the change, and prints the URLs. Argo CD is exposed through an HTTP ingress (TLS terminates at the `argocd-server` service), so the generated Argo link intentionally uses `http://`. To keep the GitOps tree convergent, the script still scans the `gitops/` directory for managed `nip.io` hostnames and fails the run if stale references to the previous ingress IP remain; add new manifests to the workflow inputs if they introduce additional hostnames.
 
-To prevent drift, the workflow now also runs every night with the default AKS resource group and cluster name (or the values configured in repository variables `AKS_RESOURCE_GROUP`/`AKS_NAME`). Each scheduled run re-applies the host discovery script and commits any changes automatically, so stale ingress hostnames self-heal without manual intervention.
+Need to rotate the hosts manually outside of GitHub Actions? Execute `python3 scripts/configure_demo_hosts.py --ingress-ip <EXTERNAL-IP>` locally and commit the updated parameters file.
 
 ## 4. Day-two tips
 
 - The GitOps tree lives under `gitops/`. Update manifests, commit, and let Argo CD reconcile the cluster. `kubectl apply` is only needed for the initial bootstrap.
 =======
 - Keycloak starts without the optimized flag on first boot (`startOptimized: false`) so that the stock container image performs its initial build step successfully. After the first run you can bake a pre-built image and re-enable the optimized path for faster restarts.
-
-
-- Need to rotate ingress hosts manually? Execute `python3 scripts/configure_demo_hosts.py --ingress-ip <EXTERNAL-IP>` and commit the updated parameters file.
 
 ### Debugging Argo CD repo permissions
 
