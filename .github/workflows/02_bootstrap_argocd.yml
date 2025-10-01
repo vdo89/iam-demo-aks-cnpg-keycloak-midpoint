@@ -312,7 +312,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          max_attempts=60
+          max_attempts=6
           sleep_seconds=15
           status="timeout"
           failure_reason="Timed out waiting for IAM application to become healthy."
