@@ -154,6 +154,16 @@ def test_ensure_ingress_accessible_rejects_private_ip():
     assert "non-public IP" in str(excinfo.value)
 
 
+def test_ensure_ingress_accessible_warns_when_skip_requested(capsys):
+    # Documentation/test networks such as 203.0.113.0/24 are not globally
+    # reachable but should still allow host rotation when operators opt out of
+    # reachability enforcement.
+    cd.ensure_ingress_accessible("203.0.113.7", raise_on_error=False)
+    captured = capsys.readouterr()
+    assert "WARNING" in captured.err
+    assert "203.0.113.7" in captured.err
+
+
 def test_ensure_ingress_accessible_requires_open_port(monkeypatch):
     attempts = []
 

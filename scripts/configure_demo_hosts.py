@@ -162,11 +162,15 @@ def ensure_ingress_accessible(
         or ip_obj.is_multicast
         or ip_obj.is_unspecified
     ):
-        raise RuntimeError(
+        message = (
             "Ingress controller resolved to a non-public IP address"
             f" ({ip_obj}). Ensure the service publishes an external address or"
             " override it with --ingress-ip/--ingress-hostname."
         )
+        if raise_on_error:
+            raise RuntimeError(message)
+        print(f"WARNING: {message}", file=sys.stderr)
+        return
 
     connection_errors: dict[int, Exception] = {}
     for port in ports:
