@@ -36,6 +36,33 @@ run_cmd() {
   return 0
 }
 
+argo_app_summary() {
+  local app_name="$1"
+
+  if (( ARGOCD_CLI_AVAILABLE == 1 )); then
+    run_cmd "Argo CD application summary (${app_name})" \
+      argocd app get "${app_name}"
+    return
+  fi
+
+  if (( ARGOCD_WARNED == 0 )); then
+    warn "'argocd' CLI not found; using kubectl to gather application summaries"
+    ARGOCD_WARNED=1
+  fi
+
+  run_cmd "Argo CD application summary (${app_name})" bash -c \
+    "kubectl get application ${app_name} -n argocd -o json \\
+      | jq '{name: .metadata.name, namespace: .metadata.namespace, sync: .status.sync.status, health: .status.health.status, operation: (.status.operationState // {} | {phase, message}), conditions: (.status.conditions // [])}'"
+}
+
+argo_operation_state() {
+  local app_name="$1"
+
+  run_cmd "Argo CD operation state (${app_name})" bash -c \
+    "kubectl get application ${app_name} -n argocd -o json \\
+      | jq '.status.operationState | {phase, message, syncResult: .syncResult.resources[]? | select(.status == \"OutOfSync\")}'"
+}
+
 require_cmd kubectl
 require_cmd jq
 
@@ -44,23 +71,17 @@ KEYCLOAK_OPERATOR_NAMESPACE=${KEYCLOAK_OPERATOR_NAMESPACE:-${KEYCLOAK_NAMESPACE}
 KEYCLOAK_NAME=${KEYCLOAK_NAME:-rws-keycloak}
 KEYCLOAK_POD_SELECTOR=${KEYCLOAK_POD_SELECTOR:-app=keycloak}
 KEYCLOAK_MGMT_PORT=${KEYCLOAK_MGMT_PORT:-9000}
+ARGOCD_CLI_AVAILABLE=0
+ARGOCD_WARNED=0
 
 if command -v argocd >/dev/null 2>&1; then
-  run_cmd "Argo CD application summary (iam)" \
-    argocd app get iam
-
-  run_cmd "Argo CD application summary (keycloak-operator)" \
-    argocd app get keycloak-operator
-
-  run_cmd "Argo CD operation state (iam)" bash -c \
-    "kubectl get application iam -n argocd -o json \
-      | jq '.status.operationState | {phase, message, syncResult: .syncResult.resources[]? | select(.status == \"OutOfSync\")}'"
-else
-  warn "'argocd' CLI not found; skipping Argo CD application summaries"
-  run_cmd "Argo CD operation state (iam)" bash -c \
-    "kubectl get application iam -n argocd -o json \
-      | jq '.status.operationState | {phase, message, syncResult: .syncResult.resources[]? | select(.status == \"OutOfSync\")}'"
+  ARGOCD_CLI_AVAILABLE=1
 fi
+
+argo_app_summary iam
+argo_app_summary keycloak-operator
+argo_operation_state iam
+argo_operation_state keycloak-operator
 
 run_cmd "Check for Keycloak CRDs" \
   kubectl get crd keycloaks.k8s.keycloak.org keycloakrealmimports.k8s.keycloak.org
