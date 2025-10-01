@@ -36,6 +36,27 @@ run_cmd() {
   return 0
 }
 
+argo_app_summary() {
+  local app_name="$1"
+  local app_namespace="${2:-argocd}"
+
+  kubectl get application "$app_name" -n "$app_namespace" -o json \
+    | jq '{
+        metadata: {
+          name: .metadata.name,
+          namespace: .metadata.namespace
+        },
+        status: {
+          sync: (.status.sync.status // "Unknown"),
+          health: (.status.health.status // "Unknown"),
+          operationState: {
+            phase: (.status.operationState.phase // "Unknown"),
+            message: (.status.operationState.message // "")
+          }
+        }
+      }'
+}
+
 require_cmd kubectl
 require_cmd jq
 
@@ -56,7 +77,13 @@ if command -v argocd >/dev/null 2>&1; then
     "kubectl get application iam -n argocd -o json \
       | jq '.status.operationState | {phase, message, syncResult: .syncResult.resources[]? | select(.status == \"OutOfSync\")}'"
 else
-  warn "'argocd' CLI not found; skipping Argo CD application summaries"
+  warn "'argocd' CLI not found; falling back to kubectl summaries"
+  run_cmd "Argo CD application summary (iam)" \
+    argo_app_summary iam argocd
+
+  run_cmd "Argo CD application summary (keycloak-operator)" \
+    argo_app_summary keycloak-operator argocd
+
   run_cmd "Argo CD operation state (iam)" bash -c \
     "kubectl get application iam -n argocd -o json \
       | jq '.status.operationState | {phase, message, syncResult: .syncResult.resources[]? | select(.status == \"OutOfSync\")}'"
