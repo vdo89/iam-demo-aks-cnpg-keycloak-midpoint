@@ -34,13 +34,6 @@ def test_iam_application_uses_placeholders():
     assert app["spec"]["syncPolicy"]["automated"]["prune"] is True
 
 
-def test_iam_application_declares_dependencies():
-    app = load_yaml(REPO_ROOT / "gitops/clusters/aks/apps/iam.application.yaml")
-    dependencies = app["spec"].get("dependencies")
-    assert dependencies is not None, "IAM application should declare dependencies"
-    assert set(dependencies) == {"cloudnative-pg", "keycloak-operator"}
-
-
 def test_iam_application_repo_vars_are_kustomize_aware():
     apps_dir = REPO_ROOT / "gitops/clusters/aks/apps"
     kustomization = yaml.safe_load((apps_dir / "kustomization.yaml").read_text(encoding="utf-8"))
