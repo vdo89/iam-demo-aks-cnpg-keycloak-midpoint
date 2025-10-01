@@ -21,6 +21,10 @@ spec:
       value: "0.0.0.0"
     - name: cache
       value: local
+    - name: proxy
+      value: edge
+    - name: proxy-headers
+      value: xforwarded
   features:
     enabled:
       - token-exchange
@@ -30,10 +34,6 @@ spec:
     strictBackchannel: false
   http:
     httpEnabled: true
-  proxy:
-    mode: edge
-    headers: xforwarded
-
   db:
     vendor: postgres
     url: "jdbc:postgresql://iam-db-rw.iam.svc.cluster.local:5432/keycloak?sslmode=require"

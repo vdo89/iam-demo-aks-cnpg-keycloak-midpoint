@@ -17,13 +17,15 @@ When the Keycloak operator renders the Quarkus distribution without an explicit 
 
 Update the GitOps source of truth so Keycloak honours the headers injected by the ingress controller:
 
-1. Edit [`gitops/apps/iam/keycloak/keycloak.yaml`](../../gitops/apps/iam/keycloak/keycloak.yaml) and ensure the following `spec.proxy` configuration is present:
+1. Edit [`gitops/apps/iam/keycloak/keycloak.yaml`](../../gitops/apps/iam/keycloak/keycloak.yaml) and ensure the following `additionalOptions` are present:
    ```yaml
-   proxy:
-     mode: edge
-     headers: xforwarded
+   additionalOptions:
+     - name: proxy
+       value: edge
+     - name: proxy-headers
+       value: xforwarded
    ```
-   The `edge` proxy mode tells Keycloak to expect TLS termination at the ingress boundary, while `xforwarded` enables parsing of the forwarded headers. Newer Keycloak operator releases surface these options as first-class fields; leaving them in `additionalOptions` triggers validation warnings and will be removed in a future API version.
+   The `edge` proxy mode tells Keycloak to expect TLS termination at the ingress boundary, while `xforwarded` enables parsing of the forwarded headers. The `v2alpha1` CRD shipped with operator 24.0 dropped the experimental `spec.proxy` structure, so the Quarkus CLI flags must be configured through `additionalOptions` again until a replacement lands.
 2. Commit and push the change. Argo CD will roll the Keycloak StatefulSet to pick up the new configuration.
 3. After the rollout completes, confirm the warning disappeared:
 
