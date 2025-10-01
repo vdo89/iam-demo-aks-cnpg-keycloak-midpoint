@@ -66,6 +66,14 @@ reporting `DOWN`. Follow the runbook in
 [`docs/troubleshooting/keycloak-health-degraded.md`](docs/troubleshooting/keycloak-health-degraded.md) to capture the relevant
 controller logs, inspect the `/health/ready` payload and resolve the underlying database or configuration error.
 
+### Troubleshooting: Keycloak service reconciliation conflict
+
+If the Keycloak operator logs `Operation cannot be fulfilled on services "rws-keycloak-service": the object has been modified`,
+both Argo CD and the operator are trying to manage the same Service. Remove the duplicate manifest from Git so that the operator
+owns it exclusively, then resync the application. The runbook in
+[`docs/troubleshooting/keycloak-service-conflict.md`](docs/troubleshooting/keycloak-service-conflict.md) explains the symptoms
+and recovery steps.
+
 ### Troubleshooting: IAM sync timeout waiting for Keycloak CRDs
 
 When the IAM application reports `one or more synchronization tasks are not valid due to application controller sync timeout`, Argo CD is trying to apply Keycloak custom resources before the operator finishes installing its CRDs. Longer timeouts do not help because the resources remain invalid until the CRDs appear. Follow the runbook in [`docs/troubleshooting/iam-sync-timeout.md`](docs/troubleshooting/iam-sync-timeout.md) to gather the relevant controller state and apply the sync-wave fix so the Keycloak operator finishes before the IAM stack reconciles.
