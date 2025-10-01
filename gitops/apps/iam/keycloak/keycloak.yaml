@@ -33,7 +33,6 @@ spec:
   proxy:
     mode: edge
     headers: xforwarded
-    mode: edge
 
   db:
     vendor: postgres
