@@ -34,8 +34,3 @@ spec:
       namespace: iam
       jsonPointers:
         - /spec/realm
-    - group: postgresql.cnpg.io
-      kind: Database
-      jsonPointers:
-        - /spec/ensure
-        - /spec/databaseReclaimPolicy
