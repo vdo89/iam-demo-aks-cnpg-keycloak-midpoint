@@ -17,16 +17,18 @@ When the Keycloak operator renders the Quarkus distribution without an explicit 
 
 Update the GitOps source of truth so Keycloak honours the headers injected by the ingress controller:
 
-1. Edit [`gitops/apps/iam/keycloak/keycloak.yaml`](../../gitops/apps/iam/keycloak/keycloak.yaml) and ensure the following entries exist under `spec.additionalOptions`:
+1. Edit [`gitops/apps/iam/keycloak/keycloak.yaml`](../../gitops/apps/iam/keycloak/keycloak.yaml) and configure the first-class proxy settings on the `Keycloak` resource:
    ```yaml
-   - name: proxy
-     value: edge
-   - name: proxy-headers
-     value: xforwarded
+   spec:
+     proxy:
+       mode: edge
+       headers:
+         - xforwarded
    ```
    The `edge` proxy mode tells Keycloak to expect TLS termination at the ingress boundary, while `xforwarded` enables parsing of the forwarded headers.
-2. Commit and push the change. Argo CD will roll the Keycloak StatefulSet to pick up the new configuration.
-3. After the rollout completes, confirm the warning disappeared:
+2. Remove any legacy `proxy`/`proxy-headers` entries from `spec.additionalOptions` if they remain. The operator now surfaces these values through dedicated fields and warns when the deprecated options are still present.
+3. Commit and push the change. Argo CD will roll the Keycloak StatefulSet to pick up the new configuration.
+4. After the rollout completes, confirm the warning disappeared:
    ```bash
    kubectl logs statefulset/rws-keycloak -n iam | rg "Likely misconfiguration"
    ```
