@@ -65,11 +65,19 @@ fi
 run_cmd "Check for Keycloak CRDs" \
   kubectl get crd keycloaks.k8s.keycloak.org keycloakrealmimports.k8s.keycloak.org
 
-run_cmd "Keycloak custom resource status" \
-  kubectl get keycloak "${KEYCLOAK_NAME}" -n "${KEYCLOAK_NAMESPACE}" -o yaml
+keycloak_cr_missing=0
 
-run_cmd "Describe Keycloak custom resource" \
-  kubectl describe keycloak "${KEYCLOAK_NAME}" -n "${KEYCLOAK_NAMESPACE}"
+section "Keycloak custom resource status"
+if ! kubectl get keycloak "${KEYCLOAK_NAME}" -n "${KEYCLOAK_NAMESPACE}" -o yaml; then
+  keycloak_cr_missing=1
+  warn "Keycloak custom resource ${KEYCLOAK_NAMESPACE}/${KEYCLOAK_NAME} not found; see docs/troubleshooting/keycloak-cr-missing.md"
+fi
+
+section "Describe Keycloak custom resource"
+if ! kubectl describe keycloak "${KEYCLOAK_NAME}" -n "${KEYCLOAK_NAMESPACE}"; then
+  keycloak_cr_missing=1
+  warn "Describe failed for ${KEYCLOAK_NAMESPACE}/${KEYCLOAK_NAME}; follow docs/troubleshooting/keycloak-cr-missing.md to recreate the resource"
+fi
 
 run_cmd "Keycloak pods" \
   kubectl get pods -n "${KEYCLOAK_NAMESPACE}" -l "${KEYCLOAK_POD_SELECTOR}" -o wide
@@ -109,7 +117,7 @@ diagnose_known_failures() {
   fi
 }
 
-if ((${#keycloak_pods[@]} == 0)); then
+if (( ${#keycloak_pods[@]} == 0 )); then
   warn "No Keycloak pods found with selector '${KEYCLOAK_POD_SELECTOR}' in namespace '${KEYCLOAK_NAMESPACE}'"
 
   run_cmd "Pods in namespace ${KEYCLOAK_NAMESPACE} (showing labels)" \
@@ -136,6 +144,10 @@ else
 
     diagnose_known_failures "${pod}"
   done
+fi
+
+if (( keycloak_cr_missing == 1 )); then
+  warn "Keycloak diagnostics detected a missing custom resource; runbook: docs/troubleshooting/keycloak-cr-missing.md"
 fi
 
 run_cmd "Keycloak operator logs (last 15m)" \

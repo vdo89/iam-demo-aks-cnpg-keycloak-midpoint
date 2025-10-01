@@ -26,6 +26,7 @@ Update the GitOps source of truth so Keycloak honours the headers injected by th
    The `edge` proxy mode tells Keycloak to expect TLS termination at the ingress boundary, while `xforwarded` enables parsing of the forwarded headers. Newer Keycloak operator releases surface these options as first-class fields; leaving them in `additionalOptions` triggers validation warnings and will be removed in a future API version.
 2. Commit and push the change. Argo CD will roll the Keycloak StatefulSet to pick up the new configuration.
 3. After the rollout completes, confirm the warning disappeared:
+
    ```bash
    kubectl logs statefulset/rws-keycloak -n iam | rg "Likely misconfiguration"
    ```
