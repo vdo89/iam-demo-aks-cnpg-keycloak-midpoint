@@ -23,6 +23,8 @@ spec:
       value: local
     - name: proxy
       value: edge
+    - name: proxy-headers
+      value: xforwarded
   features:
     enabled:
       - token-exchange
@@ -30,8 +32,6 @@ spec:
     hostname: kc.132.164.56.132.nip.io
     strict: false
     strictBackchannel: false
-  proxy:
-    headers: xforwarded
   http:
     httpEnabled: true
 
