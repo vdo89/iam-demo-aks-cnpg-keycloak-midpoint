@@ -298,6 +298,15 @@ jobs:
             --timeout "${INGRESS_LB_TIMEOUT:-900}" \
             --interval "${INGRESS_LB_INTERVAL:-15}"
 
+      - name: Configure demo ingress hosts
+        id: configure
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/configure_demo_hosts.py \
+            --params-file gitops/apps/iam/params.env \
+            --skip-reachability-check
+
       - name: Wait for IAM application
         shell: bash
         run: |
@@ -384,15 +393,6 @@ jobs:
             echo "IAM_APP_FAILURE_REASON=${failure_reason}"
             echo "IAM_APP_LAST_OPERATION_MESSAGE=${operation_message}"
           } >>"${GITHUB_ENV}"
-
-      - name: Configure demo ingress hosts
-        id: configure
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 scripts/configure_demo_hosts.py \
-            --params-file gitops/apps/iam/params.env \
-            --skip-reachability-check
 
       - name: Wait for ingress endpoints to become reachable
         shell: bash
