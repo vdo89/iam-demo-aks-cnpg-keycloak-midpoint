@@ -87,6 +87,12 @@ fi
 run_cmd "Keycloak pods" \
   kubectl get pods -n "${KEYCLOAK_NAMESPACE}" -l "${KEYCLOAK_POD_SELECTOR}" -o wide
 
+run_cmd "Keycloak realm import custom resources" \
+  kubectl get keycloakrealmimports.k8s.keycloak.org -n "${KEYCLOAK_NAMESPACE}" -o wide
+
+run_cmd "Keycloak realm import jobs" \
+  kubectl get jobs -n "${KEYCLOAK_NAMESPACE}" -l app=keycloak-realm-import --show-labels
+
 mapfile -t keycloak_pods < <(
   kubectl get pods -n "${KEYCLOAK_NAMESPACE}" -l "${KEYCLOAK_POD_SELECTOR}" \
     -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true

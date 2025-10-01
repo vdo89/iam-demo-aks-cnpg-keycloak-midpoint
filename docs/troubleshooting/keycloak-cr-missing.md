@@ -15,8 +15,9 @@ showing the resource as missing until the manifest is applied successfully.
 
 ## Gather context first
 
-Run `./scripts/collect_keycloak_diagnostics.sh`. When the CR is missing the script highlights the failed `kubectl get` calls
-and lists the current pods in the namespace. Keep this output for the incident record.
+Run `./scripts/collect_keycloak_diagnostics.sh`. When the CR is missing the script highlights the failed `kubectl get` calls,
+lists the current pods in the namespace, and captures the state of any `KeycloakRealmImport` resources or jobs that may be
+waiting for the Keycloak server to exist. Keep this output for the incident record.
 
 If you prefer to run the commands manually:
 
@@ -26,6 +27,8 @@ kubectl get application iam -n argocd -o json \
 
 kubectl get keycloak rws-keycloak -n iam -o yaml
 kubectl describe keycloak rws-keycloak -n iam
+kubectl get keycloakrealmimports -n iam -o wide
+kubectl get jobs -n iam -l app=keycloak-realm-import --show-labels
 kubectl get pods -n iam --show-labels
 ```
 
