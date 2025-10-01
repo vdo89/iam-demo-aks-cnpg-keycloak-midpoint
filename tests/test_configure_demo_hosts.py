@@ -25,7 +25,7 @@ def test_write_and_read_params(tmp_path: Path):
     assert cd.read_ingress_class(params) == "custom"
 
 
-def test_main_updates_env_files(monkeypatch, tmp_path: Path):
+def test_main_updates_env_files(monkeypatch, tmp_path: Path, capsys):
     params = tmp_path / "params.env"
     params.write_text("ingressClass=test\n", encoding="utf-8")
 
@@ -64,6 +64,11 @@ def test_main_updates_env_files(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(cd, "parse_args", lambda: args)
 
     assert cd.main() == 0
+
+    captured = capsys.readouterr()
+    assert "KC_HOST=kc.203.0.113.10.nip.io" in captured.out
+    assert "MP_HOST=mp.203.0.113.10.nip.io" in captured.out
+    assert "ARGOCD_HOST=argocd.203.0.113.10.nip.io" in captured.out
 
     saved = params.read_text(encoding="utf-8")
     assert "keycloakHost=kc.203.0.113.10.nip.io" in saved
