@@ -23,8 +23,6 @@ spec:
       value: local
     - name: proxy
       value: edge
-    - name: proxy-headers
-      value: xforwarded
   features:
     enabled:
       - token-exchange
@@ -34,6 +32,8 @@ spec:
     strictBackchannel: false
   http:
     httpEnabled: true
+  proxy:
+    headers: xforwarded
 
   db:
     vendor: postgres
