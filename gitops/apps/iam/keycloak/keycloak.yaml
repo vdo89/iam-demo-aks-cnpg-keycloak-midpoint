@@ -21,8 +21,6 @@ spec:
       value: "0.0.0.0"
     - name: cache
       value: local
-    - name: proxy
-      value: edge
   features:
     enabled:
       - token-exchange
@@ -34,6 +32,7 @@ spec:
     httpEnabled: true
   proxy:
     headers: xforwarded
+    mode: edge
 
   db:
     vendor: postgres
