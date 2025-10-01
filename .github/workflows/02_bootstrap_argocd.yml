@@ -336,9 +336,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/configure_demo_hosts.py \
+          tmp_env=$(mktemp)
+          CONFIGURE_DEMO_HOSTS_SKIP_DIRECT_ENV=1 python3 scripts/configure_demo_hosts.py \
             --params-file gitops/apps/iam/params.env \
-            --skip-reachability-check
+            --skip-reachability-check \
+            > "${tmp_env}"
+
+          echo "🔧 computed hosts:"
+          cat "${tmp_env}"
+
+          grep -E '^(EXTERNAL_IP|KC_HOST|MP_HOST|ARGOCD_HOST)=' "${tmp_env}" >> "${GITHUB_ENV}"
 
       - name: Force hard recreate of IAM deployment
         shell: bash

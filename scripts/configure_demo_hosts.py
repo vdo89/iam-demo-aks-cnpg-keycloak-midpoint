@@ -227,6 +227,15 @@ def write_params(params_file: Path, ingress_class: str, hosts: Hosts) -> None:
     )
 
 
+def iter_environment_lines(ip_address: str, hosts: Hosts) -> Iterable[str]:
+    """Yield environment variable declarations for the discovered hosts."""
+
+    yield f"EXTERNAL_IP={ip_address}"
+    yield f"KC_HOST={hosts.keycloak}"
+    yield f"MP_HOST={hosts.midpoint}"
+    yield f"ARGOCD_HOST={hosts.argocd}"
+
+
 def update_manifest_hosts(manifest_files: Iterable[Path], hosts: Hosts) -> None:
     """Update nip.io host references within manifest files."""
 
@@ -389,13 +398,18 @@ def main() -> int:
     validation_paths = getattr(args, "validation_path", DEFAULT_VALIDATION_PATHS)
     ensure_hosts_rotated(validation_paths, ip_value)
 
+    env_lines = list(iter_environment_lines(ip_value, hosts))
+    for line in env_lines:
+        print(line)
+
+    print()
+
     github_env = os.environ.get("GITHUB_ENV")
-    if github_env:
+    skip_env_write = os.environ.get("CONFIGURE_DEMO_HOSTS_SKIP_DIRECT_ENV", "").lower()
+    if github_env and skip_env_write not in {"1", "true", "yes", "on"}:
         with open(github_env, "a", encoding="utf-8") as env_file:
-            env_file.write(f"EXTERNAL_IP={ip_value}\n")
-            env_file.write(f"KC_HOST={hosts.keycloak}\n")
-            env_file.write(f"MP_HOST={hosts.midpoint}\n")
-            env_file.write(f"ARGOCD_HOST={hosts.argocd}\n")
+            for line in env_lines:
+                env_file.write(f"{line}\n")
 
     github_output = os.environ.get("GITHUB_OUTPUT")
     if github_output:
