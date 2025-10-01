@@ -276,9 +276,17 @@ def discover_stale_hosts(paths: Iterable[Path], expected_ip: str) -> list[tuple[
     return stale
 
 
-def ensure_hosts_rotated(paths: Iterable[Path], expected_ip: str) -> None:
-    """Fail if any managed nip.io hosts still reference an outdated IP."""
+def ensure_hosts_rotated(paths: Iterable[Path], hosts: Hosts, expected_ip: str) -> None:
+    """Ensure nip.io hosts in validation paths reference the expected IP."""
 
+    stale = discover_stale_hosts(paths, expected_ip)
+    if not stale:
+        return
+
+    # Attempt to self-heal by updating any files that still reference stale hosts.
+    update_manifest_hosts({path for path, _ in stale}, hosts)
+
+    # Re-scan after attempting to update to verify convergence.
     stale = discover_stale_hosts(paths, expected_ip)
     if stale:
         formatted = "\n".join(f"  - {ref} (in {path})" for path, ref in stale)
@@ -382,7 +390,7 @@ def main() -> int:
     update_manifest_hosts(manifest_files, hosts)
 
     validation_paths = getattr(args, "validation_path", DEFAULT_VALIDATION_PATHS)
-    ensure_hosts_rotated(validation_paths, ip_value)
+    ensure_hosts_rotated(validation_paths, hosts, ip_value)
 
     github_env = os.environ.get("GITHUB_ENV")
     if github_env:
