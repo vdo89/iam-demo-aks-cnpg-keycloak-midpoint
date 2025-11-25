@@ -1,0 +1,98 @@
+policy:
+  strict: true
+  ceph_public_vips:
+    - 172.20.0.99/32
+    - 2a02:fe0::99/128
+  mobility_leaf_pairs:
+    - leaf-a1
+    - leaf-a2
+    - leaf-b1
+    - leaf-b2
+
+fabrics:
+  - name: dc1
+    tenants:
+      - name: platform
+        vrf_zone: PLATFORM
+        l3vni: 11000
+        rt:
+          import: ["65000:11000"]
+          export: ["65000:11000"]
+        l2vni_base: 11000
+        l2vnis:
+          - name: mgmt
+            type: l2vni
+            vlan: 200
+            l2vni: 11200
+            leaf_scope: [leaf-a1, leaf-a2]
+        vip_exports:
+          - prefix: 10.0.200.10/32
+            via: firewall
+            description: "platform mgmt VIP"
+            type: host
+      - name: storage
+        vrf_zone: STORAGE
+        l3vni: 11500
+        rt:
+          import: ["65000:11500"]
+          export: ["65000:11500"]
+        l2vni_base: 11500
+        l2vnis:
+          - name: ceph-public
+            type: l2vni
+            vlan: 210
+            l2vni: 11710
+            leaf_scope: [leaf-b1, leaf-b2]
+        vip_exports:
+          - prefix: 172.20.0.99/32
+            via: firewall
+            description: "Ceph public VIP (host only)"
+            type: host
+          - prefix: 2a02:fe0::99/128
+            via: firewall
+            description: "Ceph public VIP IPv6"
+            type: host
+      - name: tenant-alpha
+        vrf_zone: TENANT
+        l3vni: 12000
+        rt:
+          import: ["65000:12000"]
+          export: ["65000:12000"]
+        l2vni_base: 12000
+        l2vnis:
+          - name: app
+            type: l2vni
+            vlan: 201
+            l2vni: 12201
+            leaf_scope: [leaf-a1, leaf-a2]
+        vip_exports:
+          - prefix: 192.0.2.10/32
+            via: firewall
+            description: "App VIP leak via firewall VRF"
+            type: host
+          - prefix: 2001:db8:1200::20/128
+            via: firewall
+            description: "App IPv6 VIP"
+            type: host
+      - name: tenant-beta
+        vrf_zone: TENANT
+        l3vni: 12100
+        rt:
+          import: ["65000:12100"]
+          export: ["65000:12100"]
+        l2vni_base: 12100
+        l2vnis:
+          - name: api
+            type: l2vni
+            vlan: 202
+            l2vni: 12302
+            leaf_scope: [leaf-b1, leaf-b2]
+        vip_exports:
+          - prefix: 198.51.100.42/32
+            via: firewall
+            description: "API VIP"
+            type: host
+          - prefix: 2001:db8:1210::42/128
+            via: firewall
+            description: "API IPv6 VIP"
+            type: host
