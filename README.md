@@ -121,3 +121,15 @@ The tests cover the helper scripts and sanity-check the GitOps manifests (chart 
 
 - **Terraform destroy**: rerun the provisioning workflow with `TF_ACTION=destroy` or execute `terraform destroy` from `infra/azure/terraform` after running `terraform init` with the same backend settings as the pipeline.
 - **Pause the cluster**: `az aks stop --name <cluster> --resource-group <rg>` reduces costs without deleting anything.
+
+## Model invariants (network intent)
+
+The network intent model that feeds firewall and EVPN policies should be **closed by contract**: anything not explicitly allowed is forbidden. The following guardrails summarise the missing 10/10 items and link to detailed guidance in [`docs/model-invariants.md`](docs/model-invariants.md):
+
+- **L2VNI determinism:** every L2VNI carries `l2vni_base` and `vlan`; the invariant is `l2vni = l2vni_base + vlan` and OPA enforces the equality with path-aware error messages.
+- **Routing symmetry and leaks:** RTs remain symmetric and the only allowed route-leaks are host-route VIP exports via firewall VRFs; subnet exports are forbidden.
+- **Host-only VIPs:** VIP exports must be `/32` or `/128` (validated both in schema and OPA) with IPv6 normalised to a canonical form to avoid diff noise.
+- **Scoped flood domains:** L2VNIs are only activated on leaf-pairs within the mobility domain to keep the flood-set small; Ceph public VIPs are restricted to an allowlist of `/32` and `/128` endpoints.
+- **Strict-by-default policy:** `data.policy.strict = true` is the default; lenient mode is a conscious override in `data/`. Errors use `deny[msg]` with the full path and a hint to fix.
+
+For a minimal, convergent example with two tenants, one platform VRF and one storage VRF (including Ceph public VIPs), see [`examples/network-intent-golden-path.yaml`](examples/network-intent-golden-path.yaml). It demonstrates host-only VIP exports, dual-stack endpoints and mobility-scoped L2VNIs.
